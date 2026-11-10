@@ -351,7 +351,7 @@ pub async fn get_event(state: &AppState, p: &Principal, project: &str, event_id:
     let rows = state
         .ch
         .query(
-            &format!("SELECT {EVENT_COLS} FROM errors WHERE project_id = {{p:String}} AND event_id = toUUIDOrZero({{e:String}}) LIMIT 1"),
+            &format!("SELECT {EVENT_COLS} FROM errors WHERE project_id = {{p:String}} AND event_id = toString(toUUIDOrZero({{e:String}})) LIMIT 1"),
             &[("p", project.id.clone()), ("e", event_id.to_string())],
         )
         .await?;
