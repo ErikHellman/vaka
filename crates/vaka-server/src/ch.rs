@@ -3,7 +3,6 @@
 //! Inserts use `JSONEachRow`; selects use `FORMAT JSON` with server-side query
 //! parameters (`{name:Type}`) so user input is never interpolated into SQL.
 
-use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 #[derive(Clone)]
@@ -111,11 +110,6 @@ impl ClickHouse {
         }
         let v: Value = serde_json::from_str(&text)?;
         Ok(v.get("data").and_then(|d| d.as_array()).cloned().unwrap_or_default())
-    }
-
-    pub async fn query_as<T: DeserializeOwned>(&self, sql: &str, params: &[(&str, String)]) -> anyhow::Result<Vec<T>> {
-        let rows = self.query(sql, params).await?;
-        rows.into_iter().map(|r| Ok(serde_json::from_value(r)?)).collect()
     }
 
     pub async fn ping(&self) -> bool {

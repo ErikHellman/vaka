@@ -62,10 +62,6 @@ pub fn debug_id_from_code_id(code_id: &str) -> Option<DebugId> {
     DebugId::from_guid_age(&guid, 0).ok()
 }
 
-pub fn normalize_debug_id(s: &str) -> Option<String> {
-    DebugId::from_str(s).ok().map(|d| d.to_string().to_lowercase())
-}
-
 fn parse_addr(s: &str) -> Option<u64> {
     let s = s.trim();
     match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
@@ -171,7 +167,13 @@ fn symbolicate_sync(
             }
         }
         let mut out: Vec<Frame> = Vec::with_capacity(exc.stacktrace.len());
+        // JS: the original name at a call site names the *callee*, i.e. the previous frame.
+        let mut js_names: Vec<Option<String>> = Vec::new();
+        let mut js_frames: Vec<usize> = Vec::new();
         for (idx, frame) in exc.stacktrace.iter().enumerate() {
+            while js_names.len() < out.len() {
+                js_names.push(None);
+            }
             if frame.symbolicated == Some(true) {
                 out.push(frame.clone());
                 continue;
@@ -189,13 +191,23 @@ fn symbolicate_sync(
                     continue;
                 }
             } else if frame.abs_path.is_some() && frame.lineno.is_some() && platform != "android" {
-                if let Some(f) = symbolicate_js(cache, artifacts, frame) {
+                if let Some((f, name)) = symbolicate_js(cache, artifacts, frame) {
+                    js_frames.push(out.len());
+                    js_names.push(name);
                     out.push(f);
                     changed = true;
                     continue;
                 }
             }
             out.push(frame.clone());
+        }
+        while js_names.len() < out.len() {
+            js_names.push(None);
+        }
+        for i in js_frames {
+            if let Some(Some(name)) = js_names.get(i + 1) {
+                out[i].function = Some(name.clone());
+            }
         }
         exc.stacktrace = out;
     }
@@ -369,7 +381,7 @@ fn remap_jvm(mapper: &ProguardMapper<'static>, frame: &Frame) -> Option<Vec<Fram
     Some(out)
 }
 
-fn symbolicate_js(cache: &SymbolCache, artifacts: &[ArtifactRef], frame: &Frame) -> Option<Frame> {
+fn symbolicate_js(cache: &SymbolCache, artifacts: &[ArtifactRef], frame: &Frame) -> Option<(Frame, Option<String>)> {
     let key = sourcemap_key(frame.abs_path.as_deref()?);
     let artifact = artifacts
         .iter()
@@ -400,8 +412,9 @@ fn symbolicate_js(cache: &SymbolCache, artifacts: &[ArtifactRef], frame: &Frame)
         })
         .unwrap_or((None, vec![], vec![]));
     let in_app = source.as_deref().map(|s| !s.contains("node_modules") && !s.contains("webpack/runtime")).or(frame.in_app);
-    Some(Frame {
-        function: token.get_name().map(|n| n.to_string()).or_else(|| frame.function.clone()),
+    let name = token.get_name().map(|n| n.to_string());
+    Some((Frame {
+        function: frame.function.clone(),
         filename: source.as_ref().map(|s| s.trim_start_matches("webpack://").trim_start_matches("../").to_string()),
         abs_path: frame.abs_path.clone(),
         lineno: Some(src_line + 1),
@@ -412,7 +425,7 @@ fn symbolicate_js(cache: &SymbolCache, artifacts: &[ArtifactRef], frame: &Frame)
         post_context: post,
         symbolicated: Some(true),
         ..Default::default()
-    })
+    }, name))
 }
 
 #[cfg(test)]
@@ -443,10 +456,10 @@ mod tests {
         let cache = SymbolCache::default();
         let artifacts = vec![ArtifactRef { id: "a".into(), kind: "sourcemap".into(), name: "/static/min.js".into(), debug_id: String::new(), path: path.to_string_lossy().into() }];
         let frame = Frame { function: Some("t".into()), abs_path: Some("https://x.io/static/min.js".into()), lineno: Some(1), colno: Some(1), ..Default::default() };
-        let f = symbolicate_js(&cache, &artifacts, &frame).unwrap();
+        let (f, name) = symbolicate_js(&cache, &artifacts, &frame).unwrap();
         assert_eq!(f.filename.as_deref(), Some("src/app.ts"));
         assert_eq!(f.lineno, Some(3));
-        assert_eq!(f.function.as_deref(), Some("boom"));
+        assert_eq!(name.as_deref(), Some("boom"));
         assert_eq!(f.context_line.as_deref(), Some("function boom() { throw new Error() }"));
     }
 
