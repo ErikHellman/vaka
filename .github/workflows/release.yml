@@ -126,8 +126,17 @@ jobs:
         with:
           pattern: cli-*
           merge-multiple: true
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: docs/releases
+          path: src
+      - name: Release notes
+        run: |
+          f="src/docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$f" ]; then cp "$f" notes.md; else : > notes.md; fi
       - uses: softprops/action-gh-release@v2
         with:
           files: vaka-*.tar.gz
+          body_path: notes.md
           generate_release_notes: true
           prerelease: ${{ contains(github.ref, '-') }}
