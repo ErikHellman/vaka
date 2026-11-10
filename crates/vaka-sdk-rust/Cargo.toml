@@ -3,5 +3,24 @@ name = "vaka-sdk"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Rust SDK for Vaka: panics, errors, release health and events"
+
+[lib]
+name = "vaka_sdk"
+
+[features]
+default = []
+tracing = ["dep:tracing", "dep:tracing-subscriber"]
 
 [dependencies]
+ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+serde_json = "1"
+backtrace = "0.3"
+findshlibs = "0.10"
+uuid = { version = "1", features = ["v4"] }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["registry"] }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }

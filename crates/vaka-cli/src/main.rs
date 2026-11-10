@@ -153,6 +153,11 @@ fn parse(r: reqwest::blocking::Response) -> Result<Value> {
 }
 
 fn main() {
+    // Exit quietly when piped into `head` and friends instead of panicking on EPIPE.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     let cli = Cli::parse();
     let ctx = Ctx {
         url: cli.url.trim_end_matches('/').to_string(),
