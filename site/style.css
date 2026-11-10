@@ -1,0 +1,27 @@
+:root { --bg: #fbfbf9; --fg: #1d1d1b; --muted: #6b6b66; --line: #e4e4de; --accent: #2f6f4f; --code: #f1f1ec; }
+@media (prefers-color-scheme: dark) { :root { --bg: #161615; --fg: #e8e8e3; --muted: #9a9a93; --line: #2c2c2a; --accent: #7cc49d; --code: #20201e; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; justify-content: space-between; align-items: center; padding: 12px 24px; border-bottom: 1px solid var(--line); }
+header a { color: var(--fg); text-decoration: none; }
+.brand { font-weight: 700; font-size: 20px; letter-spacing: .02em; }
+.layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); max-width: 1100px; margin: 0 auto; }
+nav { padding: 24px 16px; border-right: 1px solid var(--line); position: sticky; top: 0; align-self: start; max-height: 100vh; overflow: auto; }
+nav a { display: block; padding: 3px 8px; color: var(--muted); text-decoration: none; border-radius: 4px; font-size: 15px; }
+nav a:hover, nav a[aria-current] { color: var(--fg); background: var(--code); }
+nav .group { margin: 16px 8px 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+main { padding: 24px 40px 80px; min-width: 0; }
+h1 { font-size: 32px; line-height: 1.2; margin-top: 8px; }
+h2 { margin-top: 40px; padding-top: 8px; border-top: 1px solid var(--line); }
+a { color: var(--accent); }
+code { background: var(--code); padding: 1px 5px; border-radius: 4px; font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; }
+pre { background: var(--code); padding: 14px 16px; border-radius: 6px; overflow-x: auto; }
+pre code { padding: 0; background: none; }
+table { border-collapse: collapse; width: 100%; display: block; overflow-x: auto; font-size: 15px; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+blockquote { margin: 0; padding: 0 16px; border-left: 3px solid var(--line); color: var(--muted); }
+@media (max-width: 760px) {
+  .layout { grid-template-columns: 1fr; }
+  nav { position: static; max-height: none; border-right: 0; border-bottom: 1px solid var(--line); padding: 12px 16px; }
+  main { padding: 16px; }
+}

@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8
+        env:
+          CLICKHOUSE_USER: vaka
+          CLICKHOUSE_PASSWORD: vaka
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+        ports: ["8123:8123"]
+        options: >-
+          --health-cmd "wget -qO- http://localhost:8123/ping"
+          --health-interval 5s --health-timeout 3s --health-retries 30
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: vaka
+          POSTGRES_PASSWORD: vaka
+          POSTGRES_DB: vaka
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U vaka" --health-interval 5s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --workspace --all-targets --features vaka-sdk/tracing
+      - name: Unit tests
+        run: cargo test --workspace
+      - name: Smoke test (SQLite)
+        run: |
+          mkdir -p /tmp/vaka-sqlite
+          VAKA_DATA_DIR=/tmp/vaka-sqlite VAKA_LISTEN=127.0.0.1:8080 \
+          VAKA_CLICKHOUSE_URL=http://localhost:8123 VAKA_CLICKHOUSE_USER=vaka VAKA_CLICKHOUSE_PASSWORD=vaka \
+          VAKA_CLICKHOUSE_DATABASE=vaka_sqlite \
+          VAKA_ADMIN_EMAIL=ci@example.com VAKA_ADMIN_PASSWORD=password123 \
+            ./target/debug/vaka-server > /tmp/vaka-sqlite.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8080/health && break; sleep 1; done
+          VAKA=http://127.0.0.1:8080 EMAIL=ci@example.com PASSWORD=password123 bash scripts/smoke.sh
+          kill $SERVER_PID
+      - name: Smoke test (Postgres)
+        run: |
+          mkdir -p /tmp/vaka-pg
+          VAKA_DATA_DIR=/tmp/vaka-pg VAKA_LISTEN=127.0.0.1:8081 VAKA_DB_URL=postgres://vaka:vaka@localhost:5432/vaka \
+          VAKA_CLICKHOUSE_URL=http://localhost:8123 VAKA_CLICKHOUSE_USER=vaka VAKA_CLICKHOUSE_PASSWORD=vaka \
+          VAKA_CLICKHOUSE_DATABASE=vaka_pg \
+          VAKA_ADMIN_EMAIL=ci@example.com VAKA_ADMIN_PASSWORD=password123 \
+            ./target/debug/vaka-server > /tmp/vaka-pg.log 2>&1 &
+          SERVER_PID=$!
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8081/health && break; sleep 1; done
+          VAKA=http://127.0.0.1:8081 EMAIL=ci@example.com PASSWORD=password123 bash scripts/smoke.sh
+          kill $SERVER_PID
+      - name: Server logs
+        if: failure()
+        run: tail -n 200 /tmp/vaka-*.log
+
+  js:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sdks/js/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
