@@ -204,6 +204,11 @@ async fn accept(
             format!("too many items ({}), the limit is {MAX_ITEMS_PER_REQUEST} per request", items.len()),
         ));
     }
+    // Refuse the whole batch up front when the queue is nearly full, so SDKs can retry it
+    // without creating duplicates of items that were already enqueued.
+    if state.work_tx.capacity() < items.len() {
+        return Err(IngestError(StatusCode::TOO_MANY_REQUESTS, "ingest queue is full, retry with backoff".into()));
+    }
     let mut accepted = 0usize;
     let mut rejected = Vec::new();
     let salt = current_salt(state).await;
@@ -258,11 +263,11 @@ async fn accept(
                 }
             }
         };
-        if state.work_tx.try_send(work).is_err() {
-            return Err(IngestError(
-                StatusCode::TOO_MANY_REQUESTS,
-                "ingest queue is full, retry with backoff".into(),
-            ));
+        if let Err(tokio::sync::mpsc::error::TrySendError::Full(work)) = state.work_tx.try_send(work) {
+            // Lost a race for the last slots: wait briefly rather than failing half a batch.
+            if tokio::time::timeout(std::time::Duration::from_secs(5), state.work_tx.send(work)).await.map(|r| r.is_err()).unwrap_or(true) {
+                return Err(IngestError(StatusCode::SERVICE_UNAVAILABLE, "ingest queue is full, retry with backoff".into()));
+            }
         }
         accepted += 1;
     }

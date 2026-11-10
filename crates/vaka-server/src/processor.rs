@@ -129,6 +129,21 @@ pub fn spawn(state: AppState, mut rx: mpsc::Receiver<Work>) {
         let mut sessions: Vec<SessionRow> = Vec::new();
         let mut events: Vec<EventRow> = Vec::new();
         let mut tick = tokio::time::interval(Duration::from_millis(1000));
+        // Flush in the background (at most 2 inserts in flight) so processing never waits on ClickHouse.
+        let inflight = std::sync::Arc::new(tokio::sync::Semaphore::new(2));
+        let spawn_flush = |state: &AppState, e: &mut Vec<ErrorRow>, s: &mut Vec<SessionRow>, v: &mut Vec<EventRow>, sem: std::sync::Arc<tokio::sync::Semaphore>| {
+            let (state, mut e, mut s, mut v) = (state.clone(), std::mem::take(e), std::mem::take(s), std::mem::take(v));
+            async move {
+                if e.is_empty() && s.is_empty() && v.is_empty() {
+                    return;
+                }
+                let permit = sem.acquire_owned().await.expect("semaphore closed");
+                tokio::spawn(async move {
+                    flush(&state, &mut e, &mut s, &mut v).await;
+                    drop(permit);
+                });
+            }
+        };
         loop {
             tokio::select! {
                 msg = rx.recv() => {
@@ -143,14 +158,15 @@ pub fn spawn(state: AppState, mut rx: mpsc::Receiver<Work>) {
                         Work::Session(s) => sessions.push(s),
                         Work::Event(e) => events.push(*e),
                     }
-                    if errors.len() + sessions.len() + events.len() >= 2000 {
-                        flush(&state, &mut errors, &mut sessions, &mut events).await;
+                    if errors.len() + sessions.len() + events.len() >= 5000 {
+                        spawn_flush(&state, &mut errors, &mut sessions, &mut events, inflight.clone()).await;
                     }
                 }
-                _ = tick.tick() => flush(&state, &mut errors, &mut sessions, &mut events).await,
+                _ = tick.tick() => spawn_flush(&state, &mut errors, &mut sessions, &mut events, inflight.clone()).await,
             }
         }
         flush(&state, &mut errors, &mut sessions, &mut events).await;
+        let _ = inflight.acquire_many(2).await;
     });
 }
 
