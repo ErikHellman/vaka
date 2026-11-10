@@ -1,0 +1,1 @@
+# javascript {{ENDPOINT}} {{KEY}}

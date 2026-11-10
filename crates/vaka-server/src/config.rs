@@ -1,0 +1,54 @@
+use std::env;
+
+#[derive(Clone, Debug)]
+pub struct Config {
+    pub listen: String,
+    pub public_url: String,
+    pub db_url: String,
+    pub clickhouse_url: String,
+    pub clickhouse_user: String,
+    pub clickhouse_password: String,
+    pub clickhouse_database: String,
+    pub admin_email: Option<String>,
+    pub admin_password: Option<String>,
+    pub data_dir: String,
+    pub geoip_db: Option<String>,
+    pub resend_api_key: Option<String>,
+    pub email_from: String,
+    pub default_retention_days: i64,
+    pub secure_cookies: bool,
+}
+
+fn var(name: &str) -> Option<String> {
+    env::var(name).ok().filter(|v| !v.trim().is_empty())
+}
+
+impl Config {
+    pub fn from_env() -> anyhow::Result<Self> {
+        let data_dir = var("VAKA_DATA_DIR").unwrap_or_else(|| "./data".into());
+        let public_url = var("VAKA_PUBLIC_URL").unwrap_or_else(|| "http://localhost:8080".into());
+        Ok(Self {
+            listen: var("VAKA_LISTEN").unwrap_or_else(|| "0.0.0.0:8080".into()),
+            secure_cookies: public_url.starts_with("https://"),
+            public_url: public_url.trim_end_matches('/').to_string(),
+            db_url: var("VAKA_DB_URL").unwrap_or_else(|| format!("sqlite://{data_dir}/vaka.db?mode=rwc")),
+            clickhouse_url: var("VAKA_CLICKHOUSE_URL").unwrap_or_else(|| "http://localhost:8123".into()),
+            clickhouse_user: var("VAKA_CLICKHOUSE_USER").unwrap_or_else(|| "default".into()),
+            clickhouse_password: var("VAKA_CLICKHOUSE_PASSWORD").unwrap_or_default(),
+            clickhouse_database: var("VAKA_CLICKHOUSE_DATABASE").unwrap_or_else(|| "vaka".into()),
+            admin_email: var("VAKA_ADMIN_EMAIL"),
+            admin_password: var("VAKA_ADMIN_PASSWORD"),
+            geoip_db: var("VAKA_GEOIP_DB"),
+            resend_api_key: var("VAKA_RESEND_API_KEY"),
+            email_from: var("VAKA_EMAIL_FROM").unwrap_or_else(|| "Vaka <vaka@localhost>".into()),
+            default_retention_days: var("VAKA_DEFAULT_RETENTION_DAYS")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(90),
+            data_dir,
+        })
+    }
+
+    pub fn artifact_dir(&self) -> String {
+        format!("{}/artifacts", self.data_dir)
+    }
+}
