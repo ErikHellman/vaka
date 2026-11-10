@@ -1,1 +1,52 @@
 # Vaka
+
+> Self-hosted crash reporting and analytics for agents. Crashes and errors are grouped into
+> issues and symbolicated; web and mobile analytics are cookieless. There is no dashboard:
+> query and triage through the REST API ({{ENDPOINT}}/api/v1) or the MCP server ({{ENDPOINT}}/mcp).
+
+Instance: {{ENDPOINT}}
+
+## Integrate an app (do this when asked to "add Vaka" or "set up crash reporting/analytics")
+
+1. You need an API token (`vt_...`) from the person running Vaka. An all-projects write token
+   can create projects.
+2. Create a project: MCP tool `create_project`, or
+   `POST {{ENDPOINT}}/api/v1/projects {"name": "...", "platform": "javascript|android|ios|rust|go|node|python|jvm|dotnet|other"}`.
+   The response contains the ingest key (`vk_...`, safe to embed in apps).
+3. Get the install guide with the key filled in: MCP tool `get_install_instructions`, or
+   `GET {{ENDPOINT}}/api/v1/projects/{project}/install/{javascript|android|ios|rust|http}`.
+   Follow it step by step, including the debug file upload step in the build.
+4. Verify: send a test event and confirm it with `list_issues`.
+
+- [Install: JavaScript (browser)]({{ENDPOINT}}/docs/install/javascript)
+- [Install: Android]({{ENDPOINT}}/docs/install/android)
+- [Install: iOS]({{ENDPOINT}}/docs/install/ios)
+- [Install: Rust]({{ENDPOINT}}/docs/install/rust)
+- [Install: any other language over HTTP]({{ENDPOINT}}/docs/install/http)
+
+## Investigate and fix crashes
+
+Connect the MCP server (`{{ENDPOINT}}/mcp`, header `Authorization: Bearer vt_...`).
+Loop: `list_issues` → `get_issue` (frames[0] is the crash site; read breadcrumbs and tags; open
+the in-app frames in the repo) → fix → `resolve_issue` with `resolved_in_release` → `comment_issue`
+with the fix. For "what changed" questions use `release_health`, `compare_releases` and `explain_spike`.
+
+## Docs
+
+- [Overview]({{ENDPOINT}}/docs/index.md)
+- [Quickstart]({{ENDPOINT}}/docs/quickstart.md)
+- [MCP server and tools]({{ENDPOINT}}/docs/mcp.md)
+- [REST API]({{ENDPOINT}}/docs/api.md) and [OpenAPI]({{ENDPOINT}}/api/v1/openapi.json)
+- [Ingest protocol (write your own SDK)]({{ENDPOINT}}/docs/ingest.md)
+- [CLI: debug file uploads]({{ENDPOINT}}/docs/cli.md)
+- [Alerts and webhooks]({{ENDPOINT}}/docs/alerts.md)
+- [Privacy, retention, user deletion]({{ENDPOINT}}/docs/privacy.md)
+- [Self-hosting]({{ENDPOINT}}/docs/self-hosting.md)
+
+## SDK references
+
+- [JavaScript]({{ENDPOINT}}/docs/sdk-javascript.md)
+- [Android]({{ENDPOINT}}/docs/sdk-android.md)
+- [iOS]({{ENDPOINT}}/docs/sdk-ios.md)
+- [Rust]({{ENDPOINT}}/docs/sdk-rust.md)
+- [HTTP]({{ENDPOINT}}/docs/sdk-http.md)

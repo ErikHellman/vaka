@@ -289,11 +289,16 @@ pub async fn current_salt(state: &AppState) -> String {
     salt
 }
 
+/// Hash a mobile/app install id so it is never stored raw (stable, so users can be counted).
+pub fn hash_install_id(project_id: &str, anon_id: &str) -> String {
+    sha256_hex(&format!("install|{project_id}|{anon_id}"))[..16].to_string()
+}
+
 /// Anonymous, non-reversible visitor id that changes every day (Plausible-style).
 pub fn visitor_id(salt: &str, project_id: &str, ctx: &RequestCtx, anon_id: Option<&str>) -> String {
     let input = match anon_id.filter(|a| !a.is_empty()) {
         // Mobile apps send a random install id; hash it so it is never stored raw.
-        Some(a) => format!("install|{project_id}|{a}"),
+        Some(a) => return hash_install_id(project_id, a),
         None => format!(
             "{salt}|{project_id}|{}|{}",
             ctx.ip.map(|i| i.to_string()).unwrap_or_default(),

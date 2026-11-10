@@ -1,1 +1,85 @@
-# mcp
+# MCP server
+
+Vaka is an MCP server, so coding agents can query crashes and analytics, triage issues and set
+up new projects without a dashboard.
+
+- Endpoint: `{{ENDPOINT}}/mcp` (Streamable HTTP, stateless JSON responses)
+- Auth: `Authorization: Bearer vt_...` (an [API token](api.md#authentication))
+- Protocol versions: 2025-06-18, 2025-03-26, 2024-11-05
+
+Use a **read** token for agents that only investigate, and a **write** token for agents that
+also resolve issues, comment, create alert rules or delete user data. A token scoped to all
+projects with write access can create projects.
+
+## Connect
+
+Claude Code:
+
+```sh
+claude mcp add --transport http vaka {{ENDPOINT}}/mcp --header "Authorization: Bearer vt_..."
+```
+
+Any client that takes a JSON config:
+
+```json
+{
+  "mcpServers": {
+    "vaka": {
+      "type": "http",
+      "url": "{{ENDPOINT}}/mcp",
+      "headers": {"Authorization": "Bearer vt_..."}
+    }
+  }
+}
+```
+
+## Tools
+
+Read:
+
+| Tool | What it does |
+| --- | --- |
+| `list_projects` | Projects the token can access, with platform, retention and ingest keys |
+| `get_install_instructions` | Install guide for a platform with the project's endpoint and key filled in |
+| `list_issues` | Grouped errors with event and user counts in a window (`status`, `query`, `release`, `environment`, `since`, `sort`, `limit`) |
+| `get_issue` | Latest event with symbolicated stack trace (`frames[0]` is the crash site), source context, breadcrumbs, tags and breakdowns |
+| `list_issue_events` | Recent individual events for an issue |
+| `get_event` | One event in full |
+| `search_events` | Search events by text, level, release, environment, user id or exception type |
+| `release_health` | Crash-free sessions and users, sessions, errors and new issues per release |
+| `compare_releases` | Two releases side by side: new, gone and increased issues |
+| `explain_spike` | Why errors went up: recent window vs baseline, ranked by issue, release, OS, device, country, exception type |
+| `analytics_summary` | Visitors, pageviews, screen views, custom events, with the previous period |
+| `analytics_timeseries` | Metrics per hour, day, week or month |
+| `analytics_breakdown` | Top values of a dimension (pages, referrers, countries, browsers, events, `prop:<name>`) |
+| `top_pages` | Most visited pages |
+
+Write:
+
+| Tool | What it does |
+| --- | --- |
+| `create_project` | Create a project and its ingest key (all-project write token) |
+| `resolve_issue` | Resolve, optionally `resolved_in_release`; a new event reopens it as a regression |
+| `ignore_issue` | Ignore forever or for a duration (`ignore_for`: `24h`, `7d`) |
+| `reopen_issue` | Set back to open |
+| `assign_issue` | Assign to a user by email |
+| `comment_issue` | Add a Markdown comment, e.g. root cause and a link to the fix |
+| `create_alert_rule` | Webhook or email on new issues, regressions or spikes |
+| `delete_user_data` | Delete all data for a user id in a project (cannot be undone) |
+
+## Resources
+
+- `vaka://issues/{issue}`: an issue with its latest event (id or short id like `WEB-12`)
+- `vaka://projects/{project}/releases/{release}`: health for one release
+
+## Example prompts
+
+- "What are the top new crashes in the iOS app since yesterday's release? Fix the worst one."
+- "Compare release 2.3.0 with 2.4.0 for the web project. Did crash-free sessions drop?"
+- "Errors spiked in the last hour. Explain why."
+- "Which referrers brought the most visitors to /pricing this month?"
+- "Set up Vaka for this repository" (uses `create_project` and `get_install_instructions`).
+
+A typical bug-fix loop: `list_issues` → `get_issue` (read the stack and breadcrumbs, open the
+files at the in-app frames) → fix → `resolve_issue` with `resolved_in_release` set to the next
+version → `comment_issue` with the commit or PR link.

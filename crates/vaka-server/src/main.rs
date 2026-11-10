@@ -114,8 +114,9 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn health(axum::extract::State(s): axum::extract::State<state::AppState>) -> Json<serde_json::Value> {
+async fn health(axum::extract::State(s): axum::extract::State<state::AppState>) -> (axum::http::StatusCode, Json<serde_json::Value>) {
     let db_ok = sqlx::query("SELECT 1").execute(&s.db).await.is_ok();
     let ch_ok = s.ch.ping().await;
-    Json(serde_json::json!({"ok": db_ok && ch_ok, "db": db_ok, "clickhouse": ch_ok, "version": env!("CARGO_PKG_VERSION")}))
+    let status = if db_ok && ch_ok { axum::http::StatusCode::OK } else { axum::http::StatusCode::SERVICE_UNAVAILABLE };
+    (status, Json(serde_json::json!({"ok": db_ok && ch_ok, "db": db_ok, "clickhouse": ch_ok, "version": env!("CARGO_PKG_VERSION")})))
 }

@@ -1,1 +1,29 @@
-# index
+# Vaka
+
+Vaka is a self-hosted crash reporting and analytics service built for coding agents.
+
+- **Crash reporting**: errors and crashes grouped into issues, symbolicated (JS source maps,
+  Android R8, iOS dSYM, native/Rust debug info), with breadcrumbs, regressions and
+  crash-free users/sessions per release.
+- **Web and mobile analytics**: cookieless, no-PII visitor counts, pageviews, screen views,
+  referrers, UTM tags, devices and countries.
+- **Product analytics**: custom events with properties, breakdowns by any property.
+
+There is no dashboard. A small admin UI (`/ui`) handles setup: users, projects, keys and tokens.
+Everything else goes through the [REST API](api.md) or the [MCP server](mcp.md), so you can ask
+an agent "what broke in yesterday's release and why?" and let it fix the bug.
+
+## Start here
+
+- [Quickstart](quickstart.md): run Vaka and send a first event in five minutes.
+- [Self-hosting](self-hosting.md): configuration, storage, backups and upgrades.
+- Install an SDK: [JavaScript](sdk-javascript.md), [Android](sdk-android.md), [iOS](sdk-ios.md),
+  [Rust](sdk-rust.md), or [any language over HTTP](sdk-http.md).
+- Connect an agent: [MCP](mcp.md). Machine-readable index: [/llms.txt]({{ENDPOINT}}/llms.txt).
+
+## Reference
+
+- [REST API](api.md) · [MCP tools](mcp.md) · [Ingest protocol](ingest.md)
+- [CLI](cli.md) · [Alerts](alerts.md) · [Privacy and data retention](privacy.md)
+
+Vaka is open source under MIT or Apache-2.0: https://github.com/ErikHellman/vaka

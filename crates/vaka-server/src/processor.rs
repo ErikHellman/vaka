@@ -280,7 +280,7 @@ async fn process_error(
         contexts: if contexts.is_null() { String::new() } else { serde_json::to_string(&contexts)? },
         debug_images: serde_json::to_string(&images)?,
         user_id: item.user_id.clone().or_else(|| item.user.as_ref().and_then(|u| u.id.clone())).unwrap_or_default(),
-        anon_id: item.anon_id.clone().unwrap_or_default(),
+        anon_id: item.anon_id.as_deref().filter(|a| !a.is_empty()).map(|a| crate::ingest::hash_install_id(&project.id, a)).unwrap_or_default(),
         session_id: item.session_id.clone().unwrap_or_default(),
         device_model: device.model.unwrap_or_default(),
         os_name: device.os_name.unwrap_or_default(),
