@@ -86,13 +86,17 @@ async fn main() -> anyhow::Result<()> {
         .max_age(std::time::Duration::from_secs(86400));
 
     let app = Router::new()
-        .merge(ingest::router().layer(ingest_cors).layer(RequestDecompressionLayer::new()))
+        .merge(
+            ingest::router()
+                .layer(ingest_cors)
+                .layer(RequestDecompressionLayer::new())
+                .layer(tower_http::limit::RequestBodyLimitLayer::new(20 * 1024 * 1024)),
+        )
         .merge(api::router())
         .merge(mcp::router())
         .merge(docs::router())
         .merge(admin::router())
         .route("/health", get(health))
-        .layer(tower_http::limit::RequestBodyLimitLayer::new(20 * 1024 * 1024))
         .layer(TraceLayer::new_for_http())
         .layer(tower_http::set_header::SetResponseHeaderLayer::if_not_present(
             axum::http::header::HeaderName::from_static("x-content-type-options"),
