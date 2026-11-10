@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create on the dispatched commit and release (e.g. v0.2.0). Empty = dry run."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -11,9 +16,36 @@ permissions:
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/vaka
+  # The release tag: the pushed tag, or the one a manual run creates.
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
+  # A manual run with a tag creates it here (plus a bare-semver alias such as 0.2.0 for
+  # Swift Package Manager). Tags pushed by GITHUB_TOKEN don't trigger workflows, so the
+  # rest of this run builds the release itself.
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.ref.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: ref
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$INPUT_TAG" -m "Vaka ${INPUT_TAG#v}"
+            git tag -a "${INPUT_TAG#v}" -m "Vaka ${INPUT_TAG#v} (SwiftPM alias of $INPUT_TAG)"
+            git push origin "refs/tags/$INPUT_TAG" "refs/tags/${INPUT_TAG#v}"
+            echo "ref=refs/tags/$INPUT_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=$GITHUB_REF" >> "$GITHUB_OUTPUT"
+          fi
+
   image:
+    needs: tag
     strategy:
       matrix:
         include:
@@ -24,6 +56,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag.outputs.ref }}
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -74,9 +108,9 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
+            type=semver,pattern={{version}},value=${{ env.TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
+            type=raw,value=latest,enable=${{ startsWith(env.TAG, 'v') && !contains(env.TAG, '-') }}
             type=sha
       - name: Create manifest
         working-directory: /tmp/digests
@@ -86,6 +120,7 @@ jobs:
             $(printf "$IMAGE@sha256:%s " *)
 
   cli:
+    needs: tag
     strategy:
       matrix:
         include:
@@ -100,6 +135,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.tag.outputs.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -118,8 +155,8 @@ jobs:
           path: vaka-${{ matrix.target }}.tar.gz
 
   github-release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [manifest, cli]
+    if: startsWith(inputs.tag || github.ref_name, 'v')
+    needs: [tag, manifest, cli]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -128,15 +165,17 @@ jobs:
           merge-multiple: true
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.tag.outputs.ref }}
           sparse-checkout: docs/releases
           path: src
       - name: Release notes
         run: |
-          f="src/docs/releases/${GITHUB_REF_NAME}.md"
+          f="src/docs/releases/${TAG}.md"
           if [ -f "$f" ]; then cp "$f" notes.md; else : > notes.md; fi
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
           files: vaka-*.tar.gz
           body_path: notes.md
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref, '-') }}
+          prerelease: ${{ contains(env.TAG, '-') }}
