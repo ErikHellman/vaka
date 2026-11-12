@@ -1,6 +1,6 @@
 # Alerts
 
-Alert rules notify a webhook or email address. Create them in the admin UI (**Alerts**), with
+Alert rules notify a webhook, a Slack channel or an email address. Create them in the admin UI (**Alerts**), with
 `POST /api/v1/alert-rules`, or with the MCP tool `create_alert_rule`.
 
 ## Triggers
@@ -10,6 +10,7 @@ Alert rules notify a webhook or email address. Create them in the admin UI (**Al
 | `new_issue` | An error is seen for the first time |
 | `regression` | A resolved issue gets a new event |
 | `spike` | An issue has at least `threshold` events (default 50, minimum 10) in the last hour and more than 3× its hourly average over the previous day. Checked every 5 minutes |
+| `digest` | Once a day at `threshold` o'clock UTC (default 8): per project, errors and new issues with the change from the day before, top issues, crash-free sessions, visitors and pageviews. Quiet projects are left out |
 
 A rule without `project` applies to all projects. A spike rule notifies at most once per issue
 every 6 hours.
@@ -27,6 +28,20 @@ curl -X POST {{ENDPOINT}}/api/v1/alert-rules -H "Authorization: Bearer $VAKA_TOK
     "secret": "a-shared-secret"
   }'
 ```
+
+For Slack, create an [incoming webhook](https://api.slack.com/messaging/webhooks) and use
+`"channel": "slack"` with the webhook URL as `"target"`. Messages show the issue, culprit, release,
+counts and owners, linked to the issue. Slack-compatible webhooks (Mattermost) work too.
+
+For a daily digest to Slack at 07:00 UTC:
+
+```sh
+curl -X POST {{ENDPOINT}}/api/v1/alert-rules -H "Authorization: Bearer $VAKA_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"trigger": "digest", "channel": "slack", "target": "https://hooks.slack.com/services/…", "threshold": 7}'
+```
+
+Testing a digest rule sends today's digest right away.
 
 For email, set `"channel": "email"` and `"target"` to one or more comma-separated addresses.
 Email needs `VAKA_RESEND_API_KEY` and `VAKA_EMAIL_FROM` on the server.
@@ -49,6 +64,10 @@ Test a rule with `POST /api/v1/alert-rules/{id}/test` and see results with
   "sent_at": "2026-11-10T08:00:00Z"
 }
 ```
+
+Issue payloads also carry `issue.owners` (from [ownership rules](api.md#ownership)).
+
+A digest webhook gets `{"trigger": "digest", "period": {"since", "until"}, "projects": [{"project", "errors", "errors_prev", "new_issue_count", "new_issues", "top_issues", "sessions", "crash_free_sessions", "visitors", "visitors_prev", "pageviews", "pageviews_prev"}], "sent_at"}`.
 
 For `spike`, `details` is `{"last_hour": 140, "hourly_avg_prev_24h": 12.5}`. Non-2xx responses and
 timeouts (10 s) are recorded as failed deliveries.

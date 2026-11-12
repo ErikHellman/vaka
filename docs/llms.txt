@@ -50,7 +50,7 @@ Right now: `realtime_visitors`. Rollout of a release: `release_adoption`.
 - [REST API]({{ENDPOINT}}/docs/api.md) and [OpenAPI]({{ENDPOINT}}/api/v1/openapi.json)
 - [Ingest protocol (write your own SDK)]({{ENDPOINT}}/docs/ingest.md)
 - [CLI: debug file uploads]({{ENDPOINT}}/docs/cli.md)
-- [Alerts and webhooks]({{ENDPOINT}}/docs/alerts.md)
+- [Alerts: webhooks, Slack, email, daily digests]({{ENDPOINT}}/docs/alerts.md)
 - [Privacy, retention, user deletion]({{ENDPOINT}}/docs/privacy.md)
 - [Self-hosting]({{ENDPOINT}}/docs/self-hosting.md)
 

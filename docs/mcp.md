@@ -79,7 +79,7 @@ Write:
 | `delete_goal` | Delete a goal |
 | `set_ownership_rules` | Replace the project's ownership rules (CODEOWNERS-like; see the REST docs) |
 | `comment_issue` | Add a Markdown comment, e.g. root cause and a link to the fix |
-| `create_alert_rule` | Webhook or email on new issues, regressions or spikes |
+| `create_alert_rule` | Webhook, Slack or email on new issues, regressions or spikes, or a daily digest |
 | `delete_user_data` | Delete all data for a user id in a project (cannot be undone) |
 
 ## Resources

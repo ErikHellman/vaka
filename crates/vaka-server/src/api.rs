@@ -690,6 +690,12 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
     if channel == "webhook" && !(target.starts_with("https://") || target.starts_with("http://")) {
         return Err(ApiError::bad("webhook target must be an http(s) URL"));
     }
+    if channel == "slack" && !(target.starts_with("https://") || target.starts_with("http://")) {
+        return Err(ApiError::bad("slack target must be an incoming webhook URL (https://hooks.slack.com/services/...)"));
+    }
+    if trigger == "digest" && !(0..=23).contains(&b.threshold.unwrap_or(8)) {
+        return Err(ApiError::bad("for digests, threshold is the UTC hour to send at (0 to 23, default 8)"));
+    }
     if channel == "email" && !target.contains('@') {
         return Err(ApiError::bad("email target must be one or more comma-separated email addresses"));
     }
@@ -702,7 +708,7 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
         .bind(&channel)
         .bind(&target)
         .bind(b.secret.unwrap_or_default())
-        .bind(b.threshold.unwrap_or(if trigger == "spike" { 50 } else { 0 }))
+        .bind(b.threshold.unwrap_or(match trigger.as_str() { "spike" => 50, "digest" => 8, _ => 0 }))
         .bind(b.enabled.unwrap_or(true) as i64)
         .bind(now_ms())
         .execute(&s.db)

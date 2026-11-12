@@ -109,6 +109,30 @@ OI=$(curl -sf "${A[@]}" "$VAKA/api/v1/issues/$OWNED")
 echo "$OI" | j 'd["suspect_commits"][0]["url"]' | grep -q 'github.com/acme/shop/commit/deadbee' || fail "commit url"
 [ "$(echo "$OI" | j 'len(d["suspect_commits"])')" = "1" ] || fail "unrelated commit suspected"
 
+# Slack alerts and digests, delivered to a local receiver
+HOOKS=$(mktemp); HOOK_PORT=${HOOK_PORT:-18099}
+python3 -c '
+import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers["content-length"] or 0))
+        open(sys.argv[1], "ab").write(self.path.encode() + b" " + body + b"\n")
+        self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[2])), H).serve_forever()
+' "$HOOKS" "$HOOK_PORT" & HOOK_PID=$!
+trap 'kill $HOOK_PID 2>/dev/null || true' EXIT
+sleep 0.5
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d "{\"project\":\"$SLUG\",\"trigger\":\"new_issue\",\"channel\":\"slack\",\"target\":\"http://127.0.0.1:$HOOK_PORT/slack\"}" >/dev/null || fail "slack rule"
+send '{"items":[{"type":"error","release":"2.0.0","exception":{"type":"SlackTestError","value":"for slack","stacktrace":[{"function":"total","filename":"src/checkout/total.ts","lineno":7,"in_app":true}]}}]}' >/dev/null
+DIGEST=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d "{\"project\":\"$SLUG\",\"trigger\":\"digest\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/digest\"}" | j 'd["id"]')
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules/$DIGEST/test" >/dev/null || fail "digest test"
+grep '^/digest ' "$HOOKS" | grep -q '"top_issues"' || fail "digest payload: $(cat "$HOOKS")"
+grep '^/digest ' "$HOOKS" | grep -q "\"slug\":\"$SLUG\"" || fail "digest project"
+for i in $(seq 1 10); do grep -q '^/slack ' "$HOOKS" && break; sleep 0.5; done
+grep '^/slack ' "$HOOKS" | grep -q 'New issue' || fail "slack alert: $(cat "$HOOKS")"
+grep '^/slack ' "$HOOKS" | grep -q "owners $EMAIL" || fail "slack owners: $(cat "$HOOKS")"
+
 # MCP
 M=(-H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream')
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' | grep -q '"vaka"' || fail mcp-init

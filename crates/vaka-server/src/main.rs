@@ -82,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
     processor::spawn(state.clone(), work_rx);
     maintenance::spawn(state.clone());
     alerts::spawn_spike_detector(state.clone());
+    alerts::spawn_digest_scheduler(state.clone());
 
     let ingest_cors = CorsLayer::new()
         .allow_origin(Any)
