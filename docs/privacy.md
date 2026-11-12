@@ -24,6 +24,9 @@ personal data as possible. Defaults are strict; identification is opt-in.
 Nothing links data to a person unless the app calls `identify(userId)`. Use an internal,
 opaque id rather than an email address. `identify(null)` stops sending it.
 
+Identified users can be listed (`GET /api/v1/projects/{p}/users`) and their activity read as a
+timeline, by anyone with read access to the project. Anonymous visitors never appear there.
+
 ## Crash report scrubbing
 
 Before storage, error events are scrubbed (per project, on by default):

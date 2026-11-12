@@ -646,14 +646,14 @@ pub const DIMENSIONS: &[&str] = &[
     "platform", "event", "type", "screen", "prop:<name>",
 ];
 
-struct Where {
-    sql: String,
-    params: Vec<(&'static str, String)>,
-    since: i64,
-    until: i64,
+pub(crate) struct Where {
+    pub sql: String,
+    pub params: Vec<(&'static str, String)>,
+    pub since: i64,
+    pub until: i64,
 }
 
-fn analytics_where(project_id: &str, a: &AnalyticsParams) -> QResult<Where> {
+pub(crate) fn analytics_where(project_id: &str, a: &AnalyticsParams) -> QResult<Where> {
     let now = now_ms();
     let since = a.since.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 30 * 86_400_000);
     let until = a.until.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now);
@@ -670,19 +670,24 @@ fn analytics_where(project_id: &str, a: &AnalyticsParams) -> QResult<Where> {
     const FILTER_NAMES: [&str; 8] = ["f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7"];
     for (i, (dim, val)) in a.filters.iter().enumerate() {
         let name = *FILTER_NAMES.get(i).ok_or_else(|| ApiError::bad("at most 8 filters"))?;
-        let expr = dimension_expr(dim).ok_or_else(|| ApiError::bad(format!("unknown dimension `{dim}`; valid: {}", DIMENSIONS.join(", "))))?;
-        if let Some(v) = val.strip_prefix('~') {
-            conds.push(format!("positionCaseInsensitive({expr}, {{{name}:String}}) > 0"));
-            params.push((name, v.to_string()));
-        } else if let Some(v) = val.strip_prefix('!') {
-            conds.push(format!("{expr} != {{{name}:String}}"));
-            params.push((name, v.to_string()));
-        } else {
-            conds.push(format!("{expr} = {{{name}:String}}"));
-            params.push((name, val.clone()));
-        }
+        let (cond, value) = filter_cond(dim, val, name)?;
+        conds.push(cond);
+        params.push((name, value));
     }
     Ok(Where { sql: conds.join(" AND "), params, since, until })
+}
+
+/// One `dimension=value` filter as SQL with a named parameter. A value starting with `~` means
+/// contains (case-insensitive), `!` means not equal.
+pub(crate) fn filter_cond(dim: &str, val: &str, name: &str) -> QResult<(String, String)> {
+    let expr = dimension_expr(dim).ok_or_else(|| ApiError::bad(format!("unknown dimension `{dim}`; valid: {}", DIMENSIONS.join(", "))))?;
+    Ok(if let Some(v) = val.strip_prefix('~') {
+        (format!("positionCaseInsensitive({expr}, {{{name}:String}}) > 0"), v.to_string())
+    } else if let Some(v) = val.strip_prefix('!') {
+        (format!("{expr} != {{{name}:String}}"), v.to_string())
+    } else {
+        (format!("{expr} = {{{name}:String}}"), val.to_string())
+    })
 }
 
 const METRICS: &str = "uniq(visitor_id) AS visitors, countIf(type = 'pageview') AS pageviews, countIf(type = 'screen_view') AS screen_views, \

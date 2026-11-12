@@ -34,6 +34,12 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/projects/{p}/analytics/timeseries", get(analytics_timeseries))
         .route("/api/v1/projects/{p}/analytics/breakdown", get(analytics_breakdown))
         .route("/api/v1/projects/{p}/explain-spike", get(explain_spike))
+        .route("/api/v1/projects/{p}/analytics/funnel", get(analytics_funnel))
+        .route("/api/v1/projects/{p}/analytics/retention", get(analytics_retention))
+        .route("/api/v1/projects/{p}/analytics/paths", get(analytics_paths))
+        .route("/api/v1/projects/{p}/analytics/events", get(analytics_events))
+        .route("/api/v1/projects/{p}/users", get(list_identified_users))
+        .route("/api/v1/projects/{p}/users/{user_id}/timeline", get(user_timeline))
         .route(
             "/api/v1/projects/{p}/artifacts",
             get(list_artifacts).post(upload_artifact).layer(DefaultBodyLimit::max(1024 * 1024 * 1024)),
@@ -294,6 +300,84 @@ async fn analytics_breakdown(State(s): State<AppState>, p: Principal, Path(proje
     let dim = extra.get("dimension").cloned().ok_or_else(|| ApiError::bad(format!("`dimension` is required; one of {}", query::DIMENSIONS.join(", "))))?;
     let limit = extra.get("limit").and_then(|l| l.parse().ok());
     Ok(Json(query::analytics_breakdown(&s, &p, a, &dim, limit).await?))
+}
+
+// ---------------------------------------------------------------------------
+// Product analytics
+// ---------------------------------------------------------------------------
+
+fn opt_step(v: Option<&String>) -> QResult<Option<crate::product::Step>> {
+    v.filter(|s| !s.is_empty()).map(|s| crate::product::Step::parse(s)).transpose()
+}
+
+fn opt_int(extra: &BTreeMap<String, String>, k: &str) -> QResult<Option<i64>> {
+    extra.get(k).map(|v| v.parse::<i64>().map_err(|_| ApiError::bad(format!("`{k}` must be a number")))).transpose()
+}
+
+/// Funnel: repeated `step=event|dimension:value`, plus `window`, `identity`, `breakdown`, `limit`.
+async fn analytics_funnel(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
+    let steps = url::form_urlencoded::parse(raw.as_deref().unwrap_or("").as_bytes())
+        .filter(|(k, _)| k == "step")
+        .map(|(_, v)| crate::product::Step::parse(&v))
+        .collect::<QResult<Vec<_>>>()?;
+    let (base, extra) = analytics_params(project, raw);
+    let f = crate::product::FunnelParams {
+        base,
+        steps,
+        window: extra.get("window").cloned(),
+        identity: extra.get("identity").cloned(),
+        breakdown: extra.get("breakdown").cloned(),
+        limit: opt_int(&extra, "limit")?,
+    };
+    Ok(Json(crate::product::funnel(&s, &p, f).await?))
+}
+
+/// Retention: `start` and `return` steps (same syntax as funnel steps), `period`, `periods`, `identity`.
+async fn analytics_retention(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
+    let (base, extra) = analytics_params(project, raw);
+    let r = crate::product::RetentionParams {
+        base,
+        start: opt_step(extra.get("start"))?,
+        return_step: opt_step(extra.get("return"))?,
+        period: extra.get("period").cloned(),
+        periods: opt_int(&extra, "periods")?,
+        identity: extra.get("identity").cloned(),
+    };
+    Ok(Json(crate::product::retention(&s, &p, r).await?))
+}
+
+/// Paths: `from` (a label like `pageview /pricing`), `direction`, `depth`, `identity`, `limit`.
+async fn analytics_paths(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
+    let (base, extra) = analytics_params(project, raw);
+    let a = crate::product::PathParams {
+        base,
+        from: extra.get("from").cloned().filter(|f| !f.is_empty()),
+        direction: extra.get("direction").cloned(),
+        depth: opt_int(&extra, "depth")?,
+        identity: extra.get("identity").cloned(),
+        limit: opt_int(&extra, "limit")?,
+    };
+    Ok(Json(crate::product::paths(&s, &p, a).await?))
+}
+
+async fn analytics_events(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
+    let (a, extra) = analytics_params(project, raw);
+    Ok(Json(crate::product::event_catalog(&s, &p, a, opt_int(&extra, "limit")?).await?))
+}
+
+#[derive(Deserialize)]
+struct UsersQuery {
+    since: Option<String>,
+    query: Option<String>,
+    limit: Option<i64>,
+}
+
+async fn list_identified_users(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<UsersQuery>) -> J {
+    Ok(Json(crate::product::list_users(&s, &p, crate::product::UserListParams { project, since: q.since, query: q.query, limit: q.limit }).await?))
+}
+
+async fn user_timeline(State(s): State<AppState>, p: Principal, Path((project, user_id)): Path<(String, String)>, Query(q): Query<UsersQuery>) -> J {
+    Ok(Json(crate::product::user_timeline(&s, &p, &project, &user_id, q.since.as_deref(), q.limit).await?))
 }
 
 #[derive(Deserialize)]

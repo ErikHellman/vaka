@@ -172,6 +172,34 @@ fn analytics_args(args: &Value) -> Result<AnalyticsParams, ToolError> {
     Ok(AnalyticsParams { project: req(args, "project")?, since: s(args, "since"), until: s(args, "until"), filters, r#type: s(args, "type") })
 }
 
+/// A funnel/retention step: `"signup"`, `"pageview|path:/pricing"`, or `{"event": ..., "filters": {...}}`.
+fn step_value(v: &Value) -> Result<crate::product::Step, ToolError> {
+    match v {
+        Value::String(s) => Ok(crate::product::Step::parse(s)?),
+        Value::Object(o) => {
+            let event = o.get("event").and_then(|e| e.as_str()).unwrap_or("").to_string();
+            if event.is_empty() {
+                return Err(ToolError::Failed("each step needs an `event`".into()));
+            }
+            let filters = o
+                .get("filters")
+                .and_then(|f| f.as_object())
+                .map(|f| f.iter().map(|(k, v)| (k.clone(), crate::models::value_to_string(v))).collect())
+                .unwrap_or_default();
+            Ok(crate::product::Step { event, filters })
+        }
+        _ => Err(ToolError::Failed("a step is a string like \"signup\" or an object {\"event\", \"filters\"}".into())),
+    }
+}
+
+fn opt_step_arg(a: &Value, k: &str) -> Result<Option<crate::product::Step>, ToolError> {
+    match a.get(k) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) if s.is_empty() => Ok(None),
+        Some(v) => step_value(v).map(Some),
+    }
+}
+
 async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Result<Value, ToolError> {
     Ok(match name {
         "list_projects" => query::list_projects(state, p).await?,
@@ -231,6 +259,49 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
         "analytics_timeseries" => query::analytics_timeseries(state, p, analytics_args(&a)?, s(&a, "interval").as_deref()).await?,
         "analytics_breakdown" => query::analytics_breakdown(state, p, analytics_args(&a)?, &req(&a, "dimension")?, i(&a, "limit")).await?,
         "top_pages" => query::analytics_breakdown(state, p, analytics_args(&a)?, "path", i(&a, "limit")).await?,
+        "analytics_funnel" => {
+            let steps = a
+                .get("steps")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| ToolError::Failed("`steps` must be an array of 2 to 10 steps".into()))?
+                .iter()
+                .map(step_value)
+                .collect::<Result<Vec<_>, _>>()?;
+            crate::product::funnel(
+                state,
+                p,
+                crate::product::FunnelParams { base: analytics_args(&a)?, steps, window: s(&a, "window"), identity: s(&a, "identity"), breakdown: s(&a, "breakdown"), limit: i(&a, "limit") },
+            )
+            .await?
+        }
+        "analytics_retention" => {
+            crate::product::retention(
+                state,
+                p,
+                crate::product::RetentionParams {
+                    base: analytics_args(&a)?,
+                    start: opt_step_arg(&a, "start")?,
+                    return_step: opt_step_arg(&a, "return")?,
+                    period: s(&a, "period"),
+                    periods: i(&a, "periods"),
+                    identity: s(&a, "identity"),
+                },
+            )
+            .await?
+        }
+        "analytics_paths" => {
+            crate::product::paths(
+                state,
+                p,
+                crate::product::PathParams { base: analytics_args(&a)?, from: s(&a, "from"), direction: s(&a, "direction"), depth: i(&a, "depth"), identity: s(&a, "identity"), limit: i(&a, "limit") },
+            )
+            .await?
+        }
+        "list_event_names" => crate::product::event_catalog(state, p, analytics_args(&a)?, i(&a, "limit")).await?,
+        "list_identified_users" => {
+            crate::product::list_users(state, p, crate::product::UserListParams { project: req(&a, "project")?, since: s(&a, "since"), query: s(&a, "query"), limit: i(&a, "limit") }).await?
+        }
+        "get_user_timeline" => crate::product::user_timeline(state, p, &req(&a, "project")?, &req(&a, "user_id")?, s(&a, "since").as_deref(), i(&a, "limit")).await?,
         "explain_spike" => query::explain_spike(state, p, &req(&a, "project")?, s(&a, "window").as_deref(), s(&a, "baseline").as_deref()).await?,
         "resolve_issue" => {
             query::update_issue(state, p, &req(&a, "issue")?, IssueUpdate { status: Some("resolved".into()), resolved_in_release: s(&a, "resolved_in_release"), ..Default::default() }).await?
@@ -426,6 +497,90 @@ pub fn tools() -> Vec<Value> {
                 ("limit", prop("integer", "Max rows (default 10)")),
             ],
             &["project", "dimension"],
+            true,
+            false,
+        ),
+        tool(
+            "list_event_names",
+            "List event names",
+            "The event catalog: every event name (pageview, screen_view, custom events) with counts, visitors and the property keys it carries. Call this before building funnels or retention.",
+            vec![("project", project()), ("since", since()), ("until", until()), ("limit", prop("integer", "Max events (default 100)"))],
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "analytics_funnel",
+            "Funnel",
+            "Conversion through ordered steps within a time window: people per step, conversion and drop-off, optionally broken down by a dimension.",
+            vec![
+                ("project", project()),
+                ("steps", json!({"type": "array", "minItems": 2, "maxItems": 10, "description": "Ordered steps. Each is an event name (\"signup\"), a string \"pageview|path:/pricing\", or {\"event\": \"pageview\", \"filters\": {\"path\": \"/pricing\"}}. Event names come from list_event_names.", "items": {"anyOf": [{"type": "string"}, {"type": "object", "properties": {"event": {"type": "string"}, "filters": {"type": "object", "additionalProperties": {"type": "string"}}}, "required": ["event"]}]}})),
+                ("window", prop("string", "Max time from first to last step: 30m, 1h, 1d (default), 7d")),
+                ("breakdown", prop("string", "Optional dimension to split by, e.g. country, utm_source, os, prop:plan")),
+                ("identity", prop("string", "visitor (default), user (identified only) or auto")),
+                ("since", since()),
+                ("until", until()),
+                ("filters", filters()),
+                ("limit", prop("integer", "Max breakdown rows (default 10)")),
+            ],
+            &["project", "steps"],
+            true,
+            false,
+        ),
+        tool(
+            "analytics_retention",
+            "Retention",
+            "Cohort retention: people grouped by the day or week they first did the start event, and the share who did the return event in each later period.",
+            vec![
+                ("project", project()),
+                ("start", json!({"description": "Event that puts someone in a cohort (default: any event). Same format as a funnel step.", "anyOf": [{"type": "string"}, {"type": "object"}]})),
+                ("return", json!({"description": "Event that counts as coming back (default: any event). Same format as a funnel step.", "anyOf": [{"type": "string"}, {"type": "object"}]})),
+                ("period", prop("string", "day or week (default)")),
+                ("periods", prop("integer", "Periods to report after the cohort period (default 8 weeks or 14 days, max 30)")),
+                ("identity", prop("string", "auto (default: user id when identified, else visitor), user or visitor")),
+                ("since", prop("string", "Earliest cohort start (default 8 weeks or 14 days ago)")),
+                ("until", until()),
+                ("filters", filters()),
+            ],
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "analytics_paths",
+            "Paths",
+            "Most common sequences of pages, screens and events after (or before) a starting point, within one visit. Labels look like `pageview /pricing`, `screen Checkout` or a custom event name.",
+            vec![
+                ("project", project()),
+                ("from", prop("string", "Starting label, e.g. \"pageview /pricing\" or \"signup\"; omit for paths from the first event of each visit")),
+                ("direction", prop("string", "after (default) or before")),
+                ("depth", prop("integer", "Steps to follow (default 3, max 6)")),
+                ("identity", prop("string", "visitor (default), user or auto")),
+                ("since", since()),
+                ("until", until()),
+                ("filters", filters()),
+                ("limit", prop("integer", "Max paths (default 20)")),
+            ],
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "list_identified_users",
+            "List identified users",
+            "Users the app identified with identify(userId), with event and error counts, first and last seen, last release and platform.",
+            vec![("project", project()), ("since", since()), ("query", prop("string", "Substring of the user id")), ("limit", prop("integer", "Max users (default 50)"))],
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "get_user_timeline",
+            "User timeline",
+            "Everything one identified user did, newest first: events, errors and crashes (with issue short ids) and sessions. Use it to see what led up to a crash.",
+            vec![("project", project()), ("user_id", prop("string", "The id the app passed to identify()")), ("since", prop("string", "Start of the window (default 7d)")), ("limit", prop("integer", "Max entries (default 200)"))],
+            &["project", "user_id"],
             true,
             false,
         ),

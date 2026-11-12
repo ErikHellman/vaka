@@ -83,6 +83,44 @@ curl -H "Authorization: Bearer $VAKA_TOKEN" \
   "{{ENDPOINT}}/api/v1/projects/web/analytics/breakdown?dimension=prop:plan&filter=event:signup&since=30d"
 ```
 
+## Product analytics
+
+Funnels, retention and paths work on the same events as the analytics endpoints and take the same
+`since`, `until` and `filter=dimension:value` parameters (filters apply to every event considered).
+
+A **step** is an event name, optionally with filters: `signup`, `pageview|path:/pricing`,
+`screen_view|screen:Checkout`, `purchase|prop:plan:pro`. Find event names and their property keys
+with the event catalog first.
+
+**Identity** decides who counts as one person: `visitor` (cookieless visitor id: stable per install
+on mobile, new every day for anonymous web visitors), `user` (only events after `identify()`), or
+`auto` (user id when present, else visitor id).
+
+| Method & path | Description |
+| --- | --- |
+| `GET /projects/{p}/analytics/events` | Event catalog: each event name with type, count, visitors, last seen and property keys |
+| `GET /projects/{p}/analytics/funnel` | Repeat `step=` 2 to 10 times, in order. `window` (max time from first to last step, default `1d`), `identity` (default visitor), `breakdown` (a dimension; each person's first non-empty value), `limit` |
+| `GET /projects/{p}/analytics/retention` | `start` (step that puts a person in a cohort the first time they do it; default any event), `return` (step that counts as coming back; default any event), `period` (day\|week, default week), `periods`, `identity` (default auto). `since` = earliest cohort |
+| `GET /projects/{p}/analytics/paths` | `from` (a label such as `pageview /pricing`, `screen Checkout` or `signup`; omit to start at each visit's first event), `direction` (after\|before), `depth` (1 to 6, default 3), `identity`, `limit` |
+| `GET /projects/{p}/users` | Identified users: event and error counts, first/last seen, last release, platform. `since`, `query` (id substring), `limit` |
+| `GET /projects/{p}/users/{user_id}/timeline` | Everything one identified user did, newest first: events, errors/crashes with issue short ids, sessions. `since` (default 7d), `limit` |
+
+```sh
+# Signup funnel from the pricing page, split by traffic source
+curl -G -H "Authorization: Bearer $VAKA_TOKEN" "{{ENDPOINT}}/api/v1/projects/web/analytics/funnel" \
+  --data-urlencode 'step=pageview|path:/pricing' --data-urlencode 'step=signup' \
+  --data-urlencode 'step=purchase' -d window=7d -d breakdown=utm_source -d since=30d
+```
+
+Funnel steps report `count`, `conversion_from_start_pct`, `conversion_from_previous_pct` and
+`dropped_from_previous`. Retention returns one row per cohort with `size` and `retained[n]`
+(`people`, `pct`), where `retained[0]` is the cohort period and `null` means the period has not
+happened yet. Paths stay within one visit (the SDK session, or a calendar day when there is none) and
+collapse consecutive repeats; `(end)` marks where the visit ended.
+
+Anonymous web visitors get a new visitor id every day, so web retention beyond the first day only
+says something about identified users (`identity=user`).
+
 ## Debug files
 
 | Method & path | Description |

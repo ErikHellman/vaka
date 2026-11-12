@@ -35,7 +35,7 @@ Any client that takes a JSON config:
 
 ## Tools
 
-Read:
+Read (everything a read token can call):
 
 | Tool | What it does |
 | --- | --- |
@@ -53,6 +53,12 @@ Read:
 | `analytics_timeseries` | Metrics per hour, day, week or month |
 | `analytics_breakdown` | Top values of a dimension (pages, referrers, countries, browsers, events, `prop:<name>`) |
 | `top_pages` | Most visited pages |
+| `list_event_names` | Event catalog: names, counts and property keys (use before funnels) |
+| `analytics_funnel` | Conversion through 2 to 10 ordered steps within a window, with optional breakdown |
+| `analytics_retention` | Day or week cohorts by first start event, and who came back |
+| `analytics_paths` | Most common sequences after or before a page, screen or event |
+| `list_identified_users` | Users the app identified, with activity and error counts |
+| `get_user_timeline` | One user's events, crashes and sessions, newest first |
 
 Write:
 
@@ -78,6 +84,9 @@ Write:
 - "Compare release 2.3.0 with 2.4.0 for the web project. Did crash-free sessions drop?"
 - "Errors spiked in the last hour. Explain why."
 - "Which referrers brought the most visitors to /pricing this month?"
+- "Where do people drop off between the pricing page and purchase? Does it differ by country?"
+- "Do users who sign up on the pro plan come back more in the following weeks?"
+- "User user-123 reported a crash. What did they do just before it?"
 - "Set up Vaka for this repository" (uses `create_project` and `get_install_instructions`).
 
 A typical bug-fix loop: `list_issues` → `get_issue` (read the stack and breadcrumbs, open the

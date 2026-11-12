@@ -7,7 +7,8 @@ Vaka is a self-hosted crash reporting and analytics service built for coding age
   crash-free users/sessions per release.
 - **Web and mobile analytics**: cookieless, no-PII visitor counts, pageviews, screen views,
   referrers, UTM tags, devices and countries.
-- **Product analytics**: custom events with properties, breakdowns by any property.
+- **Product analytics**: custom events with properties, funnels, retention cohorts, paths, and
+  per-user timelines for users the app chooses to identify.
 
 There is no dashboard. A small admin UI (`/ui`) handles setup: users, projects, keys and tokens.
 Everything else goes through the [REST API](api.md) or the [MCP server](mcp.md), so you can ask

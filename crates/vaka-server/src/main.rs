@@ -15,6 +15,7 @@ mod otp;
 mod models;
 mod openapi;
 mod processor;
+mod product;
 mod projects;
 mod query;
 mod scrub;

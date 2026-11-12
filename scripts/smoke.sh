@@ -48,6 +48,24 @@ REF=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/breakdown?dimens
 echo "$REF" | grep -q news.ycombinator.com || fail "referrer breakdown: $REF"
 PROPS=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/breakdown?dimension=prop:plan&type=custom&since=1h")
 echo "$PROPS" | grep -q '"pro"' || fail "prop breakdown: $PROPS"
+# Product analytics: two people, one converts (pageview / -> /pricing -> signup), one drops off.
+T0=$(date +%s)
+send "{\"items\":[
+ {\"type\":\"event\",\"name\":\"pageview\",\"url\":\"https://ex.com/\",\"anon_id\":\"p1\",\"user_id\":\"u-funnel\",\"timestamp\":$((T0-3))},
+ {\"type\":\"event\",\"name\":\"pageview\",\"url\":\"https://ex.com/pricing\",\"anon_id\":\"p1\",\"user_id\":\"u-funnel\",\"timestamp\":$((T0-2))},
+ {\"type\":\"event\",\"name\":\"signup\",\"url\":\"https://ex.com/pricing\",\"props\":{\"plan\":\"pro\"},\"anon_id\":\"p1\",\"user_id\":\"u-funnel\",\"timestamp\":$((T0-1))},
+ {\"type\":\"event\",\"name\":\"pageview\",\"url\":\"https://ex.com/\",\"anon_id\":\"p2\",\"timestamp\":$((T0-3))},
+ {\"type\":\"event\",\"name\":\"pageview\",\"url\":\"https://ex.com/about\",\"anon_id\":\"p2\",\"timestamp\":$((T0-2))}]}" >/dev/null || fail "funnel events"
+sleep 2
+FUN=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/funnel?since=1h&filter=hostname:ex.com&step=pageview%7Cpath:/&step=pageview%7Cpath:/pricing&step=signup")
+[ "$(echo "$FUN" | j '[s["count"] for s in d["steps"]][1:]')" = "[1, 1]" ] || fail "funnel: $FUN"
+RET=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/retention?start=signup&period=day&periods=1&identity=user")
+[ "$(echo "$RET" | j 'd["cohorts"][-1]["size"]')" = "1" ] || fail "retention: $RET"
+PATHS=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/paths?since=1h&from=pageview%20/pricing&depth=1")
+echo "$PATHS" | grep -q 'pageview /pricing → signup' || fail "paths: $PATHS"
+curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/events?since=1h" | grep -q '"signup"' || fail "event catalog"
+curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/users?since=1h" | grep -q 'u-funnel' || fail "identified users"
+curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/users/u-funnel/timeline?since=1h" | j 'len(d["timeline"])' | grep -q 3 || fail "user timeline"
 HEALTH=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/releases/health")
 [ "$(echo "$HEALTH" | j 'd["releases"][0]["crash_free_sessions"]')" = "0.5" ] || fail "health: $HEALTH"
 curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/explain-spike?window=1h" | j 'd["totals"]' >/dev/null || fail spike
