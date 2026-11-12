@@ -55,9 +55,12 @@ jobs:
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8080/health && break; sleep 1; done
           VAKA=http://127.0.0.1:8080 EMAIL=ci@example.com PASSWORD=password123 bash scripts/smoke.sh
           kill $SERVER_PID
-      - name: Smoke test (Postgres)
+      - name: Smoke test (Postgres, debug files in S3)
         run: |
-          mkdir -p /tmp/vaka-pg
+          mkdir -p /tmp/vaka-pg /tmp/s3data
+          docker run -d --name s3 -p 9000:9000 -v /tmp/s3data:/data rclone/rclone:1.71 serve s3 --auth-key vakaak,vakasecret123 --addr :9000 /data
+          for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:9000/ && break; sleep 1; done
+          VAKA_S3_BUCKET=vaka-ci VAKA_S3_ENDPOINT=http://127.0.0.1:9000 VAKA_S3_ACCESS_KEY_ID=vakaak VAKA_S3_SECRET_ACCESS_KEY=vakasecret123 \
           VAKA_DATA_DIR=/tmp/vaka-pg VAKA_LISTEN=127.0.0.1:8081 VAKA_DB_URL=postgres://vaka:vaka@localhost:5432/vaka \
           VAKA_CLICKHOUSE_URL=http://localhost:8123 VAKA_CLICKHOUSE_USER=vaka VAKA_CLICKHOUSE_PASSWORD=vaka \
           VAKA_CLICKHOUSE_DATABASE=vaka_pg \
@@ -65,7 +68,7 @@ jobs:
             ./target/debug/vaka-server > /tmp/vaka-pg.log 2>&1 &
           SERVER_PID=$!
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8081/health && break; sleep 1; done
-          VAKA=http://127.0.0.1:8081 EMAIL=ci@example.com PASSWORD=password123 bash scripts/smoke.sh
+          VAKA=http://127.0.0.1:8081 EMAIL=ci@example.com PASSWORD=password123 ARTIFACT_DIR=/tmp/vaka-pg/artifacts bash scripts/smoke.sh
           kill $SERVER_PID
       - name: Server logs
         if: failure()

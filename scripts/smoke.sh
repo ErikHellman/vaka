@@ -92,6 +92,16 @@ HEALTH=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/releases/health")
 curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/explain-spike?window=1h" | j 'd["totals"]' >/dev/null || fail spike
 curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/releases/compare?base=1.0.0&target=1.1.0" | j 'len(d["issues_new_in_target"])' | grep -q 1 || fail compare
 
+# Source maps (and, with ARTIFACT_DIR set, S3: local copies are deleted so the server must fetch them)
+SMAP='{"version":3,"file":"app.js","sources":["src/checkout/pay.ts"],"sourcesContent":["export function pay() {\n  throw new Error(\"declined\");\n}"],"names":["pay"],"mappings":"AAAA;AACE"}'
+SMF=$(mktemp); echo "$SMAP" > "$SMF"
+curl -sf -H "authorization: Bearer $TOKEN" -X POST "$VAKA/api/v1/projects/$SLUG/artifacts" -F kind=sourcemap -F release=3.0.0 -F name=/assets/app.js -F "file=@$SMF" | j 'd["artifacts"][0]["name"]' | grep -q '/assets/app.js' || fail "sourcemap upload"
+if [ -n "${ARTIFACT_DIR:-}" ]; then find "$ARTIFACT_DIR" -type f -delete; fi
+send '{"items":[{"type":"error","release":"3.0.0","exception":{"type":"Error","value":"declined","stacktrace":[{"function":"a","abs_path":"https://ex.com/assets/app.js","lineno":2,"colno":3,"in_app":true}]}}]}' >/dev/null
+sleep 2
+SMI=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/issues?since=1h&release=3.0.0" | j 'd["issues"][0]["short_id"]')
+curl -sf "${A[@]}" "$VAKA/api/v1/issues/$SMI" | j 'd["latest_event"]["exceptions"][0]["stacktrace"][0]["filename"]' | grep -q 'src/checkout/pay.ts' || fail "source map symbolication: $(curl -sf "${A[@]}" "$VAKA/api/v1/issues/$SMI" | j 'd["latest_event"]["exceptions"][0]["stacktrace"]')"
+
 # Ownership rules + suspect commits
 printf -v RULES 'src/** #web\\nsrc/checkout/** %s\\ntype:TimeoutError #ops\\n' "$EMAIL"
 curl -sf "${A[@]}" -X PUT "$VAKA/api/v1/projects/$SLUG/ownership" -d "{\"rules\":\"$RULES\"}" | j 'd["rules"]' | grep -q 3 || fail "ownership put"

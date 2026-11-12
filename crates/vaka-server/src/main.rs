@@ -20,6 +20,7 @@ mod processor;
 mod product;
 mod projects;
 mod query;
+mod s3;
 mod scrub;
 mod state;
 mod symbolicate;
@@ -76,6 +77,7 @@ async fn main() -> anyhow::Result<()> {
         geoip,
         symbols: Default::default(),
         http: reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build()?,
+        s3: s3::S3Config::from_env().map(s3::S3::new).transpose()?,
         salt: Default::default(),
     });
     auth::bootstrap_admin(&state).await?;
@@ -83,6 +85,7 @@ async fn main() -> anyhow::Result<()> {
     maintenance::spawn(state.clone());
     alerts::spawn_spike_detector(state.clone());
     alerts::spawn_digest_scheduler(state.clone());
+    s3::spawn_startup_sync(state.clone());
 
     let ingest_cors = CorsLayer::new()
         .allow_origin(Any)

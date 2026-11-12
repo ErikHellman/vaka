@@ -133,7 +133,7 @@ pub fn sign(secret: &str, body: &[u8]) -> String {
 }
 
 /// Tiny HMAC-SHA256 so we don't need another dependency.
-mod hmac_lite {
+pub(crate) mod hmac_lite {
     use sha2::{Digest, Sha256};
     pub fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
         let mut k = [0u8; 64];

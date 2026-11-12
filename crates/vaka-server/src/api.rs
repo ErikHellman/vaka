@@ -600,6 +600,12 @@ async fn upload_artifact(State(s): State<AppState>, p: Principal, Path(project):
             created.push(json!({"id": id, "name": name}));
         }
     }
+    if let Err(e) = crate::s3::store_artifact(&s, &path).await {
+        tracing::error!("storing debug file in S3 failed: {e:#}");
+        sqlx::query("DELETE FROM artifacts WHERE path = $1").bind(&path).execute(&s.db).await?;
+        let _ = tokio::fs::remove_file(&path).await;
+        return Err(ApiError(StatusCode::BAD_GATEWAY, "could not store the file in S3 storage; see the server log".into()));
+    }
     if !release.is_empty() {
         sqlx::query("INSERT INTO releases (project_id, version, created_at) VALUES ($1, $2, $3) ON CONFLICT (project_id, version) DO NOTHING")
             .bind(&proj.id).bind(&release).bind(now).execute(&s.db).await?;
@@ -619,6 +625,7 @@ async fn delete_artifact(State(s): State<AppState>, p: Principal, Path((project,
     let still_used = sqlx::query("SELECT COUNT(*) AS n FROM artifacts WHERE path = $1").bind(&path).fetch_one(&s.db).await?.i("n");
     if still_used == 0 {
         let _ = tokio::fs::remove_file(&path).await;
+        crate::s3::delete_artifact(&s, &path).await;
     }
     Ok(Json(json!({"deleted": id})))
 }

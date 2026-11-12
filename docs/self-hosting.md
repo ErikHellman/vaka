@@ -65,6 +65,12 @@ All settings are environment variables.
 | `VAKA_EMAIL_FROM` | `Vaka <vaka@localhost>` | Sender for emails |
 | `VAKA_PASSWORD_LOGIN` | `true` | Set to `false` to allow only email-code login (needs `VAKA_RESEND_API_KEY`) |
 | `VAKA_GEOIP_DB` | | Optional MaxMind/DB-IP country `.mmdb` file |
+| `VAKA_S3_BUCKET` | | Store debug files in an S3-compatible bucket (see below) |
+| `VAKA_S3_ENDPOINT` | `https://s3.$REGION.amazonaws.com` | Endpoint for R2, MinIO, Garage, ... |
+| `VAKA_S3_REGION` | `us-east-1` | Signing region (`auto` for Cloudflare R2) |
+| `VAKA_S3_ACCESS_KEY_ID` / `VAKA_S3_SECRET_ACCESS_KEY` | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Credentials |
+| `VAKA_S3_PREFIX` | `vaka/` | Key prefix inside the bucket |
+| `VAKA_S3_PATH_STYLE` | `true` with a custom endpoint, else `false` | Path-style (`endpoint/bucket/key`) or virtual-hosted URLs |
 
 ### Admin login
 
@@ -79,6 +85,23 @@ the GeoIP database if configured.
 
 Vaka creates the ClickHouse database and tables and runs metadata migrations on start.
 
+### S3 storage for debug files
+
+By default source maps, mappings and debug symbols live in `VAKA_DATA_DIR/artifacts`. With
+`VAKA_S3_BUCKET` set, every upload is also written to the bucket, and the local directory becomes a
+cache: files missing locally are downloaded on first use. That lets the server run on an ephemeral
+disk (Fly.io machines, Kubernetes pods) or as several instances. On start the server checks the
+bucket (creating it if it does not exist and the credentials allow it) and copies local files that
+are not in it yet, so switching an existing install over needs no manual step.
+
+```sh
+# Cloudflare R2
+VAKA_S3_BUCKET=vaka-debug-files
+VAKA_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+VAKA_S3_REGION=auto
+VAKA_S3_ACCESS_KEY_ID=...  VAKA_S3_SECRET_ACCESS_KEY=...
+```
+
 ## Running without Docker
 
 ```sh
@@ -90,7 +113,7 @@ VAKA_CLICKHOUSE_URL=http://localhost:8123 ./target/release/vaka-server
 
 - Metadata: back up the SQLite file in `VAKA_DATA_DIR` (`sqlite3 vaka.db ".backup b.db"`) or
   `pg_dump` the Postgres database.
-- Debug files: back up `VAKA_DATA_DIR/artifacts`.
+- Debug files: back up `VAKA_DATA_DIR/artifacts`, or rely on the bucket when S3 storage is on.
 - Events: ClickHouse `BACKUP DATABASE vaka TO Disk(...)`, or accept losing raw events since
   they expire with retention anyway.
 

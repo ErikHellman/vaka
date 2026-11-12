@@ -107,6 +107,12 @@ async fn load_artifacts(state: &AppState, project_id: &str, release: &str, debug
             out.push(ArtifactRef { id: r.s("id"), kind: r.s("kind"), name: r.s("name"), debug_id: r.s("debug_id"), path: r.s("path") });
         }
     }
+    if state.s3.is_some() {
+        // Files may only be in the bucket (new container, other instance): fetch missing ones.
+        for a in &out {
+            crate::s3::ensure_local(state, &a.path).await;
+        }
+    }
     out
 }
 
