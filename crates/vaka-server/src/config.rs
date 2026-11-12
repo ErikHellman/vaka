@@ -14,6 +14,9 @@ pub struct Config {
     pub data_dir: String,
     pub geoip_db: Option<String>,
     pub resend_api_key: Option<String>,
+    pub resend_api_url: String,
+    /// Allow email + password login in the admin UI. Email codes are offered whenever email is configured.
+    pub password_login: bool,
     pub email_from: String,
     pub default_retention_days: i64,
     pub secure_cookies: bool,
@@ -40,12 +43,24 @@ impl Config {
             admin_password: var("VAKA_ADMIN_PASSWORD"),
             geoip_db: var("VAKA_GEOIP_DB"),
             resend_api_key: var("VAKA_RESEND_API_KEY"),
+            resend_api_url: var("VAKA_RESEND_API_URL").unwrap_or_else(|| "https://api.resend.com".into()).trim_end_matches('/').to_string(),
+            password_login: !matches!(var("VAKA_PASSWORD_LOGIN").as_deref().map(str::to_lowercase).as_deref(), Some("false" | "0" | "no" | "off")),
             email_from: var("VAKA_EMAIL_FROM").unwrap_or_else(|| "Vaka <vaka@localhost>".into()),
             default_retention_days: var("VAKA_DEFAULT_RETENTION_DAYS")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(90),
             data_dir,
         })
+    }
+
+    /// Whether the admin UI can send one-time login codes by email.
+    pub fn email_login(&self) -> bool {
+        self.resend_api_key.is_some()
+    }
+
+    /// Password login stays on when email is not configured, so nobody gets locked out.
+    pub fn password_login_enabled(&self) -> bool {
+        self.password_login || !self.email_login()
     }
 
     pub fn artifact_dir(&self) -> String {

@@ -55,15 +55,24 @@ All settings are environment variables.
 | --- | --- | --- |
 | `VAKA_PUBLIC_URL` | `http://localhost:8080` | Public URL, used in links, alerts and install guides |
 | `VAKA_LISTEN` | `0.0.0.0:8080` | Listen address |
-| `VAKA_ADMIN_EMAIL`, `VAKA_ADMIN_PASSWORD` | | First owner account, created on start when no users exist |
+| `VAKA_ADMIN_EMAIL`, `VAKA_ADMIN_PASSWORD` | | First owner account, created on start when no users exist. With email configured the password is optional |
 | `VAKA_DB_URL` | `sqlite://$VAKA_DATA_DIR/vaka.db?mode=rwc` | `sqlite://...` or `postgres://user:pass@host/db` |
 | `VAKA_DATA_DIR` | `./data` (`/data` in Docker) | SQLite database and uploaded debug files |
 | `VAKA_CLICKHOUSE_URL` | `http://localhost:8123` | ClickHouse HTTP interface |
 | `VAKA_CLICKHOUSE_USER` / `_PASSWORD` / `_DATABASE` | `default` / empty / `vaka` | ClickHouse credentials |
 | `VAKA_DEFAULT_RETENTION_DAYS` | `90` | Retention for new projects |
-| `VAKA_RESEND_API_KEY` | | Enables email alerts and invite emails via Resend |
+| `VAKA_RESEND_API_KEY` | | Enables email alerts, invite emails and email-code login via Resend |
 | `VAKA_EMAIL_FROM` | `Vaka <vaka@localhost>` | Sender for emails |
+| `VAKA_PASSWORD_LOGIN` | `true` | Set to `false` to allow only email-code login (needs `VAKA_RESEND_API_KEY`) |
 | `VAKA_GEOIP_DB` | | Optional MaxMind/DB-IP country `.mmdb` file |
+
+### Admin login
+
+The admin UI always supports email and password. When `VAKA_RESEND_API_KEY` is set it also
+offers **Email me a sign-in code**: a 6-digit one-time code, valid for 10 minutes, with 5 tries,
+and at most one new code per minute. Set `VAKA_PASSWORD_LOGIN=false` to turn password login
+off and use codes only. Without email configured that setting is ignored, so you can't lock
+yourself out.
 
 Country lookup uses `CF-IPCountry` (Cloudflare) or similar proxy headers when present, otherwise
 the GeoIP database if configured.

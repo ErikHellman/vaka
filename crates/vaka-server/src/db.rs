@@ -8,7 +8,10 @@ use sqlx::{AnyPool, Row};
 
 pub type Pool = AnyPool;
 
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("../migrations/001_init.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("../migrations/001_init.sql")),
+    (2, include_str!("../migrations/002_login_codes.sql")),
+];
 
 pub async fn connect(url: &str) -> anyhow::Result<Pool> {
     sqlx::any::install_default_drivers();

@@ -29,6 +29,7 @@ pub fn spawn(state: AppState) {
                 tracing::warn!("retention job failed: {e:#}");
             }
             let _ = sqlx::query("DELETE FROM web_sessions WHERE expires_at < $1").bind(now_ms()).execute(&state.db).await;
+            let _ = sqlx::query("DELETE FROM login_codes WHERE expires_at < $1").bind(now_ms()).execute(&state.db).await;
         }
     });
 }

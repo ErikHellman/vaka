@@ -263,7 +263,11 @@ pub async fn create_user(state: &AppState, email: &str, name: &str, password: &s
 }
 
 /// Create the initial owner from VAKA_ADMIN_EMAIL / VAKA_ADMIN_PASSWORD when no users exist.
+/// With email configured, VAKA_ADMIN_EMAIL alone is enough: the owner logs in with an email code.
 pub async fn bootstrap_admin(state: &AppState) -> anyhow::Result<()> {
+    if !state.config.password_login && !state.config.email_login() {
+        tracing::warn!("VAKA_PASSWORD_LOGIN=false is ignored because email is not configured (set VAKA_RESEND_API_KEY)");
+    }
     let count = sqlx::query("SELECT COUNT(*) AS n FROM users").fetch_one(&state.db).await?.i("n");
     if count > 0 {
         return Ok(());
@@ -276,7 +280,14 @@ pub async fn bootstrap_admin(state: &AppState) -> anyhow::Result<()> {
             create_user(state, email, "Admin", pw, Role::Owner).await?;
             tracing::info!(%email, "created initial owner account");
         }
-        _ => tracing::warn!("no users exist: set VAKA_ADMIN_EMAIL and VAKA_ADMIN_PASSWORD to create the first owner"),
+        (Some(email), None) if state.config.email_login() => {
+            // Random password nobody knows; the owner signs in with an email code.
+            create_user(state, email, "Admin", &random_token(32), Role::Owner).await?;
+            tracing::info!(%email, "created initial owner account (email code login)");
+        }
+        _ => tracing::warn!(
+            "no users exist: set VAKA_ADMIN_EMAIL and VAKA_ADMIN_PASSWORD (or VAKA_ADMIN_EMAIL plus VAKA_RESEND_API_KEY) to create the first owner"
+        ),
     }
     Ok(())
 }

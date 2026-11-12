@@ -11,6 +11,7 @@ mod grouping;
 mod ingest;
 mod maintenance;
 mod mcp;
+mod otp;
 mod models;
 mod openapi;
 mod processor;

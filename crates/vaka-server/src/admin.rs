@@ -20,6 +20,8 @@ pub fn router() -> Router<AppState> {
         .route("/", get(|| async { Redirect::to("/ui") }))
         .route("/ui", get(dashboard))
         .route("/ui/login", get(login_page).post(login))
+        .route("/ui/login/code", get(code_page).post(request_code))
+        .route("/ui/login/verify", post(verify_code))
         .route("/ui/logout", post(logout))
         .route("/ui/invite/{token}", get(invite_page).post(accept_invite))
         .route("/ui/account", get(account_page).post(change_password))
@@ -134,16 +136,28 @@ type Q = axum::extract::Query<HashMap<String, String>>;
 
 async fn login_page(State(s): State<AppState>, axum::extract::Query(q): Q) -> Response {
     let no_users = sqlx::query("SELECT COUNT(*) AS n FROM users").fetch_one(&s.db).await.map(|r| r.i("n") == 0).unwrap_or(false);
+    let (email_login, password_login) = (s.config.email_login(), s.config.password_login_enabled());
     page("Log in", None, flash_of(&q).as_deref(), html! {
         div.card style="max-width:380px;margin:60px auto" {
             h1 { "Log in to Vaka" }
             @if no_users {
                 p.flash.err { "No users yet. Set VAKA_ADMIN_EMAIL and VAKA_ADMIN_PASSWORD and restart Vaka to create the first owner." }
             }
-            form method="post" action="/ui/login" {
-                p { input type="email" name="email" placeholder="Email" required autofocus style="width:100%"; }
-                p { input type="password" name="password" placeholder="Password" required style="width:100%"; }
-                button type="submit" { "Log in" }
+            @if email_login {
+                form method="post" action="/ui/login/code" {
+                    p { input type="email" name="email" placeholder="Email" required autofocus autocomplete="email" style="width:100%"; }
+                    button type="submit" { "Email me a sign-in code" }
+                }
+            }
+            @if email_login && password_login {
+                p.muted style="margin:20px 0 8px" { "Or use your password" }
+            }
+            @if password_login {
+                form method="post" action="/ui/login" {
+                    p { input type="email" name="email" placeholder="Email" required autofocus[!email_login] autocomplete="username" style="width:100%"; }
+                    p { input type="password" name="password" placeholder="Password" required autocomplete="current-password" style="width:100%"; }
+                    @if email_login { button.ghost type="submit" { "Log in with password" } } @else { button type="submit" { "Log in" } }
+                }
             }
         }
     })
@@ -156,6 +170,9 @@ struct LoginForm {
 }
 
 async fn login(State(s): State<AppState>, Form(f): Form<LoginForm>) -> Response {
+    if !s.config.password_login_enabled() {
+        return back("/ui/login", "error:Password login is turned off; use an email code");
+    }
     let row = sqlx::query("SELECT id, password_hash, disabled FROM users WHERE email = $1")
         .bind(f.email.trim().to_lowercase())
         .fetch_optional(&s.db)
@@ -166,10 +183,92 @@ async fn login(State(s): State<AppState>, Form(f): Form<LoginForm>) -> Response 
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
         return back("/ui/login", "error:Wrong email or password");
     };
-    let Ok(token) = auth::create_session(&s, &row.s("id")).await else {
+    start_session(&s, &row.s("id")).await
+}
+
+async fn start_session(s: &AppState, user_id: &str) -> Response {
+    let Ok(token) = auth::create_session(s, user_id).await else {
         return back("/ui/login", "error:Could not create session");
     };
-    ([(header::SET_COOKIE, auth::session_cookie(&s, &token, 30 * 86400))], Redirect::to("/ui")).into_response()
+    ([(header::SET_COOKIE, auth::session_cookie(s, &token, 30 * 86400))], Redirect::to("/ui")).into_response()
+}
+
+#[derive(Deserialize)]
+struct CodeRequestForm {
+    email: String,
+}
+
+fn code_page_url(email: &str, msg: &str) -> String {
+    let enc = |v: &str| url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>();
+    format!("/ui/login/code?email={}&flash={}", enc(email), enc(msg))
+}
+
+async fn request_code(State(s): State<AppState>, headers: HeaderMap, Form(f): Form<CodeRequestForm>) -> Response {
+    if !s.config.email_login() {
+        return back("/ui/login", "error:Email codes are not available on this server");
+    }
+    if !same_origin(&s, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let email = f.email.trim().to_lowercase();
+    if email.is_empty() {
+        return back("/ui/login", "error:Enter your email address");
+    }
+    // Same message whether or not the account exists, or a code was sent moments ago,
+    // so this form can't be used to find out which addresses have accounts.
+    let msg = match crate::otp::request_code(&s, &email).await {
+        crate::otp::RequestOutcome::Sent | crate::otp::RequestOutcome::TooSoon => {
+            "If that address has an account, we've emailed it a 6-digit code. It's valid for 10 minutes, and you can ask for a new one once a minute."
+        }
+        crate::otp::RequestOutcome::SendFailed => "error:Could not send the email. Try again in a minute.",
+    };
+    Redirect::to(&code_page_url(&email, msg)).into_response()
+}
+
+async fn code_page(State(s): State<AppState>, axum::extract::Query(q): Q) -> Response {
+    let Some(email) = q.get("email").filter(|e| !e.trim().is_empty()) else { return Redirect::to("/ui/login").into_response() };
+    if !s.config.email_login() {
+        return Redirect::to("/ui/login").into_response();
+    }
+    page("Enter code", None, flash_of(&q).as_deref(), html! {
+        div.card style="max-width:380px;margin:60px auto" {
+            h1 { "Check your email" }
+            p.muted { "Enter the code sent to " strong { (email) } "." }
+            form method="post" action="/ui/login/verify" {
+                input type="hidden" name="email" value=(email);
+                p { input name="code" placeholder="123456" required autofocus inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 -]{6,9}" maxlength="9" style="width:100%;font-size:20px;letter-spacing:4px"; }
+                button type="submit" { "Log in" }
+            }
+            form method="post" action="/ui/login/code" style="margin-top:12px" {
+                input type="hidden" name="email" value=(email);
+                button.ghost type="submit" { "Send a new code" }
+                " " a href="/ui/login" { "Back" }
+            }
+        }
+    })
+}
+
+#[derive(Deserialize)]
+struct VerifyForm {
+    email: String,
+    code: String,
+}
+
+async fn verify_code(State(s): State<AppState>, headers: HeaderMap, Form(f): Form<VerifyForm>) -> Response {
+    if !s.config.email_login() {
+        return back("/ui/login", "error:Email codes are not available on this server");
+    }
+    if !same_origin(&s, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let email = f.email.trim().to_lowercase();
+    match crate::otp::verify_code(&s, &email, &f.code).await {
+        Some(user_id) => start_session(&s, &user_id).await,
+        None => {
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            Redirect::to(&code_page_url(&email, "error:That code is wrong or has expired. After 5 wrong tries you need a new code.")).into_response()
+        }
+    }
 }
 
 async fn logout(State(s): State<AppState>, headers: HeaderMap) -> Response {
@@ -782,18 +881,33 @@ async fn change_password(State(s): State<AppState>, headers: HeaderMap, Form(f):
 
 /// Email an invite link through Resend when configured. Returns whether it was sent.
 pub async fn send_invite_email(s: &AppState, to: &str, link: &str) -> bool {
+    send_email(s, to, "You're invited to Vaka", &format!("You have been invited to Vaka.\n\nAccept the invite (valid for 7 days):\n{link}\n")).await
+}
+
+/// Send a plain-text email through Resend when configured. Returns whether it was sent.
+pub async fn send_email(s: &AppState, to: &str, subject: &str, text: &str) -> bool {
     let Some(key) = &s.config.resend_api_key else { return false };
     let res = s
         .http
-        .post("https://api.resend.com/emails")
+        .post(format!("{}/emails", s.config.resend_api_url))
         .bearer_auth(key)
         .json(&serde_json::json!({
             "from": s.config.email_from,
             "to": [to],
-            "subject": "You're invited to Vaka",
-            "text": format!("You have been invited to Vaka.\n\nAccept the invite (valid for 7 days):\n{link}\n"),
+            "subject": subject,
+            "text": text,
         }))
         .send()
         .await;
-    matches!(res, Ok(r) if r.status().is_success())
+    match res {
+        Ok(r) if r.status().is_success() => true,
+        Ok(r) => {
+            tracing::warn!(status = %r.status(), "email delivery failed");
+            false
+        }
+        Err(e) => {
+            tracing::warn!("email delivery failed: {e}");
+            false
+        }
+    }
 }

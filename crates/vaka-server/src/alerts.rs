@@ -194,7 +194,7 @@ async fn send_email(state: &AppState, to: &str, trigger: &str, payload: &serde_j
     let html = format!("<pre style=\"font-family:ui-monospace,monospace\">{}</pre>", html_escape(&text));
     let resp = state
         .http
-        .post("https://api.resend.com/emails")
+        .post(format!("{}/emails", state.config.resend_api_url))
         .bearer_auth(key)
         .json(&json!({
             "from": state.config.email_from,
