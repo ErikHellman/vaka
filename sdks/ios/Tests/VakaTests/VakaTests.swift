@@ -115,6 +115,108 @@ final class NativeTests: XCTestCase {
 }
 
 /// End-to-end against a running server. Set VAKA_TEST_ENDPOINT and VAKA_TEST_KEY to run.
+@inline(never)
+func blockMainThreadForHangTest(_ seconds: TimeInterval) {
+    Thread.sleep(forTimeInterval: seconds)
+}
+
+final class HangTests: XCTestCase {
+    func tmpDir() -> URL {
+        let d = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("vaka-hang-\(UUID().uuidString)")
+        try! FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }
+
+    func pendingItems(_ dir: URL) -> [[String: Any]] {
+        let pending = dir.appendingPathComponent("pending")
+        let files = (try? FileManager.default.contentsOfDirectory(at: pending, includingPropertiesForKeys: nil)) ?? []
+        return files.flatMap { f -> [[String: Any]] in
+            guard let d = try? Data(contentsOf: f), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return [] }
+            return o["items"] as? [[String: Any]] ?? []
+        }
+    }
+
+    func options(_ dir: URL, threshold: TimeInterval = 0.5) -> Vaka.Options {
+        // Unreachable endpoint: batches stay on disk where the test can read them.
+        Vaka.Options(key: "vk_test", endpoint: URL(string: "http://127.0.0.1:9")!, release: "1.0.0", environment: "test",
+                     crashReporting: false, appHangThreshold: threshold, flushInterval: 3600, storageDirectory: dir)
+    }
+
+    func testSampleMainThreadFromBackground() {
+        XCTAssertTrue(Thread.isMainThread)
+        XCTAssertEqual(vaka_sampler_install_main_thread(), 0)
+        var addrs: [UInt64] = []
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            Thread.sleep(forTimeInterval: 0.1)
+            addrs = HangWatchdog.sampleMainThread()
+            done.signal()
+        }
+        blockMainThreadForHangTest(0.3)
+        done.wait()
+        XCTAssertGreaterThan(addrs.count, 2)
+        let (frames, _) = Native.frames(addrs, images: Native.loadedImages())
+        XCTAssertTrue(frames.contains { ($0["function"] as? String)?.contains("testSampleMainThreadFromBackground") == true },
+                      "\(frames.prefix(8).map { $0["function"] ?? $0["instruction_addr"]! })")
+    }
+
+    func testReportsMainThreadHang() throws {
+        let dir = tmpDir()
+        let client = Client(options: options(dir))
+        client.start()
+        defer { client.stopHangDetection() }
+        RunLoop.main.run(until: Date().addingTimeInterval(1))
+        XCTAssertTrue(pendingItems(dir).filter { $0["type"] as? String == "error" }.isEmpty, "false hang while responsive")
+
+        blockMainThreadForHangTest(1.5)
+        let scope = try JSONSerialization.jsonObject(with: Data(contentsOf: dir.appendingPathComponent("scope.json"))) as? [String: Any]
+        XCTAssertNotNil(scope?["hang_since"], "hang marker set while still hung")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+
+        let errors = pendingItems(dir).filter { $0["type"] as? String == "error" }
+        XCTAssertEqual(errors.count, 1, "one report per hang")
+        let item = try XCTUnwrap(errors.first)
+        XCTAssertEqual(item["fatal"] as? Bool, false)
+        XCTAssertEqual(item["handled"] as? Bool, false)
+        XCTAssertEqual((item["tags"] as? [String: String])?["mechanism"], "hang")
+        let exc = try XCTUnwrap((item["exceptions"] as? [[String: Any]])?.first)
+        XCTAssertEqual(exc["type"] as? String, "AppHang")
+        XCTAssertEqual(exc["value"] as? String, "Application not responding for 500 ms")
+        let frames = exc["stacktrace"] as? [[String: Any]] ?? []
+        // On Linux, glibc has no frame pointers, so the frame right above nanosleep can be skipped;
+        // Apple system libraries keep them and the whole chain is there.
+        XCTAssertTrue(frames.contains { ($0["function"] as? String)?.contains("blockMainThreadForHangTest") == true
+                          || ($0["function"] as? String)?.contains("testReportsMainThreadHang") == true },
+                      "\(frames.prefix(8).map { $0["function"] ?? $0["instruction_addr"]! })")
+        XCTAssertNotNil(item["session_id"])
+
+        client.flush()
+        Thread.sleep(forTimeInterval: 0.2)
+        let after = try JSONSerialization.jsonObject(with: Data(contentsOf: dir.appendingPathComponent("scope.json"))) as? [String: Any]
+        XCTAssertNil(after?["hang_since"], "hang marker cleared after recovery")
+    }
+
+    func testKilledWhileHungEndsSessionAbnormal() throws {
+        let dir = tmpDir()
+        let started = Client.ms(Date().addingTimeInterval(-60))
+        let hang = Client.ms(Date().addingTimeInterval(-10))
+        let scope: [String: Any] = [
+            "release": "1.0.0", "environment": "test", "breadcrumbs": [], "tags": [:],
+            // Backgrounded during the hang, which would otherwise end the session as "exited".
+            "session": ["id": "prev-session", "started": started, "errors": 1, "background_since": hang + 1000],
+            "hang_since": hang,
+        ]
+        try JSONSerialization.data(withJSONObject: scope).write(to: dir.appendingPathComponent("scope.json"))
+        var opts = options(dir)
+        opts.appHangDetection = false
+        let client = Client(options: opts)
+        client.start()
+        let session = try XCTUnwrap(pendingItems(dir).first { $0["session_id"] as? String == "prev-session" })
+        XCTAssertEqual(session["status"] as? String, "abnormal")
+        XCTAssertEqual(session["timestamp"] as? Int64, hang)
+    }
+}
+
 final class IntegrationTests: XCTestCase {
     func testSendsToServer() throws {
         let env = ProcessInfo.processInfo.environment
@@ -136,7 +238,7 @@ final class IntegrationTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: scope).write(to: dir.appendingPathComponent("scope.json"))
 
         let client = Client(options: Vaka.Options(key: key, endpoint: URL(string: ep)!, release: "1.0.0-it", environment: "test",
-                                                  crashReporting: false, flushInterval: 3600, debug: true, storageDirectory: dir))
+                                                  crashReporting: false, appHangDetection: false, flushInterval: 3600, debug: true, storageDirectory: dir))
         client.start()
         client.screen("Checkout", props: ["step": 2])
         client.track("purchase", props: ["plan": "pro", "amount": 9.5])

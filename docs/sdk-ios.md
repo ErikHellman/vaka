@@ -25,7 +25,8 @@ Vaka.setTag("flavor", "free")                // added to later errors
 Vaka.flush()                                 // send now
 ```
 
-`Vaka.Options` also takes `crashReporting`, `sessionTracking`, `sessionTimeout` (30 s), `flushInterval` (10 s),
+`Vaka.Options` also takes `crashReporting`, `sessionTracking`, `appHangDetection` (on), `appHangThreshold` (2 s),
+`sessionTimeout` (30 s), `flushInterval` (10 s),
 `maxBatchSize` (50), `debug` (console logging), `enabled` (false = no-op), `tags` and `storageDirectory`.
 All calls are thread-safe and do nothing before `start`.
 
@@ -46,6 +47,13 @@ All calls are thread-safe and do nothing before `start`.
   UUIDs in the new process). Release builds are stripped, so file and line come from server-side symbolication with
   the uploaded dSYM.
 - `in_app`: frames in images inside the app bundle (main executable, embedded frameworks, `*.debug.dylib`).
+- App hangs: a watchdog thread pings the main queue. If it gets no answer within `appHangThreshold` (2 s), it
+  samples the main thread's stack (SIGURG to the main thread, frame-pointer walk from the interrupted context) and
+  writes an error to disk right away, so it survives the app being killed: `exceptions[0].type` `AppHang`, value
+  `Application not responding for 2000 ms`, stack trace crash site first, `tags.mechanism` `hang`, `level` `error`,
+  `handled` and `fatal` false. One report per hang. Skipped while the app is in background or a debugger is
+  attached. If the app is killed while still hung (e.g. by the iOS watchdog), that session is sent as `abnormal` on
+  the next launch.
 - Sessions: start on `didBecomeActive`, end after 30 s in background (`exited`, or `errored` if handled errors were
   captured). A session that was never ended (the app was killed in the foreground) is sent as `abnormal` on the next
   launch. On macOS a session lasts from `start` to termination.

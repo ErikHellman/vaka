@@ -40,6 +40,12 @@ void vaka_crash_uninstall(void);
 /// Later signals in this process (e.g. the SIGABRT that follows) do not overwrite it.
 int vaka_crash_write_exception(const char *type, const char *reason, const uintptr_t *addrs, int count);
 
+/// Install the main-thread sampler. Must be called on the main thread. Returns 0 on success.
+int vaka_sampler_install_main_thread(void);
+/// From another thread: interrupt the main thread (SIGURG) and copy its stack, interrupted
+/// instruction first. Waits up to `timeout_ms`. Returns the number of frames, or -1.
+int vaka_sample_main_thread(uintptr_t *out, int cap, int timeout_ms);
+
 /// Gzip-compress `len` bytes into `out` (capacity `cap`). Returns the compressed size, or 0.
 size_t vaka_gzip(const uint8_t *in, size_t len, uint8_t *out, size_t cap);
 /// Upper bound for the gzip output of `len` bytes.

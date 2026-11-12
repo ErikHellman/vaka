@@ -8,6 +8,7 @@
 #include "VakaNative.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -216,6 +217,39 @@ static int walk_stack(uintptr_t pc, uintptr_t fp, uintptr_t lr, uintptr_t *frame
     return n;
 }
 
+// Program counter, frame pointer and (arm64) link register of the interrupted thread.
+static void context_regs(void *context, uintptr_t *pc, uintptr_t *fp, uintptr_t *lr) {
+#if defined(__APPLE__) && defined(__arm64__)
+    ucontext_t *uc = (ucontext_t *)context;
+    if (uc && uc->uc_mcontext) {
+        *pc = (uintptr_t)__darwin_arm_thread_state64_get_pc(uc->uc_mcontext->__ss);
+        *fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(uc->uc_mcontext->__ss);
+        *lr = (uintptr_t)__darwin_arm_thread_state64_get_lr(uc->uc_mcontext->__ss);
+    }
+#elif defined(__APPLE__) && defined(__x86_64__)
+    ucontext_t *uc = (ucontext_t *)context;
+    if (uc && uc->uc_mcontext) {
+        *pc = (uintptr_t)uc->uc_mcontext->__ss.__rip;
+        *fp = (uintptr_t)uc->uc_mcontext->__ss.__rbp;
+    }
+#elif defined(__linux__) && defined(__x86_64__)
+    ucontext_t *uc = (ucontext_t *)context;
+    if (uc) {
+        *pc = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
+        *fp = (uintptr_t)uc->uc_mcontext.gregs[REG_RBP];
+    }
+#elif defined(__linux__) && defined(__aarch64__)
+    ucontext_t *uc = (ucontext_t *)context;
+    if (uc) {
+        *pc = (uintptr_t)uc->uc_mcontext.pc;
+        *fp = (uintptr_t)uc->uc_mcontext.regs[29];
+        *lr = (uintptr_t)uc->uc_mcontext.regs[30];
+    }
+#else
+    (void)context; (void)pc; (void)fp; (void)lr;
+#endif
+}
+
 static void restore_handlers(void) {
     for (int i = 0; i < NUM_SIGNALS; i++) sigaction(k_signals[i], &g_previous[i], NULL);
 }
@@ -224,35 +258,7 @@ static void signal_handler(int sig, siginfo_t *info, void *context) {
     if (__sync_bool_compare_and_swap(&g_handling, 0, 1)) {
         if (!g_report_written) {
             uintptr_t pc = 0, fp = 0, lr = 0;
-#if defined(__APPLE__) && defined(__arm64__)
-            ucontext_t *uc = (ucontext_t *)context;
-            if (uc && uc->uc_mcontext) {
-                pc = (uintptr_t)__darwin_arm_thread_state64_get_pc(uc->uc_mcontext->__ss);
-                fp = (uintptr_t)__darwin_arm_thread_state64_get_fp(uc->uc_mcontext->__ss);
-                lr = (uintptr_t)__darwin_arm_thread_state64_get_lr(uc->uc_mcontext->__ss);
-            }
-#elif defined(__APPLE__) && defined(__x86_64__)
-            ucontext_t *uc = (ucontext_t *)context;
-            if (uc && uc->uc_mcontext) {
-                pc = (uintptr_t)uc->uc_mcontext->__ss.__rip;
-                fp = (uintptr_t)uc->uc_mcontext->__ss.__rbp;
-            }
-#elif defined(__linux__) && defined(__x86_64__)
-            ucontext_t *uc = (ucontext_t *)context;
-            if (uc) {
-                pc = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
-                fp = (uintptr_t)uc->uc_mcontext.gregs[REG_RBP];
-            }
-#elif defined(__linux__) && defined(__aarch64__)
-            ucontext_t *uc = (ucontext_t *)context;
-            if (uc) {
-                pc = (uintptr_t)uc->uc_mcontext.pc;
-                fp = (uintptr_t)uc->uc_mcontext.regs[29];
-                lr = (uintptr_t)uc->uc_mcontext.regs[30];
-            }
-#else
-            (void)context;
-#endif
+            context_regs(context, &pc, &fp, &lr);
             uintptr_t frames[MAX_FRAMES];
             int count = walk_stack(pc, fp, lr, frames, MAX_FRAMES);
             int fd = open_report();
@@ -361,6 +367,72 @@ __attribute__((noinline)) int vaka_capture_stack(uintptr_t *out, int cap, int sk
         if (rec[0] <= fp) break;
         fp = rec[0];
     }
+    return n;
+}
+
+// ---- main-thread sampling (app hang detection) ----
+// The watchdog thread sends SIGURG to the main thread; the handler walks the interrupted
+// context's frame pointers into a static buffer. SIGURG is ignored by default and only used
+// for out-of-band socket data, so other uses are chained to the previous handler.
+
+#define SAMPLE_SIGNAL SIGURG
+
+static pthread_t g_main_thread;
+static volatile int g_sampler_installed = 0;
+static struct sigaction g_previous_sample;
+// 0 idle, 1 requested, 2 handler writing, 3 done.
+static volatile int g_sample_state = 0;
+static uintptr_t g_sample[MAX_FRAMES];
+static volatile int g_sample_count = 0;
+
+static void sample_handler(int sig, siginfo_t *info, void *context) {
+    if (pthread_equal(pthread_self(), g_main_thread) && __sync_bool_compare_and_swap(&g_sample_state, 1, 2)) {
+        uintptr_t pc = 0, fp = 0, lr = 0;
+        context_regs(context, &pc, &fp, &lr);
+        g_sample_count = walk_stack(pc, fp, lr, g_sample, MAX_FRAMES);
+        __sync_synchronize();
+        g_sample_state = 3;
+        return;
+    }
+    struct sigaction *prev = &g_previous_sample;
+    if (prev->sa_flags & SA_SIGINFO) {
+        if (prev->sa_sigaction) prev->sa_sigaction(sig, info, context);
+    } else if (prev->sa_handler != SIG_DFL && prev->sa_handler != SIG_IGN && prev->sa_handler) {
+        prev->sa_handler(sig);
+    }
+}
+
+int vaka_sampler_install_main_thread(void) {
+    if (!__sync_bool_compare_and_swap(&g_sampler_installed, 0, 1)) return 0;
+    g_main_thread = pthread_self();
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = sample_handler;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SAMPLE_SIGNAL, &sa, &g_previous_sample) != 0) {
+        g_sampler_installed = 0;
+        return -1;
+    }
+    return 0;
+}
+
+int vaka_sample_main_thread(uintptr_t *out, int cap, int timeout_ms) {
+    if (!g_sampler_installed || !out || cap <= 0) return -1;
+    if (!__sync_bool_compare_and_swap(&g_sample_state, 0, 1)) return -1;
+    if (pthread_kill(g_main_thread, SAMPLE_SIGNAL) != 0) {
+        g_sample_state = 0;
+        return -1;
+    }
+    struct timespec tick = {0, 1000000};
+    for (int waited = 0; g_sample_state != 3; waited++) {
+        if (waited >= timeout_ms && __sync_bool_compare_and_swap(&g_sample_state, 1, 0)) return -1;
+        nanosleep(&tick, NULL);
+    }
+    __sync_synchronize();
+    int n = g_sample_count < cap ? g_sample_count : cap;
+    for (int i = 0; i < n; i++) out[i] = g_sample[i];
+    g_sample_state = 0;
     return n;
 }
 

@@ -17,6 +17,9 @@ final class Client {
     private var buffer: [[String: Any]] = []
     private var timer: DispatchSourceTimer?
     private var observers: [NSObjectProtocol] = []
+    private var watchdog: HangWatchdog?
+    /// Set while the main thread is hung, so a kill during the hang ends the session as abnormal.
+    private var hangSince: Date?
 
     // Scope: persisted on every change so a crash report can carry the state of the run that crashed.
     private var breadcrumbs: [[String: Any]] = []
@@ -86,6 +89,7 @@ final class Client {
         timer = t
 
         if options.sessionTracking { observeLifecycle() }
+        if options.appHangDetection && options.appHangThreshold > 0 { startHangDetection() }
         transport.sendPending()
     }
 
@@ -124,11 +128,60 @@ final class Client {
             let errors = s["errors"] as? Int ?? 0
             let bg = (s["background_since"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
             let updated = (previous?["updated"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) } ?? started
-            let status = bg != nil ? (errors > 0 ? "errored" : "exited") : "abnormal"
-            items.append(sessionItem(id: id, status: status, started: started, end: bg ?? updated, errors: errors,
+            let hang = (previous?["hang_since"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
+            // Killed while hung (e.g. by the iOS watchdog) is abnormal even if it happened in background.
+            let status = hang != nil ? "abnormal" : bg != nil ? (errors > 0 ? "errored" : "exited") : "abnormal"
+            items.append(sessionItem(id: id, status: status, started: started, end: hang ?? bg ?? updated, errors: errors,
                                      release: prevRelease, environment: prevEnv, userId: previous?["user_id"] as? String))
         }
         if !items.isEmpty { transport.persist(items) }
+    }
+
+    // MARK: app hangs
+
+    private func startHangDetection() {
+        let threshold = options.appHangThreshold
+        let w = HangWatchdog(
+            threshold: threshold,
+            isPaused: { [weak self] in self?.q.sync { self?.session?.backgroundSince != nil } ?? true },
+            onHang: { [weak self] addrs in self?.q.sync { self?.reportHang(addrs: addrs, threshold: threshold) } },
+            onRecover: { [weak self] duration in
+                self?.q.async {
+                    guard let self else { return }
+                    self.hangSince = nil
+                    self.log("main thread responsive again after \(Int(duration * 1000)) ms")
+                    self.writeScope()
+                }
+            })
+        watchdog = w
+        w.start()
+    }
+
+    /// Runs on `q`, called from the watchdog thread while the main thread is still blocked.
+    private func reportHang(addrs: [UInt64], threshold: TimeInterval) {
+        let now = Date()
+        hangSince = now
+        var item = errorItem(level: .error, handled: false, fatal: false, timestamp: now)
+        let (frames, images) = Native.frames(addrs, images: Native.loadedImages())
+        let ms = Int((threshold * 1000).rounded())
+        item["exceptions"] = [["type": "AppHang", "value": "Application not responding for \(ms) ms", "stacktrace": frames]]
+        item["debug_images"] = images
+        item["tags"] = (item["tags"] as? [String: String] ?? [:]).merging(["mechanism": "hang"]) { $1 }
+        if var s = session {
+            s.errors += 1
+            session = s
+        }
+        writeScope()
+        log("app hang: main thread blocked for \(ms) ms")
+        // Straight to disk: the app may be killed before it recovers.
+        transport.persist([item])
+        transport.sendPending()
+    }
+
+    /// Stop hang detection (tests).
+    func stopHangDetection() {
+        watchdog?.stop()
+        watchdog = nil
     }
 
     private func observeLifecycle() {
@@ -389,6 +442,7 @@ final class Client {
             "updated": Client.ms(Date()),
         ]
         if let u = userId { scope["user_id"] = u }
+        if let h = hangSince { scope["hang_since"] = Client.ms(h) }
         if let s = session {
             var d: [String: Any] = ["id": s.id, "started": Client.ms(s.started), "errors": s.errors]
             if let bg = s.backgroundSince { d["background_since"] = Client.ms(bg) }

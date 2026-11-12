@@ -98,6 +98,8 @@ string you will use for the dSYM upload in step 4.
 The SDK then automatically:
 
 - reports crashes (signals and uncaught Objective-C exceptions) on the next launch,
+- reports app hangs (main thread blocked for 2 s or more, configurable with `appHangThreshold`) with the main
+  thread's stack,
 - tracks sessions for crash-free rates (start on foreground, end after 30 s in background),
 - queues everything on disk and sends in gzipped batches every 10 s, retrying when offline.
 

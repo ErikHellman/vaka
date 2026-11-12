@@ -28,6 +28,10 @@ public enum Vaka {
         public var crashReporting: Bool
         /// Track release-health sessions (start on foreground, end after 30 s in background).
         public var sessionTracking: Bool
+        /// Report app hangs: the main thread not responding for `appHangThreshold` seconds.
+        public var appHangDetection: Bool
+        /// Seconds the main thread must be blocked before it counts as a hang. Defaults to 2.
+        public var appHangThreshold: TimeInterval
         /// Seconds in background after which the session ends.
         public var sessionTimeout: TimeInterval
         /// Seconds between batched sends.
@@ -50,6 +54,8 @@ public enum Vaka {
             environment: String = "production",
             crashReporting: Bool = true,
             sessionTracking: Bool = true,
+            appHangDetection: Bool = true,
+            appHangThreshold: TimeInterval = 2,
             sessionTimeout: TimeInterval = 30,
             flushInterval: TimeInterval = 10,
             maxBatchSize: Int = 50,
@@ -64,6 +70,8 @@ public enum Vaka {
             self.environment = environment
             self.crashReporting = crashReporting
             self.sessionTracking = sessionTracking
+            self.appHangDetection = appHangDetection
+            self.appHangThreshold = appHangThreshold
             self.sessionTimeout = sessionTimeout
             self.flushInterval = flushInterval
             self.maxBatchSize = maxBatchSize
