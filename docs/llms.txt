@@ -30,6 +30,9 @@ Connect the MCP server (`{{ENDPOINT}}/mcp`, header `Authorization: Bearer vt_...
 Loop: `list_issues` → `get_issue` (frames[0] is the crash site; read breadcrumbs and tags; open
 the in-app frames in the repo) → fix → `resolve_issue` with `resolved_in_release` → `comment_issue`
 with the fix. For "what changed" questions use `release_health`, `compare_releases` and `explain_spike`.
+`get_issue` also returns `suspect_commits` (commits in the first release that touched the stack's
+files) when CI runs `vaka releases set-commits --release <version>`, and `owners` from the
+project's ownership rules (`set_ownership_rules`).
 
 ## Product questions
 

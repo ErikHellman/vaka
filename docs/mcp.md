@@ -42,7 +42,7 @@ Read (everything a read token can call):
 | `list_projects` | Projects the token can access, with platform, retention and ingest keys |
 | `get_install_instructions` | Install guide for a platform with the project's endpoint and key filled in |
 | `list_issues` | Grouped errors with event and user counts in a window (`status`, `query`, `release`, `environment`, `since`, `sort`, `limit`) |
-| `get_issue` | Latest event with symbolicated stack trace (`frames[0]` is the crash site), source context, breadcrumbs, tags and breakdowns |
+| `get_issue` | Latest event with symbolicated stack trace (`frames[0]` is the crash site), source context, breadcrumbs, tags, breakdowns, `owners` and `suspect_commits` |
 | `list_issue_events` | Recent individual events for an issue |
 | `get_event` | One event in full |
 | `search_events` | Search events by text, level, release, environment, user id or exception type |
@@ -59,6 +59,8 @@ Read (everything a read token can call):
 | `analytics_paths` | Most common sequences after or before a page, screen or event |
 | `list_identified_users` | Users the app identified, with activity and error counts |
 | `get_user_timeline` | One user's events, crashes and sessions, newest first |
+| `get_release_commits` | Commits recorded for a release, with changed files |
+| `get_ownership_rules` | The project's code ownership rules, parsed |
 
 Write:
 
@@ -69,6 +71,7 @@ Write:
 | `ignore_issue` | Ignore forever or for a duration (`ignore_for`: `24h`, `7d`) |
 | `reopen_issue` | Set back to open |
 | `assign_issue` | Assign to a user by email |
+| `set_ownership_rules` | Replace the project's ownership rules (CODEOWNERS-like; see the REST docs) |
 | `comment_issue` | Add a Markdown comment, e.g. root cause and a link to the fix |
 | `create_alert_rule` | Webhook or email on new issues, regressions or spikes |
 | `delete_user_data` | Delete all data for a user id in a project (cannot be undone) |
@@ -87,6 +90,7 @@ Write:
 - "Where do people drop off between the pricing page and purchase? Does it differ by country?"
 - "Do users who sign up on the pro plan come back more in the following weeks?"
 - "User user-123 reported a crash. What did they do just before it?"
+- "Who probably broke checkout in 2.4.0? Look at the suspect commits on the top new issue."
 - "Set up Vaka for this repository" (uses `create_project` and `get_install_instructions`).
 
 A typical bug-fix loop: `list_issues` → `get_issue` (read the stack and breadcrumbs, open the

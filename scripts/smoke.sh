@@ -71,6 +71,23 @@ HEALTH=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/releases/health")
 curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/explain-spike?window=1h" | j 'd["totals"]' >/dev/null || fail spike
 curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/releases/compare?base=1.0.0&target=1.1.0" | j 'len(d["issues_new_in_target"])' | grep -q 1 || fail compare
 
+# Ownership rules + suspect commits
+printf -v RULES 'src/** #web\\nsrc/checkout/** %s\\ntype:TimeoutError #ops\\n' "$EMAIL"
+curl -sf "${A[@]}" -X PUT "$VAKA/api/v1/projects/$SLUG/ownership" -d "{\"rules\":\"$RULES\"}" | j 'd["rules"]' | grep -q 3 || fail "ownership put"
+curl -s "${A[@]}" -X PUT "$VAKA/api/v1/projects/$SLUG/ownership" -d '{"rules":"nobody-owns-this"}' | grep -q 'no owners' || fail "ownership validation"
+curl -sf "${A[@]}" -X PUT "$VAKA/api/v1/projects/$SLUG/releases/2.0.0/commits" -d '{"repository":"https://github.com/acme/shop","commits":[
+ {"sha":"c0ffee1","message":"Docs","author_name":"Bo","files":["README.md"]},
+ {"sha":"deadbee","message":"Refactor cart totals\n\nlonger body","author_name":"Ada","author_email":"ada@x.se","timestamp":1700000000,"files":["src/checkout/cart.ts","src/checkout/total.ts"]}]}' | j 'd["commits"]' | grep -q 2 || fail "set commits"
+send '{"items":[{"type":"error","release":"2.0.0","exception":{"type":"RangeError","value":"bad total","stacktrace":[{"function":"total","abs_path":"webpack:///./src/checkout/total.ts","filename":"src/checkout/total.ts","lineno":4,"in_app":true},{"function":"render","abs_path":"webpack:///./src/ui/app.ts","filename":"src/ui/app.ts","lineno":9,"in_app":true}]}}]}' >/dev/null
+sleep 2
+OWNED=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/issues?since=1h&query=RangeError" | j '[i for i in d["issues"] if i["title"].startswith("RangeError")][0]["short_id"]')
+OI=$(curl -sf "${A[@]}" "$VAKA/api/v1/issues/$OWNED")
+[ "$(echo "$OI" | j 'd["owners"]')" = "['$EMAIL']" ] || fail "owners: $(echo "$OI" | j 'd["owners"]')"
+[ "$(echo "$OI" | j 'd["assignee"]')" = "$EMAIL" ] || fail "auto-assign"
+[ "$(echo "$OI" | j 'd["suspect_commits"][0]["sha"]')" = "deadbee" ] || fail "suspect commits: $(echo "$OI" | j 'd["suspect_commits"]')"
+echo "$OI" | j 'd["suspect_commits"][0]["url"]' | grep -q 'github.com/acme/shop/commit/deadbee' || fail "commit url"
+[ "$(echo "$OI" | j 'len(d["suspect_commits"])')" = "1" ] || fail "unrelated commit suspected"
+
 # MCP
 M=(-H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream')
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' | grep -q '"vaka"' || fail mcp-init

@@ -241,6 +241,13 @@ async fn process_error(
     let ts = item.timestamp.as_ref().and_then(parse_timestamp).unwrap_or(received_at);
 
     let (issue_id, change) = upsert_issue(state, project, &fingerprint, &title, &culprit, &level, &platform, &release, ts).await?;
+    if change == IssueChange::New {
+        let exc = serde_json::to_value(&exceptions).unwrap_or_default();
+        let tags = serde_json::to_value(&item.tags).unwrap_or_default();
+        if let Err(e) = crate::ownership::assign_new_issue(state, &project.id, &issue_id, &exc, &tags).await {
+            tracing::warn!("ownership rules failed: {e:#}");
+        }
+    }
     if change != IssueChange::Seen {
         crate::alerts::notify_issue(state, project, &issue_id, if change == IssueChange::New { "new_issue" } else { "regression" });
     }

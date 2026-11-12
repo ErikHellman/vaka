@@ -57,7 +57,7 @@ pub async fn project_json(state: &AppState, proj: &ProjectInfo, include_keys: bo
 
 const ISSUE_COLS: &str = "i.id, i.short_id, i.project_id, i.fingerprint, i.title, i.culprit, i.level, i.platform, i.status, i.assignee_id, \
     i.first_seen, i.last_seen, i.times_seen, i.first_release, i.last_release, i.resolved_at, i.resolved_in_release, i.regressed_at, \
-    i.ignored_until, p.slug AS project_slug, u.email AS assignee_email";
+    i.ignored_until, i.owners, p.slug AS project_slug, u.email AS assignee_email";
 
 fn issue_json(state: &AppState, r: &sqlx::any::AnyRow) -> Value {
     let slug = r.s("project_slug");
@@ -73,6 +73,7 @@ fn issue_json(state: &AppState, r: &sqlx::any::AnyRow) -> Value {
         "platform": r.s("platform"),
         "status": r.s("status"),
         "assignee": r.os("assignee_email"),
+        "owners": r.s("owners").split_whitespace().collect::<Vec<_>>(),
         "first_seen": iso_time(r.i("first_seen")),
         "last_seen": iso_time(r.i("last_seen")),
         "times_seen": r.i("times_seen"),
@@ -326,6 +327,15 @@ pub async fn get_issue(state: &AppState, p: &Principal, id: &str) -> QResult<Val
     issue["by_device"] = json!(devices);
     issue["daily_last_14d"] = json!(daily);
     issue["comments"] = json!(comments);
+    let first_release = issue["first_release"].as_str().unwrap_or("").to_string();
+    issue["suspect_commits"] = if latest_event.is_null() {
+        json!([])
+    } else {
+        crate::ownership::suspect_commits(state, &project_id, &first_release, &latest_event["exceptions"]).await.unwrap_or_else(|e| {
+            tracing::warn!("suspect commits failed: {e:#}");
+            json!([])
+        })
+    };
     issue["latest_event"] = latest_event;
     Ok(issue)
 }

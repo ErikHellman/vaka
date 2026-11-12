@@ -12,6 +12,7 @@ mod ingest;
 mod maintenance;
 mod mcp;
 mod otp;
+mod ownership;
 mod models;
 mod openapi;
 mod processor;

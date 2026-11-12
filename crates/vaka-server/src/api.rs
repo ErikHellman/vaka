@@ -30,6 +30,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/projects/{p}/releases", get(list_releases))
         .route("/api/v1/projects/{p}/releases/health", get(release_health))
         .route("/api/v1/projects/{p}/releases/compare", get(compare_releases))
+        .route(
+            "/api/v1/projects/{p}/releases/{version}/commits",
+            get(get_release_commits).put(put_release_commits).layer(DefaultBodyLimit::max(32 * 1024 * 1024)),
+        )
+        .route("/api/v1/projects/{p}/ownership", get(get_ownership).put(put_ownership))
         .route("/api/v1/projects/{p}/analytics/summary", get(analytics_summary))
         .route("/api/v1/projects/{p}/analytics/timeseries", get(analytics_timeseries))
         .route("/api/v1/projects/{p}/analytics/breakdown", get(analytics_breakdown))
@@ -73,6 +78,32 @@ async fn me(p: Principal) -> J {
 
 async fn list_projects(State(s): State<AppState>, p: Principal) -> J {
     Ok(Json(query::list_projects(&s, &p).await?))
+}
+
+async fn get_release_commits(State(s): State<AppState>, p: Principal, Path((project, version)): Path<(String, String)>) -> J {
+    Ok(Json(crate::ownership::get_release_commits(&s, &p, &project, &version).await?))
+}
+
+async fn put_release_commits(
+    State(s): State<AppState>,
+    p: Principal,
+    Path((project, version)): Path<(String, String)>,
+    Json(body): Json<crate::ownership::SetCommits>,
+) -> J {
+    Ok(Json(crate::ownership::put_release_commits(&s, &p, &project, &version, body).await?))
+}
+
+async fn get_ownership(State(s): State<AppState>, p: Principal, Path(project): Path<String>) -> J {
+    Ok(Json(crate::ownership::get_ownership(&s, &p, &project).await?))
+}
+
+#[derive(Deserialize)]
+struct OwnershipBody {
+    rules: String,
+}
+
+async fn put_ownership(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(body): Json<OwnershipBody>) -> J {
+    Ok(Json(crate::ownership::set_ownership(&s, &p, &project, &body.rules).await?))
 }
 
 #[derive(Deserialize)]

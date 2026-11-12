@@ -61,12 +61,54 @@ enum Cmd {
         #[arg(long)]
         release: Option<String>,
     },
+    /// Release metadata
+    Releases {
+        #[command(subcommand)]
+        what: Releases,
+    },
+    /// Code ownership rules (who owns which issues)
+    Ownership {
+        #[command(subcommand)]
+        what: Ownership,
+    },
     /// Send a test error with an ingest key to verify an installation
     SendTestEvent {
         /// Ingest key (vk_...)
         #[arg(long, env = "VAKA_KEY")]
         key: String,
     },
+}
+
+#[derive(Subcommand)]
+enum Releases {
+    /// Record the commits in a release from local git history (powers suspect commits on issues)
+    SetCommits {
+        /// Release, must match the `release` the SDK reports
+        #[arg(long)]
+        release: String,
+        /// Git revision range, e.g. v1.2.0..HEAD. Default: previous tag..HEAD, or the last 100 commits
+        #[arg(long)]
+        range: Option<String>,
+        /// Repository web URL for commit links. Default: derived from `git remote get-url origin`
+        #[arg(long)]
+        repo_url: Option<String>,
+        /// Git working tree
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+    },
+    /// List commits recorded for a release
+    Commits {
+        #[arg(long)]
+        release: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum Ownership {
+    /// Print the project's ownership rules
+    Show,
+    /// Replace the project's ownership rules with the contents of a file
+    Set { file: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -245,6 +287,23 @@ fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
             }
             Ok(())
         }
+        Cmd::Releases { what } => releases(ctx, what),
+        Cmd::Ownership { what } => match what {
+            Ownership::Show => {
+                let v = ctx.get(&format!("/api/v1/projects/{}/ownership", ctx.project()?))?;
+                if ctx.json {
+                    return print_json(&v);
+                }
+                print!("{}", v["rules"].as_str().unwrap_or(""));
+                Ok(())
+            }
+            Ownership::Set { file } => {
+                let rules = std::fs::read_to_string(&file).with_context(|| format!("cannot read {}", file.display()))?;
+                let v = ctx.send_json(reqwest::Method::PUT, &format!("/api/v1/projects/{}/ownership", ctx.project()?), json!({"rules": rules}))?;
+                println!("{} ownership rules saved", v["rules"]);
+                Ok(())
+            }
+        },
         Cmd::SendTestEvent { key } => {
             let body = json!({"sdk": {"name": "vaka-cli", "version": env!("CARGO_PKG_VERSION")}, "items": [{
                 "type": "error", "level": "error", "platform": "other", "release": "vaka-cli-test",
@@ -332,6 +391,98 @@ fn upload(ctx: &Ctx, what: Upload) -> Result<()> {
     }
 }
 
+fn releases(ctx: &Ctx, what: Releases) -> Result<()> {
+    match what {
+        Releases::SetCommits { release, range, repo_url, repo } => {
+            let git = |args: &[&str]| -> Result<String> {
+                let out = std::process::Command::new("git").arg("-C").arg(&repo).args(args).output().context("cannot run git")?;
+                if !out.status.success() {
+                    bail!("git {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim());
+                }
+                Ok(String::from_utf8_lossy(&out.stdout).to_string())
+            };
+            let range = match range {
+                Some(r) => vec![r],
+                None => match git(&["describe", "--tags", "--abbrev=0", "HEAD^"]) {
+                    Ok(tag) if !tag.trim().is_empty() => vec![format!("{}..HEAD", tag.trim())],
+                    _ => vec!["-n".into(), "100".into(), "HEAD".into()],
+                },
+            };
+            let mut args: Vec<&str> = vec!["log", "--no-merges", "--name-only", "--format=%x1e%H%x1f%an%x1f%ae%x1f%ct%x1f%B%x1f"];
+            args.extend(range.iter().map(|s| s.as_str()));
+            let log = git(&args)?;
+            let commits = parse_git_log(&log);
+            if commits.is_empty() {
+                bail!("no commits in {}", range.join(" "));
+            }
+            let repo_url = repo_url.or_else(|| git(&["remote", "get-url", "origin"]).ok().map(|u| web_url(u.trim())));
+            let n = commits.len();
+            let v = ctx.send_json(
+                reqwest::Method::PUT,
+                &format!("/api/v1/projects/{}/releases/{}/commits", ctx.project()?, encode(&release)),
+                json!({"repository": repo_url, "commits": commits}),
+            )?;
+            if ctx.json {
+                return print_json(&v);
+            }
+            println!("{} commits recorded for release {release} ({n} read from {})", v["commits"], range.join(" "));
+            Ok(())
+        }
+        Releases::Commits { release } => {
+            let v = ctx.get(&format!("/api/v1/projects/{}/releases/{}/commits", ctx.project()?, encode(&release)))?;
+            if ctx.json {
+                return print_json(&v);
+            }
+            for c in v["commits"].as_array().into_iter().flatten() {
+                let sha = c["sha"].as_str().unwrap_or("");
+                println!("{} {:<20} {}", &sha[..sha.len().min(10)], c["author_name"].as_str().unwrap_or(""), c["message"].as_str().unwrap_or("").lines().next().unwrap_or(""));
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Parse `git log --name-only` output in the format used by `set-commits`.
+fn parse_git_log(log: &str) -> Vec<Value> {
+    log.split('\x1e')
+        .filter(|c| !c.trim().is_empty())
+        .filter_map(|c| {
+            let f: Vec<&str> = c.splitn(6, '\x1f').collect();
+            if f.len() < 6 {
+                return None;
+            }
+            let files: Vec<&str> = f[5].lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+            Some(json!({
+                "sha": f[0].trim(), "author_name": f[1], "author_email": f[2],
+                "timestamp": f[3].trim().parse::<i64>().unwrap_or(0), "message": f[4].trim(), "files": files,
+            }))
+        })
+        .collect()
+}
+
+/// git@github.com:o/r.git or https://user@github.com/o/r.git -> https://github.com/o/r
+fn web_url(remote: &str) -> String {
+    let r = remote.trim_end_matches(".git");
+    if let Some(rest) = r.strip_prefix("git@") {
+        if let Some((host, path)) = rest.split_once(':') {
+            return format!("https://{host}/{path}");
+        }
+    }
+    if let Some(rest) = r.strip_prefix("ssh://git@") {
+        return format!("https://{rest}");
+    }
+    if let Some(rest) = r.strip_prefix("https://") {
+        return format!("https://{}", rest.rsplit_once('@').map(|(_, h)| h).unwrap_or(rest));
+    }
+    r.to_string()
+}
+
+fn encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect()
+}
+
 fn find_dsym_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     for p in paths {
@@ -348,4 +499,22 @@ fn find_dsym_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn git_log_parsing() {
+        let log = "\x1eabc\x1fAda\x1fada@x.se\x1f1700000000\x1fFix cart\n\nBody\n\x1f\n\nsrc/cart.ts\nsrc/a.ts\n\x1edef\x1fBo\x1fbo@x.se\x1f1700000001\x1fDocs\n\x1f\n\nREADME.md\n";
+        let c = parse_git_log(log);
+        assert_eq!(c.len(), 2);
+        assert_eq!(c[0]["files"], json!(["src/cart.ts", "src/a.ts"]));
+        assert_eq!(c[0]["message"], "Fix cart\n\nBody");
+        assert_eq!(c[1]["sha"], "def");
+        assert_eq!(web_url("git@github.com:o/r.git"), "https://github.com/o/r");
+        assert_eq!(web_url("https://tok@github.com/o/r.git"), "https://github.com/o/r");
+        assert_eq!(encode("app@1.0+2"), "app%401.0%2B2");
+    }
 }

@@ -314,6 +314,9 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
             query::update_issue(state, p, &req(&a, "issue")?, IssueUpdate { assignee: Some(s(&a, "assignee").unwrap_or_default()), ..Default::default() }).await?
         }
         "comment_issue" => query::comment_issue(state, p, &req(&a, "issue")?, &req(&a, "body")?).await?,
+        "get_ownership_rules" => crate::ownership::get_ownership(state, p, &req(&a, "project")?).await?,
+        "set_ownership_rules" => crate::ownership::set_ownership(state, p, &req(&a, "project")?, &s(&a, "rules").unwrap_or_default()).await?,
+        "get_release_commits" => crate::ownership::get_release_commits(state, p, &req(&a, "project")?, &req(&a, "release")?).await?,
         "create_alert_rule" => {
             crate::api::create_rule_inner(
                 state,
@@ -410,7 +413,7 @@ pub fn tools() -> Vec<Value> {
         tool(
             "get_issue",
             "Get issue",
-            "Full detail for an issue: latest event with symbolicated stack trace (frames[0] is the crash site), source context, breadcrumbs, tags, and breakdowns by release, environment, OS and device, plus comments.",
+            "Full detail for an issue: latest event with symbolicated stack trace (frames[0] is the crash site), source context, breadcrumbs, tags, and breakdowns by release, environment, OS and device, plus comments, owners (from ownership rules) and suspect_commits (commits in the issue's first release that touched files in its stack trace).",
             vec![("issue", issue())],
             &["issue"],
             true,
@@ -597,6 +600,17 @@ pub fn tools() -> Vec<Value> {
         tool("ignore_issue", "Ignore issue", "Ignore an issue, forever or for a duration. Needs a write token.", vec![("issue", issue()), ("ignore_for", prop("string", "Duration such as 24h or 7d; omit for forever"))], &["issue"], false, false),
         tool("reopen_issue", "Reopen issue", "Set an issue back to open. Needs a write token.", vec![("issue", issue())], &["issue"], false, false),
         tool("assign_issue", "Assign issue", "Assign an issue to a user by email (empty string unassigns). Needs a write token.", vec![("issue", issue()), ("assignee", prop("string", "User email"))], &["issue", "assignee"], false, false),
+        tool("get_release_commits", "Get release commits", "Commits recorded for a release (via `vaka releases set-commits`), with changed files. Used for suspect commits on issues.", vec![("project", project()), ("release", prop("string", "Release version"))], &["project", "release"], true, false),
+        tool("get_ownership_rules", "Get ownership rules", "The project's code ownership rules (CODEOWNERS-like; last match wins), parsed, with any problems.", vec![("project", project())], &["project"], true, false),
+        tool(
+            "set_ownership_rules",
+            "Set ownership rules",
+            "Replace the project's ownership rules. One rule per line: `<pattern> <owner>...` where pattern is a path glob (src/payments/**), module:<glob>, type:<exception type> or tag:<key>=<value>; owners are emails or #team names; last matching line wins. New issues get these owners and are assigned to the first owner who is a Vaka user. Needs a write token.",
+            vec![("project", project()), ("rules", prop("string", "The full rules text (empty clears them)"))],
+            &["project", "rules"],
+            false,
+            false,
+        ),
         tool("comment_issue", "Comment on issue", "Add a comment to an issue, e.g. root cause analysis or a link to the fix. Needs a write token.", vec![("issue", issue()), ("body", prop("string", "Comment text (Markdown)"))], &["issue", "body"], false, false),
         tool(
             "create_alert_rule",

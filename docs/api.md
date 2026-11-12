@@ -42,7 +42,7 @@ Errors are `{"error": "explanation"}` with a 4xx/5xx status. `401` means a missi
 | Method & path | Description |
 | --- | --- |
 | `GET /projects/{p}/issues` | `status` (open\|resolved\|ignored\|all, default open), `query` (title/culprit text), `release`, `environment`, `since` (count window, default 24h), `sort` (last_seen\|first_seen\|times_seen\|events\|users), `limit` |
-| `GET /issues/{id}` | Issue with latest event (symbolicated frames, source context, breadcrumbs, tags) and breakdowns by release, OS, device, browser |
+| `GET /issues/{id}` | Issue with latest event (symbolicated frames, source context, breadcrumbs, tags), breakdowns by release, OS, device, browser, `owners` and `suspect_commits` |
 | `PATCH /issues/{id}` | `{"status"?: "open"\|"resolved"\|"ignored", "resolved_in_release"?, "ignore_for"?: "7d", "assignee"?: "email" or ""}` |
 | `GET /issues/{id}/events` | Recent events (`limit`) |
 | `POST /issues/{id}/comments` | `{"body": "markdown"}` |
@@ -59,7 +59,39 @@ A resolved issue that receives a new event is reopened and marked as a regressio
 | `GET /projects/{p}/releases` | Known releases |
 | `GET /projects/{p}/releases/health` | Crash-free sessions and users, sessions, errors and new issues per release; `release`, `since` |
 | `GET /projects/{p}/releases/compare?base=1.2.0&target=1.3.0` | Health side by side, new issues, gone issues, issues that increased |
+| `GET /projects/{p}/releases/{version}/commits` | Commits recorded for a release, with changed files |
+| `PUT /projects/{p}/releases/{version}/commits` | Replace them: `{"repository"?: "https://github.com/o/r", "commits": [{"sha", "message"?, "author_name"?, "author_email"?, "timestamp"?, "files"?: ["src/a.ts"]}]}` (at most 1000). `vaka releases set-commits` does this from `git log` |
 | `GET /projects/{p}/explain-spike` | Why errors went up: `window` (default `1h`) vs `baseline` (default the 24h before), ranked by issue, release, OS, device, country, exception type |
+
+### Suspect commits
+
+When a release has commits recorded, `GET /issues/{id}` returns up to three `suspect_commits`:
+commits in the issue's first release that changed files appearing in its in-app stack frames,
+ranked toward the crash site. Each has `sha`, `message` (first line), `author`, `author_email`,
+`committed_at`, `url` (GitHub/GitLab), `score` and `reasons` (which file and frame matched).
+
+## Ownership
+
+| Method & path | Description |
+| --- | --- |
+| `GET /projects/{p}/ownership` | The rules text, parsed rules and any problems |
+| `PUT /projects/{p}/ownership` | `{"rules": "..."}` replaces them; invalid lines reject the whole update |
+
+One rule per line, `<pattern> <owner>...`; the last matching line wins, `#` starts a comment.
+
+```text
+src/**                    #web-team               # path glob (default kind)
+path:src/payments/**      alice@example.com
+module:com.example.cart.* bob@example.com         # JVM/Swift module or class
+type:TimeoutError         #platform               # exception type
+tag:area=checkout         carol@example.com       # event tag
+```
+
+Path and module rules are checked against in-app frames from the crash site outwards; the first
+frame that matches decides. Type and tag rules apply when no frame matched. A path pattern
+starting with `/` is anchored at the repository root; otherwise it can match at any directory
+(so `src/cart/**` matches `/home/ci/build/src/cart/a.ts`). New issues get `owners` set and are
+assigned to the first owner email that belongs to a Vaka user. Existing issues are not changed.
 
 ## Analytics
 

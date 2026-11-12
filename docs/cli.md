@@ -41,6 +41,27 @@ vaka upload debug-files target/release/myapp
 the minified file, so `--url-prefix` must be the path the files are served from (for example
 `/assets` when `dist/app.js` is served at `https://example.com/assets/app.js`).
 
+## Record release commits
+
+```sh
+# In CI, after tagging: commits since the previous tag (or the last 100), with changed files
+vaka releases set-commits --release 1.4.0
+vaka releases set-commits --release 1.4.0 --range v1.3.0..v1.4.0 --repo-url https://github.com/acme/shop
+vaka releases commits --release 1.4.0
+```
+
+Issues first seen in that release then list `suspect_commits`: commits that changed files in the
+stack trace. The checkout must have enough history for the range (`fetch-depth: 0` in GitHub Actions).
+
+## Ownership rules
+
+```sh
+vaka ownership set .vaka/OWNERS   # replace the project's rules with a file from the repo
+vaka ownership show
+```
+
+See [REST API: Ownership](api.md#ownership) for the rule format.
+
 ## Query
 
 ```sh

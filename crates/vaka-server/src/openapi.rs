@@ -35,6 +35,8 @@ pub fn spec() -> Value {
             "/api/v1/projects/{p}/releases": {"get": op("List releases", &[p], None)},
             "/api/v1/projects/{p}/releases/health": {"get": op("Release health (crash-free sessions/users)", &[p, ("release", "query", false), since], None)},
             "/api/v1/projects/{p}/releases/compare": {"get": op("Compare two releases", &[p, ("base", "query", true), ("target", "query", true)], None)},
+            "/api/v1/projects/{p}/releases/{version}/commits": {"get": op("Commits recorded for a release", &[p, ("version", "path", true)], None), "put": op("Replace a release's commits (for suspect commits)", &[p, ("version", "path", true)], Some("{repository?: url, commits: [{sha, message?, author_name?, author_email?, timestamp?, files?: [path]}]}"))},
+            "/api/v1/projects/{p}/ownership": {"get": op("Code ownership rules", &[p], None), "put": op("Replace code ownership rules", &[p], Some("{rules: string}"))},
             "/api/v1/projects/{p}/analytics/summary": {"get": op("Analytics totals with previous period. Repeat `filter=dimension:value`.", &[p, since, ("until", "query", false), ("type", "query", false), ("filter", "query", false)], None)},
             "/api/v1/projects/{p}/analytics/timeseries": {"get": op("Analytics time series", &[p, since, ("until", "query", false), ("interval", "query", false), ("type", "query", false), ("filter", "query", false)], None)},
             "/api/v1/projects/{p}/analytics/breakdown": {"get": op("Top values of a dimension", &[p, ("dimension", "query", true), since, ("until", "query", false), ("limit", "query", false), ("type", "query", false), ("filter", "query", false)], None)},
