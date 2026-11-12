@@ -123,6 +123,17 @@ Send raw addresses plus the loaded images; the server symbolicates with uploaded
 - If the SDK can already resolve function names in-process, send them in `function` as well;
   server symbolication adds file and line when debug files exist.
 
+### ANRs and app hangs
+
+Report a hung main thread as an ordinary error item:
+
+- `tags.mechanism`: `"anr"` (Android, main thread blocked; default threshold 5 s) or `"hang"` (iOS, default 2 s).
+- `exceptions[0].type`: `"ANR"` or `"AppHang"`; `value` like `"Application not responding for 5000 ms"`.
+- `stacktrace`: the main thread's stack at detection, crash site first.
+- `fatal: false`, `handled: false`. If the app is killed while hung, end that session with status `abnormal`.
+
+Release health reports ANR/hang rates per release from these events.
+
 ### JVM / Android with R8
 
 Send obfuscated class and method names as they appear (`module` = class, `function` = method,
