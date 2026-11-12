@@ -2,6 +2,7 @@
 //! catalog, and identified users with their timelines. Shared by the REST API and MCP.
 
 use crate::auth::{ApiError, Principal};
+use crate::db::RowExt;
 use crate::query::{analytics_where, filter_cond, project_for, AnalyticsParams, QResult};
 use crate::state::AppState;
 use crate::util::{iso_time, now_ms, parse_time_expr};
@@ -523,6 +524,189 @@ pub async fn user_timeline(state: &AppState, p: &Principal, project: &str, user_
         .collect();
     Ok(json!({"project": project.slug, "user_id": user_id, "since": iso_time(since), "timeline": items,
         "hint": "Newest first. To see what led to a crash, read the entries just below (older than) the error, and open the issue with get_issue."}))
+}
+
+// ---------------------------------------------------------------------------
+// Goals and revenue
+// ---------------------------------------------------------------------------
+
+fn prop_key(k: &str) -> QResult<String> {
+    if k.is_empty() || k.len() > 128 || !k.chars().all(|c| c.is_ascii_alphanumeric() || "_-.".contains(c)) {
+        return Err(ApiError::bad(format!("bad property name `{k}`")));
+    }
+    Ok(k.to_string())
+}
+
+/// Revenue per currency (and optionally per dimension value) from a numeric event property.
+async fn revenue_rows(
+    state: &AppState,
+    w: &crate::query::Where,
+    step: &Step,
+    value_prop: &str,
+    currency_prop: &str,
+    breakdown: Option<&str>,
+    limit: i64,
+) -> QResult<Vec<Value>> {
+    let mut params = Params::from_where(&w.params);
+    let cond = step_cond(0, step, &mut params)?;
+    params.push("vp", prop_key(value_prop)?);
+    params.push("cp", prop_key(currency_prop)?);
+    params.push("lim", limit.clamp(1, 100).to_string());
+    let (dim_sel, dim_group) = match breakdown.filter(|b| !b.is_empty()) {
+        Some(b) => {
+            let expr = crate::query::dimension_expr(b).ok_or_else(|| ApiError::bad(format!("unknown breakdown dimension `{b}`")))?;
+            (format!(", {expr} AS value"), ", value")
+        }
+        None => (String::new(), ""),
+    };
+    Ok(state
+        .ch
+        .query(
+            &format!(
+                "SELECT upper(props[{{cp:String}}]) AS currency{dim_sel}, round(sum(toFloat64OrZero(props[{{vp:String}}])), 2) AS revenue, \
+                 count() AS conversions, uniq(if(user_id != '', user_id, visitor_id)) AS customers, round(revenue / greatest(conversions, 1), 2) AS average \
+                 FROM events WHERE {} AND {cond} GROUP BY currency{dim_group} ORDER BY revenue DESC LIMIT {{lim:UInt32}}",
+                w.sql
+            ),
+            &params.refs(),
+        )
+        .await?)
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct RevenueParams {
+    #[serde(flatten)]
+    pub base: AnalyticsParams,
+    /// Step syntax, default `purchase`.
+    pub event: Option<String>,
+    /// Numeric property holding the amount, default `revenue`.
+    pub value_prop: Option<String>,
+    /// Property holding the ISO currency code, default `currency`.
+    pub currency_prop: Option<String>,
+    pub breakdown: Option<String>,
+    pub limit: Option<i64>,
+}
+
+pub async fn revenue(state: &AppState, p: &Principal, r: RevenueParams) -> QResult<Value> {
+    let project = project_for(state, p, &r.base.project).await?;
+    let w = analytics_where(&project.id, &r.base)?;
+    let step = Step::parse(r.event.as_deref().unwrap_or("purchase"))?;
+    let vp = r.value_prop.as_deref().unwrap_or("revenue");
+    let cp = r.currency_prop.as_deref().unwrap_or("currency");
+    let totals = revenue_rows(state, &w, &step, vp, cp, None, 20).await?;
+    let breakdown = match r.breakdown.as_deref().filter(|b| !b.is_empty()) {
+        Some(b) => Some(revenue_rows(state, &w, &step, vp, cp, Some(b), r.limit.unwrap_or(10)).await?),
+        None => None,
+    };
+    Ok(json!({
+        "project": project.slug,
+        "window": {"since": iso_time(w.since), "until": iso_time(w.until)},
+        "event": step.label(),
+        "value_prop": vp,
+        "currency_prop": cp,
+        "totals": totals,
+        "breakdown_by": r.breakdown,
+        "breakdown": breakdown,
+        "note": "Amounts are summed per currency as sent (no conversion). An empty currency means the property was missing.",
+    }))
+}
+
+pub async fn list_goals(state: &AppState, p: &Principal, a: AnalyticsParams) -> QResult<Value> {
+    let project = project_for(state, p, &a.project).await?;
+    let w = analytics_where(&project.id, &a)?;
+    let rows = sqlx::query("SELECT id, name, step, value_prop, created_at, created_by FROM goals WHERE project_id = $1 ORDER BY name LIMIT 100")
+        .bind(&project.id)
+        .fetch_all(&state.db)
+        .await?;
+    let mut params = Params::from_where(&w.params);
+    let mut sel = vec!["uniq(visitor_id) AS visitors".to_string()];
+    let mut steps = Vec::new();
+    for (i, r) in rows.iter().enumerate() {
+        let step = Step::parse(&r.s("step"))?;
+        let cond = step_cond(i, &step, &mut params)?;
+        sel.push(format!("countIf({cond}) AS c{i}, uniqIf(visitor_id, {cond}) AS u{i}"));
+        steps.push(step);
+    }
+    let stats = state.ch.query(&format!("SELECT {} FROM events WHERE {}", sel.join(", "), w.sql), &params.refs()).await?;
+    let stats = stats.into_iter().next().unwrap_or(json!({}));
+    let visitors = stats["visitors"].as_f64().or_else(|| stats["visitors"].as_str().and_then(|s| s.parse().ok())).unwrap_or(0.0);
+    let mut goals = Vec::new();
+    for (i, r) in rows.iter().enumerate() {
+        let n = |k: String| stats[&k].as_f64().or_else(|| stats[&k].as_str().and_then(|s| s.parse().ok())).unwrap_or(0.0);
+        let converters = n(format!("u{i}"));
+        let vp = r.s("value_prop");
+        let revenue = if vp.is_empty() { None } else { Some(revenue_rows(state, &w, &steps[i], &vp, "currency", None, 20).await?) };
+        goals.push(json!({
+            "id": r.s("id"), "name": r.s("name"), "step": r.s("step"), "value_prop": if vp.is_empty() { None } else { Some(vp) },
+            "conversions": n(format!("c{i}")) as i64, "converters": converters as i64,
+            "conversion_rate": if visitors > 0.0 { (converters / visitors * 10_000.0).round() / 10_000.0 } else { 0.0 },
+            "revenue": revenue,
+            "created_at": iso_time(r.i("created_at")), "created_by": r.s("created_by"),
+        }));
+    }
+    Ok(json!({
+        "project": project.slug,
+        "window": {"since": iso_time(w.since), "until": iso_time(w.until)},
+        "visitors": visitors as i64,
+        "note": "conversion_rate = unique visitors who converted / unique visitors in the window.",
+        "goals": goals,
+    }))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GoalIn {
+    pub name: String,
+    /// Step syntax: `signup`, `pageview|path:/thanks`, `purchase|prop:plan:pro`.
+    pub step: String,
+    /// Optional numeric property to sum as revenue (with the `currency` property).
+    #[serde(default)]
+    pub value_prop: Option<String>,
+}
+
+pub async fn create_goal(state: &AppState, p: &Principal, project: &str, g: GoalIn) -> QResult<Value> {
+    let proj = project_for(state, p, project).await?;
+    if !p.can_write(&proj.id) {
+        return Err(ApiError::forbidden());
+    }
+    let name = g.name.trim();
+    if name.is_empty() || name.len() > 100 {
+        return Err(ApiError::bad("goal name must be 1 to 100 characters"));
+    }
+    Step::parse(&g.step)?;
+    let vp = match g.value_prop.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        Some(v) => prop_key(v)?,
+        None => String::new(),
+    };
+    let id = crate::util::new_id();
+    let res = sqlx::query(
+        "INSERT INTO goals (id, project_id, name, step, value_prop, created_at, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7) \
+         ON CONFLICT (project_id, name) DO NOTHING",
+    )
+    .bind(&id)
+    .bind(&proj.id)
+    .bind(name)
+    .bind(g.step.trim())
+    .bind(&vp)
+    .bind(now_ms())
+    .bind(p.label())
+    .execute(&state.db)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(ApiError::bad(format!("a goal named `{name}` already exists")));
+    }
+    Ok(json!({"id": id, "project": proj.slug, "name": name, "step": g.step.trim(), "value_prop": if vp.is_empty() { None } else { Some(vp) }}))
+}
+
+pub async fn delete_goal(state: &AppState, p: &Principal, project: &str, goal: &str) -> QResult<Value> {
+    let proj = project_for(state, p, project).await?;
+    if !p.can_write(&proj.id) {
+        return Err(ApiError::forbidden());
+    }
+    let res = sqlx::query("DELETE FROM goals WHERE project_id = $1 AND (id = $2 OR name = $2)").bind(&proj.id).bind(goal).execute(&state.db).await?;
+    if res.rows_affected() == 0 {
+        return Err(ApiError::not_found("goal"));
+    }
+    Ok(json!({"deleted": goal}))
 }
 
 #[cfg(test)]

@@ -57,6 +57,10 @@ Read (everything a read token can call):
 | `analytics_funnel` | Conversion through 2 to 10 ordered steps within a window, with optional breakdown |
 | `analytics_retention` | Day or week cohorts by first start event, and who came back |
 | `analytics_paths` | Most common sequences after or before a page, screen or event |
+| `analytics_revenue` | Revenue per currency from a purchase event, optionally by referrer, campaign, country... |
+| `list_goals` | Saved goals with conversions, conversion rate and revenue |
+| `realtime_visitors` | Traffic in the last few minutes: visitors, top pages, referrers, errors |
+| `release_adoption` | Share of sessions and users per release over time |
 | `list_identified_users` | Users the app identified, with activity and error counts |
 | `get_user_timeline` | One user's events, crashes and sessions, newest first |
 | `get_release_commits` | Commits recorded for a release, with changed files |
@@ -71,6 +75,8 @@ Write:
 | `ignore_issue` | Ignore forever or for a duration (`ignore_for`: `24h`, `7d`) |
 | `reopen_issue` | Set back to open |
 | `assign_issue` | Assign to a user by email |
+| `create_goal` | Save a named conversion goal (a step, optionally with a revenue property) |
+| `delete_goal` | Delete a goal |
 | `set_ownership_rules` | Replace the project's ownership rules (CODEOWNERS-like; see the REST docs) |
 | `comment_issue` | Add a Markdown comment, e.g. root cause and a link to the fix |
 | `create_alert_rule` | Webhook or email on new issues, regressions or spikes |
@@ -90,6 +96,8 @@ Write:
 - "Where do people drop off between the pricing page and purchase? Does it differ by country?"
 - "Do users who sign up on the pro plan come back more in the following weeks?"
 - "User user-123 reported a crash. What did they do just before it?"
+- "How much revenue did each campaign bring in last month?"
+- "How far has 2.4.0 rolled out? Is anyone still on 2.2?"
 - "Who probably broke checkout in 2.4.0? Look at the suspect commits on the top new issue."
 - "Set up Vaka for this repository" (uses `create_project` and `get_install_instructions`).
 

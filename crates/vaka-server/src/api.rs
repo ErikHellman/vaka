@@ -43,6 +43,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/projects/{p}/analytics/retention", get(analytics_retention))
         .route("/api/v1/projects/{p}/analytics/paths", get(analytics_paths))
         .route("/api/v1/projects/{p}/analytics/events", get(analytics_events))
+        .route("/api/v1/projects/{p}/analytics/revenue", get(analytics_revenue))
+        .route("/api/v1/projects/{p}/analytics/realtime", get(analytics_realtime))
+        .route("/api/v1/projects/{p}/goals", get(list_goals).post(create_goal))
+        .route("/api/v1/projects/{p}/goals/{goal}", delete(delete_goal))
+        .route("/api/v1/projects/{p}/releases/adoption", get(release_adoption))
         .route("/api/v1/projects/{p}/users", get(list_identified_users))
         .route("/api/v1/projects/{p}/users/{user_id}/timeline", get(user_timeline))
         .route(
@@ -394,6 +399,55 @@ async fn analytics_paths(State(s): State<AppState>, p: Principal, Path(project):
 async fn analytics_events(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
     let (a, extra) = analytics_params(project, raw);
     Ok(Json(crate::product::event_catalog(&s, &p, a, opt_int(&extra, "limit")?).await?))
+}
+
+async fn analytics_revenue(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
+    let (base, extra) = analytics_params(project, raw);
+    let r = crate::product::RevenueParams {
+        base,
+        event: extra.get("event").cloned(),
+        value_prop: extra.get("value_prop").cloned(),
+        currency_prop: extra.get("currency_prop").cloned(),
+        breakdown: extra.get("breakdown").cloned(),
+        limit: opt_int(&extra, "limit")?,
+    };
+    Ok(Json(crate::product::revenue(&s, &p, r).await?))
+}
+
+#[derive(Deserialize)]
+struct RealtimeQuery {
+    minutes: Option<i64>,
+}
+
+async fn analytics_realtime(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<RealtimeQuery>) -> J {
+    Ok(Json(crate::insights::realtime(&s, &p, &project, q.minutes).await?))
+}
+
+async fn list_goals(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
+    let (a, _) = analytics_params(project, raw);
+    Ok(Json(crate::product::list_goals(&s, &p, a).await?))
+}
+
+async fn create_goal(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(g): Json<crate::product::GoalIn>) -> Result<(StatusCode, Json<Value>), ApiError> {
+    Ok((StatusCode::CREATED, Json(crate::product::create_goal(&s, &p, &project, g).await?)))
+}
+
+async fn delete_goal(State(s): State<AppState>, p: Principal, Path((project, goal)): Path<(String, String)>) -> J {
+    Ok(Json(crate::product::delete_goal(&s, &p, &project, &goal).await?))
+}
+
+#[derive(Deserialize)]
+struct AdoptionQuery {
+    since: Option<String>,
+    interval: Option<String>,
+    environment: Option<String>,
+    limit: Option<i64>,
+}
+
+async fn release_adoption(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<AdoptionQuery>) -> J {
+    Ok(Json(
+        crate::insights::release_adoption(&s, &p, &project, q.since.as_deref(), q.interval.as_deref(), q.environment.as_deref(), q.limit).await?,
+    ))
 }
 
 #[derive(Deserialize)]

@@ -58,6 +58,7 @@ A resolved issue that receives a new event is reopened and marked as a regressio
 | --- | --- |
 | `GET /projects/{p}/releases` | Known releases |
 | `GET /projects/{p}/releases/health` | Crash-free sessions and users, sessions, errors, new issues and ANR/hang rates (`anrs`, `anr_sessions`, `anr_users`, `anr_rate_sessions`, `anr_rate_users`) per release; `release`, `since` |
+| `GET /projects/{p}/releases/adoption` | Share of sessions and users per release over time: `since` (default 14d), `interval` (hour\|day), `environment`, `limit` (releases shown separately, default 5; the rest are `other`). Each release also gets `first_session`, `current_share_sessions` and `peak_share_sessions` |
 | `GET /projects/{p}/releases/compare?base=1.2.0&target=1.3.0` | Health side by side, new issues, gone issues, issues that increased |
 | `GET /projects/{p}/releases/{version}/commits` | Commits recorded for a release, with changed files |
 | `PUT /projects/{p}/releases/{version}/commits` | Replace them: `{"repository"?: "https://github.com/o/r", "commits": [{"sha", "message"?, "author_name"?, "author_email"?, "timestamp"?, "files"?: ["src/a.ts"]}]}` (at most 1000). `vaka releases set-commits` does this from `git log` |
@@ -100,6 +101,7 @@ assigned to the first owner email that belongs to a Vaka user. Existing issues a
 | `GET /projects/{p}/analytics/summary` | Visitors, pageviews, screen views, custom events, identified users, with the previous period |
 | `GET /projects/{p}/analytics/timeseries` | Same metrics per `interval` (hour\|day\|week\|month) |
 | `GET /projects/{p}/analytics/breakdown` | Top values of `dimension`, ranked by visitors; `limit` |
+| `GET /projects/{p}/analytics/realtime` | The last `minutes` (default 5, max 60): visitors, pageviews, active sessions, errors, top pages, referrers, countries and events, and visitors per minute for the last 30 minutes |
 
 Common parameters: `since`, `until`, `type` (pageview\|screen_view\|custom), and repeated
 `filter=dimension:value` (prefix the value with `~` for contains or `!` for not equal).
@@ -136,6 +138,14 @@ on mobile, new every day for anonymous web visitors), `user` (only events after 
 | `GET /projects/{p}/analytics/paths` | `from` (a label such as `pageview /pricing`, `screen Checkout` or `signup`; omit to start at each visit's first event), `direction` (after\|before), `depth` (1 to 6, default 3), `identity`, `limit` |
 | `GET /projects/{p}/users` | Identified users: event and error counts, first/last seen, last release, platform. `since`, `query` (id substring), `limit` |
 | `GET /projects/{p}/users/{user_id}/timeline` | Everything one identified user did, newest first: events, errors/crashes with issue short ids, sessions. `since` (default 7d), `limit` |
+
+| `GET /projects/{p}/goals` | Saved goals with `conversions`, `converters`, `conversion_rate` (converters / visitors) and `revenue` per currency in the window |
+| `POST /projects/{p}/goals` | `{"name": "Signup", "step": "signup", "value_prop"?: "revenue"}` |
+| `DELETE /projects/{p}/goals/{id or name}` | Delete a goal |
+| `GET /projects/{p}/analytics/revenue` | Revenue per currency: `event` (step, default `purchase`), `value_prop` (default `revenue`), `currency_prop` (default `currency`), optional `breakdown` dimension, `limit`. Rows have `revenue`, `conversions`, `customers`, `average` |
+
+Revenue is the sum of a numeric event property, per currency as sent (no conversion). Track
+purchases as a custom event such as `purchase` with props `{"revenue": 19.5, "currency": "USD"}`.
 
 ```sh
 # Signup funnel from the pricing page, split by traffic source

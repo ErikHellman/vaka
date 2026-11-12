@@ -67,6 +67,25 @@ echo "$PATHS" | grep -q 'pageview /pricing → signup' || fail "paths: $PATHS"
 curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/events?since=1h" | grep -q '"signup"' || fail "event catalog"
 curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/users?since=1h" | grep -q 'u-funnel' || fail "identified users"
 curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/users/u-funnel/timeline?since=1h" | j 'len(d["timeline"])' | grep -q 3 || fail "user timeline"
+# Goals, revenue, real-time, adoption
+send "{\"items\":[{\"type\":\"event\",\"name\":\"purchase\",\"url\":\"https://ex.com/checkout\",\"referrer\":\"https://news.ycombinator.com/\",\"props\":{\"revenue\":\"19.5\",\"currency\":\"usd\"},\"anon_id\":\"p1\"},
+ {\"type\":\"event\",\"name\":\"purchase\",\"url\":\"https://ex.com/checkout\",\"props\":{\"revenue\":10,\"currency\":\"USD\"},\"anon_id\":\"p2\"},
+ {\"type\":\"event\",\"name\":\"purchase\",\"url\":\"https://ex.com/checkout\",\"props\":{\"revenue\":\"99\",\"currency\":\"SEK\"},\"anon_id\":\"p2\"}]}" >/dev/null || fail "purchase events"
+sleep 2
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/goals" -d '{"name":"Purchase","step":"purchase","value_prop":"revenue"}' | j 'd["name"]' | grep -q Purchase || fail "create goal"
+curl -s "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/goals" -d '{"name":"Purchase","step":"purchase"}' | grep -q 'already exists' || fail "duplicate goal"
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/goals" -d '{"name":"Pricing","step":"pageview|path:/pricing"}' >/dev/null || fail "create goal 2"
+GOALS=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/goals?since=1h")
+[ "$(echo "$GOALS" | j '[(g["name"], g["conversions"]) for g in d["goals"]]')" = "[('Pricing', 2), ('Purchase', 3)]" ] || fail "goals: $GOALS"
+[ "$(echo "$GOALS" | j '[r["revenue"] for g in d["goals"] if g["name"] == "Purchase" for r in g["revenue"] if r["currency"] == "USD"][0]')" = "29.5" ] || fail "goal revenue: $GOALS"
+REV=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/revenue?since=1h&breakdown=referrer")
+[ "$(echo "$REV" | j '[(r["currency"], float(r["revenue"]), r["conversions"]) for r in d["totals"]]')" = "[('SEK', 99.0, 1), ('USD', 29.5, 2)]" ] || fail "revenue: $REV"
+echo "$REV" | j '[r["value"] for r in d["breakdown"]]' | grep -q news.ycombinator.com || fail "revenue breakdown: $REV"
+curl -sf "${A[@]}" -X DELETE "$VAKA/api/v1/projects/$SLUG/goals/Pricing" >/dev/null || fail "delete goal"
+RT=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/realtime")
+[ "$(echo "$RT" | j 'd["visitors"] >= 2 and len(d["top_pages"]) > 0 and d["errors"] >= 1')" = "True" ] || fail "realtime: $RT"
+ADOPT=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/releases/adoption?since=1d")
+[ "$(echo "$ADOPT" | j 'd["series"][-1]["releases"]["1.0.0"]["share_sessions"]')" = "1.0" ] || fail "adoption: $ADOPT"
 HEALTH=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/releases/health")
 [ "$(echo "$HEALTH" | j 'd["releases"][0]["crash_free_sessions"]')" = "0.5" ] || fail "health: $HEALTH"
 [ "$(echo "$HEALTH" | j '[r["anr_rate_sessions"] for r in d["releases"] if r["release"] == "1.0.0"][0]')" = "0.5" ] || fail "anr rate: $HEALTH"

@@ -298,6 +298,30 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
             .await?
         }
         "list_event_names" => crate::product::event_catalog(state, p, analytics_args(&a)?, i(&a, "limit")).await?,
+        "release_adoption" => {
+            crate::insights::release_adoption(state, p, &req(&a, "project")?, s(&a, "since").as_deref(), s(&a, "interval").as_deref(), s(&a, "environment").as_deref(), i(&a, "limit")).await?
+        }
+        "realtime_visitors" => crate::insights::realtime(state, p, &req(&a, "project")?, i(&a, "minutes")).await?,
+        "analytics_revenue" => {
+            crate::product::revenue(
+                state,
+                p,
+                crate::product::RevenueParams {
+                    base: analytics_args(&a)?,
+                    event: s(&a, "event"),
+                    value_prop: s(&a, "value_prop"),
+                    currency_prop: s(&a, "currency_prop"),
+                    breakdown: s(&a, "breakdown"),
+                    limit: i(&a, "limit"),
+                },
+            )
+            .await?
+        }
+        "list_goals" => crate::product::list_goals(state, p, analytics_args(&a)?).await?,
+        "create_goal" => {
+            crate::product::create_goal(state, p, &req(&a, "project")?, crate::product::GoalIn { name: req(&a, "name")?, step: req(&a, "step")?, value_prop: s(&a, "value_prop") }).await?
+        }
+        "delete_goal" => crate::product::delete_goal(state, p, &req(&a, "project")?, &req(&a, "goal")?).await?,
         "list_identified_users" => {
             crate::product::list_users(state, p, crate::product::UserListParams { project: req(&a, "project")?, since: s(&a, "since"), query: s(&a, "query"), limit: i(&a, "limit") }).await?
         }
@@ -512,6 +536,73 @@ pub fn tools() -> Vec<Value> {
             true,
             false,
         ),
+        tool(
+            "release_adoption",
+            "Release adoption",
+            "Share of sessions and users on each release over time (hour or day buckets), with first session, current share and peak share per release. Use after shipping to see how fast a release rolls out.",
+            vec![
+                ("project", project()),
+                ("since", prop("string", "Start of the window (default 14d)")),
+                ("interval", prop("string", "hour or day (default: hour for windows up to 2 days)")),
+                ("environment", prop("string", "Only this environment")),
+                ("limit", prop("integer", "Releases to show separately; the rest are `other` (default 5)")),
+            ],
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "realtime_visitors",
+            "Real-time visitors",
+            "Traffic right now: visitors, pageviews, active sessions and errors in the last few minutes, top pages, referrers, countries and events, plus visitors per minute for the last 30 minutes.",
+            vec![("project", project()), ("minutes", prop("integer", "Window in minutes (default 5, max 60)"))],
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "analytics_revenue",
+            "Revenue",
+            "Revenue from a purchase event's numeric property, per currency: total, conversions, customers and average, optionally broken down by a dimension (referrer, utm_campaign, country, prop:plan...).",
+            vec![
+                ("project", project()),
+                ("event", prop("string", "Event in step syntax (default `purchase`), e.g. `checkout_completed|prop:plan:pro`")),
+                ("value_prop", prop("string", "Numeric property with the amount (default `revenue`)")),
+                ("currency_prop", prop("string", "Property with the currency code (default `currency`)")),
+                ("breakdown", prop("string", "Optional dimension to split revenue by")),
+                ("since", since()),
+                ("until", until()),
+                ("filters", filters()),
+                ("limit", prop("integer", "Max breakdown rows (default 10)")),
+            ],
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "list_goals",
+            "List goals",
+            "Saved conversion goals with conversions, unique converters, conversion rate (converters / visitors) and revenue in the window.",
+            vec![("project", project()), ("since", since()), ("until", until()), ("filters", filters())],
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "create_goal",
+            "Create goal",
+            "Save a named conversion goal. Needs a write token.",
+            vec![
+                ("project", project()),
+                ("name", prop("string", "Goal name, e.g. Signup")),
+                ("step", prop("string", "Event in step syntax: `signup`, `pageview|path:/thanks`, `purchase|prop:plan:pro`")),
+                ("value_prop", prop("string", "Optional numeric property to sum as revenue (uses the `currency` property)")),
+            ],
+            &["project", "name", "step"],
+            false,
+            false,
+        ),
+        tool("delete_goal", "Delete goal", "Delete a saved goal by id or name. Needs a write token.", vec![("project", project()), ("goal", prop("string", "Goal id or name"))], &["project", "goal"], false, true),
         tool(
             "analytics_funnel",
             "Funnel",

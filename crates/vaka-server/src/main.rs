@@ -8,6 +8,7 @@ mod config;
 mod db;
 mod docs;
 mod grouping;
+mod insights;
 mod ingest;
 mod maintenance;
 mod mcp;

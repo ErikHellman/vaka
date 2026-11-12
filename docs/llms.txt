@@ -39,7 +39,8 @@ project's ownership rules (`set_ownership_rules`).
 "Where do users drop off?", "do they come back?", "what do they do after X?": call `list_event_names`
 to learn the event names and property keys, then `analytics_funnel`, `analytics_retention` or
 `analytics_paths`. For one identified user (for example a crash report from support), use
-`get_user_timeline`.
+`get_user_timeline`. Revenue and conversions: `analytics_revenue`, `list_goals`, `create_goal`.
+Right now: `realtime_visitors`. Rollout of a release: `release_adoption`.
 
 ## Docs
 
