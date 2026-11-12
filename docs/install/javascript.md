@@ -62,8 +62,34 @@ Do not call `identify` with emails or names unless the app's privacy policy allo
 
 ## 4. Upload source maps (production builds)
 
-Generate source maps in the build (Vite: `build.sourcemap: true`; webpack: `devtool: 'source-map'`),
-then upload them after each build with the `vaka` CLI using an API token with write access:
+With Vite, Rollup or webpack, use the bundler plugin: it uploads the maps after each production
+build and defines `__VAKA_RELEASE__` for app code. It needs an API token with write access.
+
+```sh
+npm install --save-dev vaka-bundler-plugin
+```
+
+```js
+// vite.config.js
+import { vakaVite } from 'vaka-bundler-plugin';
+export default {
+  build: { sourcemap: 'hidden' },               // maps without a sourceMappingURL comment
+  plugins: [vakaVite({ deleteAfterUpload: true })],
+};
+
+// webpack.config.js
+const { VakaWebpackPlugin } = require('vaka-bundler-plugin');
+module.exports = { devtool: 'hidden-source-map', plugins: [new VakaWebpackPlugin({ deleteAfterUpload: true })] };
+```
+
+Then pass `release: __VAKA_RELEASE__` to `init` and build with
+`VAKA_URL={{ENDPOINT}} VAKA_TOKEN=vt_... VAKA_PROJECT={{PROJECT}} VAKA_RELEASE="$APP_VERSION"` set
+(or pass `url`, `token`, `project`, `release` as plugin options). Without a token the plugin
+skips the upload with a warning, so local builds keep working; on CI (`CI` set) a failed upload
+fails the build.
+
+Other bundlers: generate source maps (Vite: `build.sourcemap: true`; webpack: `devtool: 'source-map'`)
+and upload them after each build with the `vaka` CLI:
 
 ```sh
 export VAKA_URL={{ENDPOINT}} VAKA_TOKEN=vt_... VAKA_PROJECT={{PROJECT}}

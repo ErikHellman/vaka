@@ -87,6 +87,18 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  js-bundler:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/js-bundler
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+
   android:
     runs-on: ubuntu-latest
     defaults:
