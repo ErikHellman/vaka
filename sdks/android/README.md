@@ -10,10 +10,12 @@ Docs: [SDK reference](../../docs/sdk-android.md) · [install guide](../../docs/i
 
 ## Development
 
-Needs JDK 17+ and an Android SDK (`sdk.dir` in `local.properties` or `ANDROID_HOME`).
+Needs JDK 17+, an Android SDK and the NDK + CMake 3.22.1 for `libvaka.so` (the native crash
+handler; Gradle installs them if licenses are accepted). Point Gradle at the SDK with `sdk.dir` in `local.properties` or `ANDROID_HOME`).
 
 ```sh
 ./gradlew :vaka-android:testDebugUnitTest          # unit tests
+vaka-android/src/test/cpp/run.sh                    # native crash handler, built for the desktop (Linux)
 ./gradlew :vaka-android:publishToMavenLocal         # library to ~/.m2
 ./gradlew -p vaka-gradle-plugin publishToMavenLocal # plugin to ~/.m2
 

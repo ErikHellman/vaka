@@ -27,6 +27,13 @@ internal class ErrorBuilder(inAppPackages: List<String>) {
         )
     }
 
+    /** An exception entry for a captured thread stack (e.g. the main thread during an ANR). */
+    fun exceptionFromStack(type: String, value: String, stack: Array<StackTraceElement>): Map<String, Any?> = linkedMapOf(
+        "type" to type,
+        "value" to value,
+        "stacktrace" to stack.take(MAX_FRAMES).map(::frame),
+    )
+
     fun frame(e: StackTraceElement): Map<String, Any?> = linkedMapOf<String, Any?>(
         "function" to e.methodName,
         "module" to e.className,

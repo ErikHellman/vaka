@@ -16,6 +16,15 @@ android {
         minSdk = 21
         consumerProguardFiles("consumer-rules.pro")
         buildConfigField("String", "SDK_VERSION", "\"$sdkVersion\"")
+        externalNativeBuild { cmake { arguments += "-DANDROID_STL=none" } }
+    }
+
+    // Native crash handler (libvaka.so); built for every ABI the NDK supports.
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildFeatures { buildConfig = true }

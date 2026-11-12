@@ -30,6 +30,10 @@ internal class Client(
         Thread(r, "vaka").apply { isDaemon = true }
     },
     sdkVersion: String = "0.0.0",
+    /** Directory the native signal handler writes reports to; read once at startup. */
+    private val nativeCrashDir: File? = null,
+    /** Told about every session id change (the native handler records it in its reports). */
+    private val sessionObserver: (String?) -> Unit = {},
 ) {
     private val sdk = mapOf("name" to SDK_NAME, "version" to sdkVersion)
     private val queue = DiskQueue(queueDir, config.maxQueueSize, log)
@@ -47,6 +51,8 @@ internal class Client(
     private var sessionErrors = 0
     private var backgroundedAt = 0L
     private var endTimer: ScheduledFuture<*>? = null
+    /** An ANR was reported and the main thread has not recovered yet. */
+    private var anrActive = false
 
     @Volatile private var paused = false
     private var backoffMillis = 0L
@@ -55,7 +61,8 @@ internal class Client(
     private var lastScreen: String? = null
 
     init {
-        closePreviousSession()
+        val crashedSessions = reportNativeCrashes()
+        closePreviousSession(crashedSessions)
         executor.scheduleWithFixedDelay({ tick() }, config.flushIntervalMillis, config.flushIntervalMillis, TimeUnit.MILLISECONDS)
         // Crashes and the previous session's end from the last run go out right away.
         flushSoon()
@@ -125,6 +132,36 @@ internal class Client(
         }
     }
 
+    /**
+     * Called by the ANR watchdog with the main thread's stack. Written to disk synchronously:
+     * the system may kill the app at any moment while it is not responding.
+     */
+    fun captureAnr(stack: Array<StackTraceElement>, timeoutMillis: Long) {
+        try {
+            val message = "Application not responding for $timeoutMillis ms"
+            val item = error(VakaLevel.ERROR, fatal = false, handled = false, extraTags = mapOf("mechanism" to "anr"))
+            item["exceptions"] = listOf(errors.exceptionFromStack("ANR", message, stack))
+            queue.add(Json.write(item))
+            synchronized(this) {
+                anrActive = true
+                if (sessionId != null) sessionErrors++
+                persistSession(commit = true)
+            }
+            addBreadcrumb("anr", message, VakaLevel.ERROR)
+            flushSoon()
+        } catch (e: Throwable) {
+            log.warn("failed to record ANR", e)
+        }
+    }
+
+    /** The main thread responds again after an ANR. */
+    fun onAnrRecovered() = synchronized(this) {
+        if (anrActive) {
+            anrActive = false
+            persistSession()
+        }
+    }
+
     fun flush() {
         executor.execute { drain(force = true) }
     }
@@ -156,6 +193,7 @@ internal class Client(
                 sessionErrors = 0
                 lastScreen = null
                 toSend.add(sessionItem(sessionId!!, "ok", now))
+                sessionObserver(sessionId)
             }
             backgroundedAt = 0
             persistSession()
@@ -209,30 +247,71 @@ internal class Client(
 
     private fun persistSession(commit: Boolean = false) {
         store.put(
-            mapOf(K_SID to sessionId, K_STARTED to sessionStarted, K_ERRORS to sessionErrors.toLong(), K_BG to backgroundedAt, K_SEEN to clock.now()),
+            mapOf(
+                K_SID to sessionId, K_STARTED to sessionStarted, K_ERRORS to sessionErrors.toLong(), K_BG to backgroundedAt,
+                K_SEEN to clock.now(), K_ANR to if (anrActive) 1L else null,
+            ),
             commit,
         )
     }
 
     private fun clearSession(commit: Boolean = false) {
+        if (sessionId != null) sessionObserver(null)
         sessionId = null
         backgroundedAt = 0
-        store.put(mapOf(K_SID to null, K_STARTED to null, K_ERRORS to null, K_BG to null, K_SEEN to null), commit)
+        anrActive = false
+        store.put(mapOf(K_SID to null, K_STARTED to null, K_ERRORS to null, K_BG to null, K_SEEN to null, K_ANR to null), commit)
     }
 
-    /** A session left open by the previous process: it either ended in the background or died. */
-    private fun closePreviousSession() {
+    /**
+     * A session left open by the previous process: it ended in the background, crashed in native
+     * code (reported by [reportNativeCrashes]), was killed while not responding, or just died.
+     */
+    private fun closePreviousSession(nativeCrashes: Map<String, Long>) {
         val id = store.getString(K_SID) ?: return
         sessionStarted = store.getLong(K_STARTED)
         sessionErrors = store.getLong(K_ERRORS).toInt()
         val bg = store.getLong(K_BG)
-        val item = if (bg > 0) {
-            sessionItem(id, endStatus(), bg)
-        } else {
-            sessionItem(id, "abnormal", store.getLong(K_SEEN).takeIf { it > 0 } ?: sessionStarted)
+        val crashedAt = nativeCrashes[id]
+        val item = when {
+            crashedAt != null -> {
+                sessionErrors++
+                sessionItem(id, "crashed", crashedAt)
+            }
+            store.getLong(K_ANR) != 0L -> sessionItem(id, "abnormal", store.getLong(K_SEEN).takeIf { it > 0 } ?: sessionStarted)
+            bg > 0 -> sessionItem(id, endStatus(), bg)
+            else -> sessionItem(id, "abnormal", store.getLong(K_SEEN).takeIf { it > 0 } ?: sessionStarted)
         }
         clearSession()
         enqueue(item)
+    }
+
+    /**
+     * Turns native crash reports from the previous run into fatal error items. Returns the
+     * crashed session ids with their crash times.
+     */
+    private fun reportNativeCrashes(): Map<String, Long> {
+        val dir = nativeCrashDir ?: return emptyMap()
+        val crashed = HashMap<String, Long>()
+        for (r in NativeCrashReport.takeAll(dir, log)) {
+            try {
+                val item = error(VakaLevel.FATAL, fatal = true, handled = false, extraTags = mapOf("mechanism" to "signal"))
+                if (r.timestampMillis > 0) item["timestamp"] = r.timestampMillis
+                r.release?.let { item["release"] = it }
+                item["session_id"] = r.sessionId
+                item["breadcrumbs"] = emptyList<Any>()
+                item["exceptions"] = listOf(r.exception())
+                item["debug_images"] = r.debugImages()
+                item["contexts"] = LinkedHashMap(contexts).apply {
+                    put("thread", linkedMapOf("id" to r.tid, "name" to r.thread))
+                }
+                queue.add(Json.write(item))
+                r.sessionId?.let { crashed[it] = if (r.timestampMillis > 0) r.timestampMillis else clock.now() }
+            } catch (e: Exception) {
+                log.warn("could not report native crash", e)
+            }
+        }
+        return crashed
     }
 
     // ---------------------------------------------------------------- items
@@ -355,5 +434,6 @@ internal class Client(
         const val K_ERRORS = "session.errors"
         const val K_BG = "session.backgrounded"
         const val K_SEEN = "session.seen"
+        const val K_ANR = "session.anr"
     }
 }

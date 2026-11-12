@@ -22,6 +22,7 @@ Vaka.addBreadcrumb("cart", "Added item 42")
 Vaka.setTag("flavor", "free")                     // tag on later errors; null removes it
 Vaka.identify("user-123")                         // opt-in user id; Vaka.identify(null) clears it
 Vaka.flush()                                      // send the queue now
+Vaka.crashNativeForTesting()                      // SIGSEGV in native code, to test the setup
 ```
 
 All methods are no-ops before `init` and safe from any thread. Java callers use the same static methods.
@@ -36,6 +37,9 @@ All methods are no-ops before `init` and safe from any thread. Java callers use 
 | `autoScreenViews` | `true` | `screen_view` per resumed Activity, named after its class |
 | `autoBreadcrumbs` | `true` | Activity lifecycle and connectivity |
 | `captureUncaughtExceptions` | `true` | |
+| `captureNativeCrashes` | `true` | fatal signals in C/C++ code (`libvaka.so` signal handler) |
+| `captureAnrs` | `null` | ANR watchdog; `null` = on unless the app is debuggable |
+| `anrTimeoutMillis` | 5 000 | main thread blocked this long counts as an ANR (min 1 000) |
 | `sessionTracking` | `true` | |
 | `flushIntervalMillis` / `maxBatchSize` | 10 000 / 50 | |
 | `maxQueueSize` | 1000 | oldest items dropped beyond this |
@@ -48,6 +52,21 @@ All methods are no-ops before `init` and safe from any thread. Java callers use 
 
 - Uncaught JVM exceptions: a `Thread.UncaughtExceptionHandler` writes the error and a `crashed`
   session update to disk synchronously, then calls the previous handler. Both are sent on next launch.
+- ANRs: a watchdog thread posts a tick to the main thread every `anrTimeoutMillis`. If it has not
+  run by the next check, the main thread's stack is reported as an error with `exceptions[0].type`
+  `ANR`, value `Application not responding for 5000 ms`, tag `mechanism: anr`, `fatal: false`,
+  `handled: false`. One report per hang; it re-arms when the main thread responds. The item is
+  written to disk synchronously; if the app is killed before it recovers, the session ends as
+  `abnormal` on the next launch. Off while a debugger is attached, and by default in debuggable builds.
+- Native crashes: `libvaka.so` installs a signal handler (SIGSEGV, SIGABRT, SIGBUS, SIGFPE,
+  SIGILL, SIGTRAP, SIGSYS) that writes a small text report to `filesDir/vaka/native`: signal,
+  code, fault address, the backtrace as raw addresses and the loaded ELF images with their GNU
+  build ids (no minidump). It then hands the signal to the previous handler, so the system
+  tombstone still happens. On the next launch the report becomes a fatal error (tag
+  `mechanism: signal`, type e.g. `SIGSEGV`, `debug_images` with `code_id`) and the session ends as
+  `crashed`. Upload unstripped `.so` files (`vaka upload debug-files`) for function names and lines.
+  ART's own signal handling (null checks, stack overflow checks) runs first, so only real crashes
+  reach the handler. The library adds about 40 KB per ABI.
 - Sessions: start when the first Activity starts (foreground), end after 30 s in the background as
   `exited`, or `errored` if handled errors were reported. A session left open by a process that died
   in the foreground is reported as `abnormal` on the next launch; one that died in the background is

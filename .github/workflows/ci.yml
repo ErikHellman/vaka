@@ -101,6 +101,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Unit tests
         run: ./gradlew :vaka-android:testDebugUnitTest
+      - name: Native crash handler (desktop build)
+        run: vaka-android/src/test/cpp/run.sh
       - name: Minified sample build (mapping upload skipped without a token)
         run: ./gradlew :sample:assembleRelease
       - name: Gradle plugin

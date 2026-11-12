@@ -24,9 +24,12 @@ class ClientTest {
 
     private val config = VakaConfig(key = "vk_test", endpoint = "http://localhost", release = "1.0.0", flushIntervalMillis = 60_000, sessionTimeoutMillis = 50)
 
-    private fun client(store: KeyValueStore = MemoryStore(), transport: Transport = FakeTransport(), clock: Clock = FakeClock(), cfg: VakaConfig = config) =
-        Client(cfg, tmp.root.resolve("queue"), store, mapOf("model" to "Test"), emptyMap(), transport, clock = clock,
-            executor = Executors.newSingleThreadScheduledExecutor(), sdkVersion = "0.1.0")
+    private fun client(
+        store: KeyValueStore = MemoryStore(), transport: Transport = FakeTransport(), clock: Clock = FakeClock(), cfg: VakaConfig = config,
+        nativeDir: java.io.File? = null, sessions: MutableList<String?> = ArrayList(),
+    ) = Client(cfg, tmp.root.resolve("queue"), store, mapOf("model" to "Test"), emptyMap(), transport, clock = clock,
+        executor = Executors.newSingleThreadScheduledExecutor(), sdkVersion = "0.1.0", nativeCrashDir = nativeDir,
+        sessionObserver = { synchronized(sessions) { sessions.add(it) } })
 
     @Test fun sendsBatchWithSdkAndItems() {
         val t = FakeTransport()
@@ -145,5 +148,62 @@ class ClientTest {
         assertTrue(!body.contains("\"crumb 49\""))
         assertTrue(body.contains("\"crumb 50\""))
         assertTrue(body.contains("\"crumb 149\""))
+    }
+
+    @Test fun anrIsReportedAndKillWhileHungEndsSessionAbnormal() {
+        val store = MemoryStore()
+        val dead = FakeTransport().apply { next = SendResult.Retry(null) }
+        val first = client(store = store, transport = dead)
+        first.onForeground(); first.awaitIdle()
+        val sid = first.currentSessionId
+        val stack = arrayOf(
+            StackTraceElement("com.example.Slow", "load", "Slow.kt", 12),
+            StackTraceElement("android.os.Handler", "dispatchMessage", "Handler.java", 106),
+        )
+        first.captureAnr(stack, 5_000)
+        // Killed while hung (and backgrounded): next launch.
+        first.onBackground()
+        val t = FakeTransport()
+        client(store = store, transport = t).apply { Thread.sleep(800); awaitIdle() }
+        val body = t.all()
+        assertTrue(body, body.contains("\"type\":\"ANR\",\"value\":\"Application not responding for 5000 ms\""))
+        assertTrue(body.contains("\"fatal\":false,\"handled\":false"))
+        assertTrue(body.contains("\"mechanism\":\"anr\""))
+        assertTrue(body.contains("\"stacktrace\":[{\"function\":\"load\",\"module\":\"com.example.Slow\""))
+        assertTrue(body, body.contains("\"session_id\":\"$sid\",\"status\":\"abnormal\""))
+    }
+
+    @Test fun recoveredAnrDoesNotMarkSessionAbnormal() {
+        val store = MemoryStore()
+        val first = client(store = store, transport = FakeTransport().apply { next = SendResult.Retry(null) })
+        first.onForeground(); first.awaitIdle()
+        first.captureAnr(emptyArray(), 5_000)
+        first.onAnrRecovered()
+        first.onBackground()
+        val t = FakeTransport()
+        client(store = store, transport = t).apply { Thread.sleep(800); awaitIdle() }
+        assertTrue(t.all(), t.all().contains("\"status\":\"errored\""))
+    }
+
+    @Test fun nativeCrashFromLastRunIsSentAndSessionCrashed() {
+        val store = MemoryStore()
+        val sessions = ArrayList<String?>()
+        val nativeDir = tmp.newFolder("native")
+        val first = client(store = store, transport = FakeTransport().apply { next = SendResult.Retry(null) }, nativeDir = nativeDir, sessions = sessions)
+        first.onForeground(); first.awaitIdle()
+        val sid = first.currentSessionId!!
+        assertEquals(listOf<String?>(sid), sessions)
+        nativeDir.resolve("1794517033272.crash").writeText(NativeCrashReportTest.sample(sid))
+        val t = FakeTransport()
+        client(store = store, transport = t, nativeDir = nativeDir).apply { Thread.sleep(800); awaitIdle() }
+        val body = t.all()
+        assertTrue(body, body.contains("\"type\":\"SIGSEGV\",\"value\":\"Segmentation violation (SEGV_MAPERR) at 0x0\""))
+        assertTrue(body.contains("\"fatal\":true"))
+        assertTrue(body.contains("\"mechanism\":\"signal\""))
+        assertTrue(body.contains("\"timestamp\":1794517033272"))
+        assertTrue(body.contains("\"code_id\":\"20ffbf74c43fb0c055999cc4eed51959fe4ab416\""))
+        assertTrue(body, body.contains("\"session_id\":\"$sid\",\"status\":\"crashed\""))
+        assertTrue(!body.contains("\"abnormal\""))
+        assertEquals(0, nativeDir.listFiles()!!.size)
     }
 }

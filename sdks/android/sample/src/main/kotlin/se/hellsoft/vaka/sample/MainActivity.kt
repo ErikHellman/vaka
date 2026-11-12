@@ -23,6 +23,8 @@ class MainActivity : Activity() {
             }
         }
         button("Crash") { cart.checkout() }
+        button("Native crash") { Vaka.crashNativeForTesting() }
+        button("Freeze for 10 s (ANR)") { Thread.sleep(10_000) }
         button("Identify") { Vaka.identify("user-123") }
         setContentView(layout)
     }

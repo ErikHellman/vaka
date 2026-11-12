@@ -3,13 +3,20 @@ package se.hellsoft.vaka
 import android.app.Activity
 import android.app.Application
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.os.Bundle
+import android.os.Debug
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import se.hellsoft.vaka.internal.AnrWatchdog
 import se.hellsoft.vaka.internal.Client
 import se.hellsoft.vaka.internal.HttpTransport
 import se.hellsoft.vaka.internal.KeyValueStore
 import se.hellsoft.vaka.internal.Logger
+import se.hellsoft.vaka.internal.MainThread
+import se.hellsoft.vaka.internal.NativeCrashes
 import java.io.File
 
 /**
@@ -28,6 +35,7 @@ import java.io.File
  */
 public object Vaka {
     @Volatile private var client: Client? = null
+    private var anrWatchdog: AnrWatchdog? = null
 
     /** True once [init] has run with an enabled config. */
     @JvmStatic public val isInitialized: Boolean get() = client != null
@@ -45,6 +53,9 @@ public object Vaka {
         }
         val cfg = if (config.inAppPackages.isEmpty()) config.copy(inAppPackages = listOf(app.packageName)) else config
         val dir = File(app.filesDir, "vaka")
+        val nativeDir = File(dir, "native")
+        // Install before the Client starts sessions, so the first session id reaches the handler.
+        val native = cfg.captureNativeCrashes && NativeCrashes.install(nativeDir, cfg.release, log)
         val c = Client(
             config = cfg,
             queueDir = File(dir, "queue"),
@@ -54,9 +65,23 @@ public object Vaka {
             transport = HttpTransport(cfg.endpoint, cfg.key, "${Client.SDK_NAME}/${BuildConfig.SDK_VERSION}", log),
             log = log,
             sdkVersion = BuildConfig.SDK_VERSION,
+            // Reports from the previous run are read even if capture is now off.
+            nativeCrashDir = nativeDir,
+            sessionObserver = if (native) NativeCrashes::setSession else { _ -> },
         )
         client = c
         if (cfg.captureUncaughtExceptions) CrashHandler.install(c)
+        val debuggable = (app.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        if (cfg.captureAnrs ?: !debuggable) {
+            val timeout = cfg.anrTimeoutMillis.coerceAtLeast(1_000)
+            anrWatchdog = AnrWatchdog(
+                timeoutMillis = timeout,
+                main = AndroidMainThread,
+                onAnr = { stack -> c.captureAnr(stack, timeout) },
+                onRecovered = c::onAnrRecovered,
+                isDebugging = { Debug.isDebuggerConnected() || Debug.waitingForDebugger() },
+            ).also { it.start() }
+        }
         Lifecycle(c, cfg).register(app)
         log.debug("initialized for release ${cfg.release} (${cfg.environment})")
     }
@@ -109,6 +134,15 @@ public object Vaka {
         client?.flush()
     }
 
+    /**
+     * Crashes the app with a native SIGSEGV, to check that native crash reporting works end to end.
+     * The report is sent on the next launch. Never call this in production code paths.
+     */
+    @JvmStatic
+    public fun crashNativeForTesting() {
+        NativeCrashes.crash()
+    }
+
     internal const val TAG = "Vaka"
 
     private fun deviceInfo(cfg: VakaConfig): Map<String, Any?> = linkedMapOf(
@@ -133,6 +167,16 @@ public object Vaka {
             "device" to linkedMapOf("brand" to Build.BRAND, "abi" to Build.SUPPORTED_ABIS.firstOrNull()),
         )
     }
+}
+
+private object AndroidMainThread : MainThread {
+    private val handler = Handler(Looper.getMainLooper())
+
+    override fun post(r: Runnable) {
+        handler.post(r)
+    }
+
+    override fun stackTrace(): Array<StackTraceElement> = Looper.getMainLooper().thread.stackTrace
 }
 
 private object LogcatLogger : Logger {

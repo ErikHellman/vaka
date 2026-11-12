@@ -71,6 +71,10 @@ The ingest key is write-only and safe to ship in the app. The SDK adds the `INTE
 
 - Uncaught exceptions: written to disk synchronously when the app crashes and sent on the next
   launch, with the last 100 breadcrumbs.
+- Native (C/C++) crashes: fatal signals are recorded with raw addresses and loaded libraries and
+  sent on the next launch (see step 5 for symbols).
+- ANRs: the main thread blocked for 5 seconds is reported with its stack (release builds only, by
+  default; set `captureAnrs = true` to test in a debug build, `anrTimeoutMillis` to change the limit).
 - Sessions for crash-free users and sessions per release: a session starts when the app comes to the
   foreground and ends after 30 seconds in the background.
 - A `screen_view` for every resumed Activity (named after the Activity class).
@@ -108,6 +112,13 @@ On CI, store `VAKA_TOKEN` as a secret. Without a token the build still succeeds 
 (set `failOnError.set(true)` in the `vaka { }` block to fail instead). If `release` in `VakaConfig` is
 not `versionName`, set the same value with `release.set(...)` in the `vaka { }` block. Alternative
 without the plugin: `vaka upload proguard --release <versionName> app/build/outputs/mapping/release/mapping.txt`.
+
+If the app has its own native code (NDK/CMake), also upload the unstripped libraries after each
+release build so native crashes get function names and lines (they are matched by build id):
+
+```sh
+vaka upload debug-files --release <versionName> app/build/intermediates/merged_native_libs/release/
+```
 
 ## 6. Verify
 

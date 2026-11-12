@@ -13,6 +13,12 @@ package se.hellsoft.vaka
  * @property autoScreenViews send a `screen_view` for every resumed Activity.
  * @property autoBreadcrumbs record Activity lifecycle and connectivity breadcrumbs.
  * @property captureUncaughtExceptions report crashes from uncaught JVM exceptions.
+ * @property captureNativeCrashes report crashes in native (C/C++) code: fatal signals are written
+ *   to disk and sent on the next launch, with raw addresses the server symbolicates.
+ * @property captureAnrs report ANRs (main thread blocked for [anrTimeoutMillis]). `null` (the
+ *   default) means on for release builds and off when the app is debuggable. Never reported
+ *   while a debugger is attached.
+ * @property anrTimeoutMillis how long the main thread may be blocked before it counts as an ANR.
  * @property sessionTracking report sessions for crash-free users/sessions (release health).
  * @property flushIntervalMillis how often queued items are sent.
  * @property maxBatchSize send as soon as this many items are queued.
@@ -31,6 +37,9 @@ public data class VakaConfig(
     val autoScreenViews: Boolean = true,
     val autoBreadcrumbs: Boolean = true,
     val captureUncaughtExceptions: Boolean = true,
+    val captureNativeCrashes: Boolean = true,
+    val captureAnrs: Boolean? = null,
+    val anrTimeoutMillis: Long = 5_000,
     val sessionTracking: Boolean = true,
     val flushIntervalMillis: Long = 10_000,
     val maxBatchSize: Int = 50,
