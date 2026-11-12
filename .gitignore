@@ -7,3 +7,5 @@ node_modules
 /.build
 /.swiftpm
 /Package.resolved
+.env.*
+!.env.example

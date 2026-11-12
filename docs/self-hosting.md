@@ -25,6 +25,28 @@ vaka.example.com {
 }
 ```
 
+## Fly.io
+
+The repository ships a ready Fly.io setup: `fly.toml` for the server (app `vaka`) and
+`deploy/fly/clickhouse/` for a private ClickHouse app (`vaka-clickhouse`, no public ports,
+reached at `vaka-clickhouse.internal:8123`). Metadata stays in SQLite on a volume.
+Change the app names, region and `VAKA_PUBLIC_URL` in both files for your own deployment.
+
+```sh
+fly apps create vaka && fly apps create vaka-clickhouse
+fly volumes create vaka_data -a vaka -r arn -s 3
+fly volumes create clickhouse_data -a vaka-clickhouse -r arn -s 10
+PW=$(openssl rand -hex 24)
+fly secrets set -a vaka-clickhouse --stage CLICKHOUSE_PASSWORD=$PW
+fly secrets set -a vaka --stage VAKA_CLICKHOUSE_PASSWORD=$PW \
+  VAKA_ADMIN_EMAIL=you@example.com VAKA_ADMIN_PASSWORD=...
+fly deploy -c deploy/fly/clickhouse/fly.toml --ha=false
+fly deploy --ha=false
+```
+
+Both apps run a single machine each (volumes are per machine); use `--ha=false` so Fly
+does not create a second one. Volume snapshots are taken daily by Fly.
+
 ## Configuration
 
 All settings are environment variables.

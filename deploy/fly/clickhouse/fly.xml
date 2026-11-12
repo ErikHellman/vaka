@@ -1,0 +1,5 @@
+<!-- Fly private networking is IPv6: listen on all interfaces, v4 and v6. -->
+<clickhouse>
+    <listen_host>::</listen_host>
+    <listen_try>1</listen_try>
+</clickhouse>
