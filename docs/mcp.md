@@ -46,7 +46,7 @@ Read (everything a read token can call):
 | `list_issue_events` | Recent individual events for an issue |
 | `get_event` | One event in full |
 | `search_events` | Search events by text, level, release, environment, user id or exception type |
-| `release_health` | Crash-free sessions and users, sessions, errors and new issues per release |
+| `release_health` | Crash-free sessions and users, sessions, errors, new issues and ANR/hang rates per release |
 | `compare_releases` | Two releases side by side: new, gone and increased issues |
 | `explain_spike` | Why errors went up: recent window vs baseline, ranked by issue, release, OS, device, country, exception type |
 | `analytics_summary` | Visitors, pageviews, screen views, custom events, with the previous period |

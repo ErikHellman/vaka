@@ -132,7 +132,8 @@ Report a hung main thread as an ordinary error item:
 - `stacktrace`: the main thread's stack at detection, crash site first.
 - `fatal: false`, `handled: false`. If the app is killed while hung, end that session with status `abnormal`.
 
-Release health reports ANR/hang rates per release from these events.
+Release health reports ANR/hang rates per release from these events (`anr_rate_sessions` is the
+share of sessions with at least one; it needs `session_id` on the event).
 
 ### JVM / Android with R8
 

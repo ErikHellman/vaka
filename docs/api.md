@@ -57,7 +57,7 @@ A resolved issue that receives a new event is reopened and marked as a regressio
 | Method & path | Description |
 | --- | --- |
 | `GET /projects/{p}/releases` | Known releases |
-| `GET /projects/{p}/releases/health` | Crash-free sessions and users, sessions, errors and new issues per release; `release`, `since` |
+| `GET /projects/{p}/releases/health` | Crash-free sessions and users, sessions, errors, new issues and ANR/hang rates (`anrs`, `anr_sessions`, `anr_users`, `anr_rate_sessions`, `anr_rate_users`) per release; `release`, `since` |
 | `GET /projects/{p}/releases/compare?base=1.2.0&target=1.3.0` | Health side by side, new issues, gone issues, issues that increased |
 | `GET /projects/{p}/releases/{version}/commits` | Commits recorded for a release, with changed files |
 | `PUT /projects/{p}/releases/{version}/commits` | Replace them: `{"repository"?: "https://github.com/o/r", "commits": [{"sha", "message"?, "author_name"?, "author_email"?, "timestamp"?, "files"?: ["src/a.ts"]}]}` (at most 1000). `vaka releases set-commits` does this from `git log` |

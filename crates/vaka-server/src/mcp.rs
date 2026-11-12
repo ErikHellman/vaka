@@ -444,7 +444,7 @@ pub fn tools() -> Vec<Value> {
         tool(
             "release_health",
             "Release health",
-            "Crash-free sessions and users, session counts, errors and new issues per release.",
+            "Crash-free sessions and users, session counts, errors, new issues and ANR/app hang rates (anr_rate_sessions, anr_rate_users) per release.",
             vec![("project", project()), ("release", prop("string", "Only this release")), ("since", since())],
             &["project"],
             true,

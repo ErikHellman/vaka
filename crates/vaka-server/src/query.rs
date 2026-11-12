@@ -491,6 +491,9 @@ pub async fn comment_issue(state: &AppState, p: &Principal, id: &str, body: &str
     Ok(json!({"ok": true, "issue": issue["short_id"]}))
 }
 
+/// An error event that is an ANR (Android) or app hang (iOS); see docs/ingest.md.
+const IS_ANR: &str = "(tags['mechanism'] IN ('anr', 'hang') OR exception_type IN ('ANR', 'AppHang'))";
+
 fn health_sql(group: &str, cond: &str) -> String {
     format!(
         "SELECT {group} AS release, count() AS sessions, countIf(s_status = 'crashed') AS crashed, countIf(s_status = 'errored') AS errored, \
@@ -516,20 +519,44 @@ pub async fn release_health(state: &AppState, p: &Principal, project: &str, rele
     let rows = state.ch.query(&format!("{} LIMIT 50", health_sql("s_release", &cond)), &ps).await?;
     // Error counts and new issues per release.
     let mut econd = "project_id = {p:String} AND timestamp >= fromUnixTimestamp64Milli({since:Int64})".to_string();
-    if release.is_some() {
+    if release.filter(|r| !r.is_empty()).is_some() {
         econd.push_str(" AND release = {r:String}");
     }
     let errs = state
         .ch
-        .query(&format!("SELECT release, count() AS errors, uniq(issue_id) AS issues FROM errors WHERE {econd} GROUP BY release"), &ps)
+        .query(
+            &format!("SELECT release, count() AS errors, uniq(issue_id) AS issues, countIf({IS_ANR}) AS anrs FROM errors WHERE {econd} GROUP BY release"),
+            &ps,
+        )
+        .await?;
+    // Sessions (and their users) that had an ANR or app hang.
+    let anr = state
+        .ch
+        .query(
+            &format!(
+                "SELECT s_release AS release, count() AS anr_sessions, uniq(s_distinct) AS anr_users FROM \
+                 (SELECT session_id, any(distinct_id) AS s_distinct, any(release) AS s_release FROM sessions WHERE {cond} \
+                  AND session_id IN (SELECT session_id FROM errors WHERE {econd} AND {IS_ANR} AND session_id != '') GROUP BY session_id) \
+                 GROUP BY s_release"
+            ),
+            &ps,
+        )
         .await?;
     let mut out = Vec::new();
     for mut r in rows {
         let rel = r["release"].as_str().unwrap_or("").to_string();
-        if let Some(e) = errs.iter().find(|e| e["release"].as_str() == Some(rel.as_str())) {
-            r["errors"] = e["errors"].clone();
-            r["issues_seen"] = e["issues"].clone();
-        }
+        let e = errs.iter().find(|e| e["release"].as_str() == Some(rel.as_str()));
+        r["errors"] = e.map(|e| e["errors"].clone()).unwrap_or(json!(0));
+        r["issues_seen"] = e.map(|e| e["issues"].clone()).unwrap_or(json!(0));
+        r["anrs"] = e.map(|e| e["anrs"].clone()).unwrap_or(json!(0));
+        let a = anr.iter().find(|a| a["release"].as_str() == Some(rel.as_str()));
+        let num = |v: &Value| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).unwrap_or(0.0);
+        let (anr_sessions, anr_users) = a.map(|a| (num(&a["anr_sessions"]), num(&a["anr_users"]))).unwrap_or((0.0, 0.0));
+        let rate = |n: f64, d: &Value| ((n / num(d).max(1.0)) * 10_000.0).round() / 10_000.0;
+        r["anr_sessions"] = json!(anr_sessions as i64);
+        r["anr_users"] = json!(anr_users as i64);
+        r["anr_rate_sessions"] = json!(rate(anr_sessions, &r["sessions"]));
+        r["anr_rate_users"] = json!(rate(anr_users, &r["users"]));
         let new_issues = sqlx::query("SELECT COUNT(*) AS n FROM issues WHERE project_id = $1 AND first_release = $2")
             .bind(&project.id)
             .bind(&rel)
@@ -542,7 +569,7 @@ pub async fn release_health(state: &AppState, p: &Principal, project: &str, rele
     Ok(json!({
         "project": project.slug,
         "window": {"since": iso_time(since), "until": iso_time(now)},
-        "note": "crash_free_* are fractions (0.995 = 99.5%). Sessions come from SDK session tracking.",
+        "note": "crash_free_* and anr_rate_* are fractions (0.995 = 99.5%). Sessions come from SDK session tracking. anr_* counts ANRs (Android) and app hangs (iOS).",
         "releases": out,
     }))
 }
