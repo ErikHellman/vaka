@@ -32,10 +32,11 @@ const nav = [
   ['SDK: JVM', 'sdk-jvm'],
   ['SDK: Node.js', 'sdk-node'],
   ['SDK: Python', 'sdk-python'],
+  ['SDK: .NET', 'sdk-dotnet'],
   ['SDK: HTTP', 'sdk-http'],
 ];
-const installs = ['javascript', 'android', 'ios', 'rust', 'go', 'jvm', 'node', 'python', 'http'];
-const installLabel = { javascript: 'JavaScript', android: 'Android', ios: 'iOS', rust: 'Rust', go: 'Go', jvm: 'JVM', node: 'Node.js', python: 'Python', http: 'Other (HTTP)' };
+const installs = ['javascript', 'android', 'ios', 'rust', 'go', 'jvm', 'node', 'python', 'dotnet', 'http'];
+const installLabel = { javascript: 'JavaScript', android: 'Android', ios: 'iOS', rust: 'Rust', go: 'Go', jvm: 'JVM', node: 'Node.js', python: 'Python', dotnet: '.NET', http: 'Other (HTTP)' };
 
 const fill = (s) =>
   s.replaceAll('{{ENDPOINT}}', ENDPOINT).replaceAll('{{KEY}}', 'vk_your_ingest_key').replaceAll('{{PROJECT}}', 'your-project');

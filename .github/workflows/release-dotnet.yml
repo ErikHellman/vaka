@@ -1,0 +1,64 @@
+name: Release .NET SDK
+
+# Publishes Vaka, Vaka.OpenTelemetry and Vaka.AspNetCore to nuget.org. See docs/releasing/dotnet.md.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Package version, e.g. 0.1.0 (no leading v)"
+        required: true
+  push:
+    tags: ["dotnet-v*"]
+
+permissions:
+  contents: write   # tag the release commit
+  id-token: write   # NuGet trusted publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/dotnet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Version
+        id: v
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then V="$INPUT_VERSION"; else V="${GITHUB_REF_NAME#dotnet-v}"; fi
+          if ! echo "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then echo "bad version: $V"; exit 1; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+      - run: dotnet test -c Release
+      - name: Pack (Vaka, Vaka.OpenTelemetry, Vaka.AspNetCore and symbol packages)
+        run: |
+          dotnet pack -c Release -p:Version=${{ steps.v.outputs.version }} -o out
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuget-${{ steps.v.outputs.version }}
+          path: sdks/dotnet/out/*
+      - name: NuGet login (trusted publishing)
+        id: login
+        if: vars.NUGET_USER != ''
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+      - name: Push to nuget.org
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY || secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then echo "Set the NUGET_USER variable or the NUGET_API_KEY secret (see docs/releasing/dotnet.md)"; exit 1; fi
+          dotnet nuget push "out/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
+      - name: Tag
+        # Tags pushed with GITHUB_TOKEN don't trigger workflows, so this doesn't start a second release.
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git tag "dotnet-v${{ steps.v.outputs.version }}"
+          git push origin "dotnet-v${{ steps.v.outputs.version }}"

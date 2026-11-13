@@ -1,0 +1,26 @@
+<Project>
+  <PropertyGroup>
+    <!-- Package version. The release workflow overrides it with -p:Version=X.Y.Z. -->
+    <Version>0.2.0</Version>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Authors>Erik Hellman</Authors>
+    <Copyright>Copyright Erik Hellman</Copyright>
+    <PackageLicenseExpression>MIT OR Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://vaka.hellsoft.se</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/ErikHellman/vaka</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>vaka;crash-reporting;error-tracking;analytics;opentelemetry;feature-flags</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+</Project>

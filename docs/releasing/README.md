@@ -13,6 +13,7 @@ released by [`release.yml`](../../.github/workflows/release.yml) (see
 | `github.com/ErikHellman/vaka/sdks/go` | Go module proxy (git tags) | [go.md](go.md) |
 | `se.hellsoft.vaka:vaka-jvm` | Maven Central | [jvm.md](jvm.md) |
 | `vaka-sdk` (Python) | PyPI (trusted publishing) | [python.md](python.md) |
+| `Vaka`, `Vaka.OpenTelemetry`, `Vaka.AspNetCore` (.NET) | NuGet | [dotnet.md](dotnet.md) |
 
 ## Release order
 
@@ -39,6 +40,7 @@ All SDKs share the server's version. Change all of these together:
 | `sdks/android/vaka-gradle-plugin/build.gradle.kts` | `version` |
 | `sdks/jvm/gradle.properties`, `docs/install/jvm.md` | `VERSION_NAME`, version in the examples |
 | `sdks/ios/Sources/Vaka/Vaka.swift` | `sdkVersion` |
+| `sdks/dotnet/Directory.Build.props` | `Version` (default for local builds; the NuGet workflow passes the version explicitly) |
 | `Package.swift`, `docs/install/ios.md`, `docs/install/android.md` | Version numbers in the examples |
 | `Cargo.lock`, `sdks/js/package-lock.json`, `sdks/node/package-lock.json` | Regenerate (`cargo update -w`, `npm install`); rebuild `sdks/js/dist/vaka.min.js` |
 
