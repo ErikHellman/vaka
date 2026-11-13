@@ -201,3 +201,7 @@ See [performance.md](performance.md) for all fields. Error items may carry `trac
   is deleted after a day, so visitors cannot be tracked across days.
 - Error payloads are scrubbed of passwords, tokens, emails and card numbers (configurable).
 - See [privacy.md](privacy.md).
+
+## OpenTelemetry
+
+Backend services can send OTLP/HTTP traces and logs instead: see [opentelemetry.md](opentelemetry.md).

@@ -198,6 +198,11 @@ Funnel responses include `conversion_time` (median, p90 and a distribution of th
 first to the last step for people who finished). `breakdown=cohort:<name>` splits a funnel into
 people in and not in a cohort.
 
+### Logs
+
+`GET /projects/{p}/logs?q=&severity=&trace_id=&service=&since=` searches logs sent over OTLP. Send
+them, and traces, to `/ingest/otlp/v1/logs` and `/ingest/otlp/v1/traces`. See [opentelemetry.md](opentelemetry.md).
+
 ### Anomalies and digests
 
 `GET /projects/{p}/anomalies?window=24h` compares the last window with the same window 1 to 4 weeks

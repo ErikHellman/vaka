@@ -81,6 +81,10 @@ pub async fn erase_user(state: &AppState, project_id: &str, user_id: &str, actor
             )
             .await?;
     }
+    // Spans and OTLP logs carry user ids too.
+    for table in ["spans", "logs"] {
+        state.ch.execute_with(&format!("DELETE FROM {table} WHERE project_id = {{p:String}} AND user_id = {{u:String}}"), &params).await?;
+    }
     crate::auth::audit(state, actor, "erase_user", project_id, &format!("user_id={user_id} errors={} events={} sessions={}", counts[0], counts[1], counts[2])).await;
     Ok(ErasureResult {
         project_id: project_id.into(),

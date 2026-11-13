@@ -65,6 +65,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/projects/{p}/flags/{key}", get(get_flag).patch(update_flag).delete(delete_flag))
         .route("/api/v1/projects/{p}/flags/{key}/health", get(flag_health))
         .route("/api/v1/projects/{p}/anomalies", get(anomalies))
+        .route("/api/v1/projects/{p}/logs", get(search_logs))
         .route("/api/v1/projects/{p}/digest/preview", get(digest_preview))
         .route("/api/v1/projects/{p}/flags/{key}/results", get(flag_results))
         .route("/api/v1/projects/{p}/experiments", get(list_experiments).post(create_experiment))
@@ -597,6 +598,11 @@ async fn create_flag(State(s): State<AppState>, p: Principal, Path(project): Pat
 
 async fn get_flag(State(s): State<AppState>, p: Principal, Path((project, key)): Path<(String, String)>) -> J {
     Ok(Json(crate::flags::get_flag(&s, &p, &project, &key).await?))
+}
+
+async fn search_logs(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(mut q): Query<crate::otel::LogParams>) -> J {
+    q.project = project;
+    Ok(Json(crate::otel::search_logs(&s, &p, q).await?))
 }
 
 #[derive(Deserialize)]

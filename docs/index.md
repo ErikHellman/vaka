@@ -19,12 +19,13 @@ an agent "what broke in yesterday's release and why?" and let it fix the bug.
 - [Quickstart](quickstart.md): run Vaka and send a first event in five minutes.
 - [Self-hosting](self-hosting.md): configuration, storage, backups and upgrades.
 - Install an SDK: [JavaScript](sdk-javascript.md), [Android](sdk-android.md), [iOS](sdk-ios.md),
-  [Rust](sdk-rust.md), or [any language over HTTP](sdk-http.md).
+  [Rust](sdk-rust.md), [OpenTelemetry](opentelemetry.md) for any backend, or [any language over HTTP](sdk-http.md).
 - Connect an agent: [MCP](mcp.md). Machine-readable index: [/llms.txt]({{ENDPOINT}}/llms.txt).
 
 ## Reference
 
 - [REST API](api.md) · [MCP tools](mcp.md) · [Ingest protocol](ingest.md)
 - [CLI](cli.md) · [Alerts](alerts.md) · [Privacy and data retention](privacy.md)
+- [Performance](performance.md) · [Feature flags](flags.md) · [Anomalies and digests](anomalies.md) · [OpenTelemetry](opentelemetry.md)
 
 Vaka is open source under MIT or Apache-2.0: https://github.com/ErikHellman/vaka

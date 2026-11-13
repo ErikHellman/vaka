@@ -51,7 +51,8 @@ Read (everything a read token can call):
 | `app_startup` | Cold and warm app start times by release |
 | `web_vitals` | LCP, INP, CLS, FCP, TTFB p75 with ratings, overall and by page |
 | `list_slow_traces` | Slowest individual traces |
-| `get_trace` | One trace as a span tree with self time and errors |
+| `get_trace` | One trace as a span tree with self time, errors and logs |
+| `search_logs` | Search OpenTelemetry logs by text, severity, trace, service and release |
 | `span_breakdown` | Where a transaction's time goes, by child span |
 | `compare_release_performance` | p95 and Web Vitals regressions between two releases |
 | `get_code_mappings` | How stack paths map to repository paths |

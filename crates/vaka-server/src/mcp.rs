@@ -450,6 +450,23 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
             .await?
         }
         "list_alert_rules" => crate::api::list_rules_inner(state, p).await?,
+        "search_logs" => crate::otel::search_logs(
+            state,
+            p,
+            crate::otel::LogParams {
+                project: req(&a, "project")?,
+                since: s(&a, "since"),
+                until: s(&a, "until"),
+                q: s(&a, "query"),
+                severity: s(&a, "severity"),
+                trace_id: s(&a, "trace_id"),
+                service: s(&a, "service"),
+                release: s(&a, "release"),
+                environment: s(&a, "environment"),
+                limit: i(&a, "limit"),
+            },
+        )
+        .await?,
         "detect_anomalies" => crate::anomalies::detect(state, p, &req(&a, "project")?, s(&a, "window").as_deref()).await?,
         "preview_digest" => {
             crate::api::digest_preview_inner(state, p, &req(&a, "project")?, s(&a, "frequency").as_deref(), a.get("narrative").and_then(|v| v.as_bool()).unwrap_or(true)).await?
@@ -1136,6 +1153,26 @@ pub fn tools() -> Vec<Value> {
             ],
             &["trigger", "channel", "target"],
             false,
+            false,
+        ),
+        tool(
+            "search_logs",
+            "Search logs",
+            "Search logs sent over OpenTelemetry (OTLP), newest first, with counts per severity. Filter by text, minimum severity, trace id, service, release and environment. Logs with a trace_id link to get_trace.",
+            vec![
+                ("project", project()),
+                ("query", prop("string", "Text the log body contains (case-insensitive)")),
+                ("severity", prop("string", "Minimum severity: trace, debug, info, warn, error or fatal")),
+                ("trace_id", prop("string", "Only logs from this trace")),
+                ("service", prop("string", "service.name")),
+                ("release", prop("string", "service.version")),
+                ("environment", prop("string", "deployment.environment")),
+                ("since", prop("string", "Window start (default 24h)")),
+                ("until", prop("string", "Window end (default now)")),
+                ("limit", prop("integer", "Max logs (default 100, max 1000)")),
+            ],
+            &["project"],
+            true,
             false,
         ),
         tool(

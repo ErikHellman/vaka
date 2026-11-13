@@ -366,6 +366,56 @@ curl -sf "${A[@]}" -X PUT "$VAKA/api/v1/projects/$SLUG/releases/9.9.9/commits" -
 for i in $(seq 1 10); do grep -q '^/release ' "$HOOKS" && break; sleep 0.5; done
 grep '^/release release_created ' "$HOOKS" | grep -q '"version":"9.9.9"' || fail "release_created: $(grep '^/release' "$HOOKS")"
 
+# OpenTelemetry (OTLP/HTTP JSON) in its own project
+OPROJ=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects" -d "{\"name\":\"$SLUG-otel\",\"platform\":\"jvm\"}")
+OKEY=$(echo "$OPROJ" | j 'd["ingest_key"]'); OSLUG=$(echo "$OPROJ" | j 'd["slug"]')
+OTID=4bf92f3577b34da6a3ce929d0e0e4736
+NS=$(python3 -c 'import time; print(time.time_ns())')
+OTRACES=$(python3 - "$NS" "$OTID" <<'PY'
+import json, sys
+ns, tid = int(sys.argv[1]), sys.argv[2]
+kv = lambda k, v: {"key": k, "value": {"intValue": str(v)} if isinstance(v, int) else {"stringValue": v}}
+res = {"attributes": [kv("service.name", "cart-svc"), kv("service.version", "o1"), kv("deployment.environment.name", "production"), kv("telemetry.sdk.language", "java")]}
+spans = [
+  {"traceId": tid, "spanId": "00f067aa0ba902b7", "name": "GET", "kind": 2, "startTimeUnixNano": str(ns - 300_000_000), "endTimeUnixNano": str(ns),
+   "status": {"code": 2}, "attributes": [kv("http.request.method", "GET"), kv("http.route", "/carts/{id}"), kv("http.response.status_code", 500)],
+   "events": [{"name": "exception", "timeUnixNano": str(ns - 1000), "attributes": [kv("exception.type", "com.shop.OtelCartError"), kv("exception.message", "cart vanished"),
+     kv("exception.stacktrace", "com.shop.OtelCartError: cart vanished\n\tat com.shop.Carts.load(Carts.java:31)\n\tat com.shop.Api.get(Api.java:12)")]}]},
+  {"traceId": tid, "spanId": "00f067aa0ba902b8", "parentSpanId": "00f067aa0ba902b7", "name": "SELECT carts", "kind": 3,
+   "startTimeUnixNano": str(ns - 250_000_000), "endTimeUnixNano": str(ns - 50_000_000), "attributes": [kv("db.system", "postgresql")]},
+]
+print(json.dumps({"resourceSpans": [{"resource": res, "scopeSpans": [{"scope": {"name": "smoke"}, "spans": spans}]}]}))
+PY
+)
+OLOGS=$(python3 - "$NS" "$OTID" <<'PY'
+import json, sys
+ns, tid = int(sys.argv[1]), sys.argv[2]
+res = {"attributes": [{"key": "service.name", "value": {"stringValue": "cart-svc"}}]}
+logs = [
+  {"timeUnixNano": str(ns - 200_000_000), "severityNumber": 9, "severityText": "INFO", "body": {"stringValue": "loading cart 42"}, "traceId": tid, "spanId": "00f067aa0ba902b7"},
+  {"timeUnixNano": str(ns - 100_000_000), "severityNumber": 17, "severityText": "ERROR", "body": {"stringValue": "otel smoke payment declined"}, "traceId": tid, "spanId": "00f067aa0ba902b7"},
+]
+print(json.dumps({"resourceLogs": [{"resource": res, "scopeLogs": [{"scope": {"name": "com.shop.Payments"}, "logRecords": logs}]}]}))
+PY
+)
+[ "$(curl -sf -X POST "$VAKA/ingest/otlp/v1/traces" -H "x-vaka-key: $OKEY" -H 'content-type: application/json' -d "$OTRACES")" = "{}" ] || fail "otlp traces"
+[ "$(curl -sf -X POST "$VAKA/ingest/otlp/v1/logs" -H "authorization: Bearer $OKEY" -H 'content-type: application/json' -d "$OLOGS")" = "{}" ] || fail "otlp logs (bearer)"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$VAKA/ingest/otlp/v1/traces" -H "x-vaka-key: $OKEY" -H 'content-type: text/plain' -d 'x')" = "415" ] || fail "otlp content type"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$VAKA/ingest/otlp/v1/traces" -H 'content-type: application/json' -d "$OTRACES")" = "401" ] || fail "otlp auth"
+curl -sf -X POST "$VAKA/ingest/otlp/v1/metrics" -H "x-vaka-key: $OKEY" -H 'content-type: application/json' -d '{}' >/dev/null || fail "otlp metrics"
+sleep 2
+OTR=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$OSLUG/traces/$OTID")
+[ "$(echo "$OTR" | j '[(s["op"], s["name"], s["depth"]) for s in d["spans"]]')" = "[('http.server', 'GET /carts/{id}', 0), ('db', 'SELECT carts', 1)]" ] || fail "otlp trace: $OTR"
+[ "$(echo "$OTR" | j '[l["body"] for l in d["logs"]]')" = "['loading cart 42', 'otel smoke payment declined']" ] || fail "trace logs: $OTR"
+echo "$OTR" | j '[e["title"] for e in d["errors"]]' | grep -q OtelCartError || fail "otlp exception: $OTR"
+OIS=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$OSLUG/issues?since=1h")
+echo "$OIS" | j '[i["title"] for i in d["issues"]]' | grep -q 'otel smoke payment declined' || fail "error log issue: $OIS"
+echo "$OIS" | j '[i["culprit"] for i in d["issues"] if "OtelCartError" in i["title"]]' | grep -q 'Carts' || fail "otlp culprit: $OIS"
+OL=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$OSLUG/logs?since=1h&severity=error")
+[ "$(echo "$OL" | j '([l["body"] for l in d["logs"]], d["counts"].get("error"), d["logs"][0]["service"])')" = "(['otel smoke payment declined'], 1, 'cart-svc')" ] || fail "log search: $OL"
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$OSLUG/logs?since=1h&q=CART%2042" | j 'len(d["logs"])')" = "1" ] || fail "log text search"
+curl -sf "${A[@]}" "$VAKA/api/v1/projects/$OSLUG/performance/summary?since=1h" | grep -q 'GET /carts/{id}' || fail "otlp perf summary"
+
 # MCP
 M=(-H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream')
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' | grep -q '"vaka"' || fail mcp-init
@@ -375,6 +425,7 @@ curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":6,\"metho
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"list_cohorts\",\"arguments\":{\"project\":\"$SLUG\"}}}" | j '[c["name"] for c in d["result"]["structuredContent"]["cohorts"]]' | grep -q buyers || fail mcp-cohorts
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/call\",\"params\":{\"name\":\"experiment_results\",\"arguments\":{\"project\":\"$FSLUG\",\"flag\":\"pricing\",\"goal\":\"exp_buy\",\"control\":\"a\",\"since\":\"1h\"}}}" | j 'd["result"]["structuredContent"]["winner"]' | grep -q b || fail mcp-experiment
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"detect_anomalies\",\"arguments\":{\"project\":\"$ASLUG\"}}}" | j '[a["metric"] for a in d["result"]["structuredContent"]["anomalies"]]' | grep -q issue_errors || fail mcp-anomalies
+curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"tools/call\",\"params\":{\"name\":\"search_logs\",\"arguments\":{\"project\":\"$OSLUG\",\"trace_id\":\"$OTID\",\"since\":\"1h\"}}}" | j 'len(d["result"]["structuredContent"]["logs"])' | grep -qx 2 || fail mcp-search-logs
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"list_alert_rules","arguments":{}}}' | j 'd["result"]["structuredContent"]["channels"]' | grep -q github_dispatch || fail mcp-alert-rules
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"get_fix_context\",\"arguments\":{\"issue\":\"$OWNED\"}}}" | j 'd["result"]["structuredContent"]["suggested"]["branch"]' | grep -q "^vaka/" || fail mcp-fix-context
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"resolve_issue\",\"arguments\":{\"issue\":\"$SHORT\",\"resolved_in_release\":\"1.0.1\"}}}" | j 'd["result"]["structuredContent"]["status"]' | grep -q resolved || fail mcp-resolve
