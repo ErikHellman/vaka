@@ -11,6 +11,7 @@ released by [`release.yml`](../../.github/workflows/release.yml) (see
 | `Vaka` (iOS, macOS, tvOS) | Swift Package Manager (git tags), CocoaPods trunk | [ios.md](ios.md) |
 | `vaka-sdk` (Rust) | crates.io | [rust.md](rust.md) |
 | `github.com/ErikHellman/vaka/sdks/go` | Go module proxy (git tags) | [go.md](go.md) |
+| `se.hellsoft.vaka:vaka-jvm` | Maven Central | [jvm.md](jvm.md) |
 | `Vaka`, `Vaka.OpenTelemetry`, `Vaka.AspNetCore` (.NET) | NuGet | [dotnet.md](dotnet.md) |
 
 ## Release order
@@ -35,6 +36,7 @@ All SDKs share the server's version. Change all of these together:
 | `sdks/node/package.json`, `sdks/node/src/index.ts` | `version`, `SDK.version` |
 | `sdks/android/gradle.properties` | `VERSION_NAME` |
 | `sdks/android/vaka-gradle-plugin/build.gradle.kts` | `version` |
+| `sdks/jvm/gradle.properties`, `docs/install/jvm.md` | `VERSION_NAME`, version in the examples |
 | `sdks/ios/Sources/Vaka/Vaka.swift` | `sdkVersion` |
 | `sdks/dotnet/Directory.Build.props` | `Version` (default for local builds; the NuGet workflow passes the version explicitly) |
 | `Package.swift`, `docs/install/ios.md`, `docs/install/android.md` | Version numbers in the examples |
