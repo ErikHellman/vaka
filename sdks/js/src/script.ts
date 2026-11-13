@@ -23,6 +23,7 @@ if (script && script.dataset.key) {
     captureErrors: d.errors !== 'false',
     ignoreLocalhost: d.ignoreLocalhost === 'true',
     tracesSampleRate: d.tracesSampleRate ? Number(d.tracesSampleRate) : undefined,
+    flags: d.flags === 'true',
     debug: d.debug === 'true',
   });
 }

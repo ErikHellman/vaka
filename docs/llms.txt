@@ -42,6 +42,12 @@ Source links need either `set-commits` (repository) or `set_code_mappings`; owne
 `slow_endpoints`, `web_vitals`, `app_startup`, then `span_breakdown` or `list_slow_traces` +
 `get_trace` for where the time goes, and `compare_release_performance` between releases.
 
+## Feature flags and experiments
+
+`list_flags`, `create_flag`, `update_flag` (rollout, kill switch, forced variant). "Is the new
+variant breaking things?": `flag_health`. "Which variant wins?": `create_experiment` +
+`experiment_results`. Apps send the flag values they used as `flags` on every item.
+
 ## Product questions
 
 "Where do users drop off?", "do they come back?", "what do they do after X?": call `list_event_names`
@@ -63,6 +69,7 @@ filter to any analytics tool, or `breakdown: "cohort:<name>"` to a funnel.
 - [CLI: debug file uploads]({{ENDPOINT}}/docs/cli.md)
 - [Alerts: webhooks, Slack, email, daily digests]({{ENDPOINT}}/docs/alerts.md)
 - [Performance tracing: spans, Web Vitals, app start]({{ENDPOINT}}/docs/performance.md)
+- [Feature flags and experiments]({{ENDPOINT}}/docs/flags.md)
 - [Privacy, retention, user deletion]({{ENDPOINT}}/docs/privacy.md)
 - [Self-hosting]({{ENDPOINT}}/docs/self-hosting.md)
 

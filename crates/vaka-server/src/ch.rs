@@ -226,6 +226,9 @@ ORDER BY (project_id, type, timestamp)
 TTL toDateTime(timestamp) + toIntervalDay(retention_days);
 
 ALTER TABLE errors ADD COLUMN IF NOT EXISTS trace_id String DEFAULT '';
+ALTER TABLE errors ADD COLUMN IF NOT EXISTS flags Map(String, String);
+ALTER TABLE events ADD COLUMN IF NOT EXISTS flags Map(String, String);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS flags Map(String, String);
 
 CREATE TABLE IF NOT EXISTS spans (
     project_id LowCardinality(String),

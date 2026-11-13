@@ -9,6 +9,7 @@ mod config;
 mod db;
 mod docs;
 mod fixctx;
+mod flags;
 mod github;
 mod grouping;
 mod insights;

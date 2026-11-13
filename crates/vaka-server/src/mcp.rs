@@ -182,6 +182,12 @@ fn perf_args(a: &Value) -> Result<crate::perf::PerfParams, ToolError> {
     })
 }
 
+fn flag_in(a: &Value) -> Result<crate::flags::FlagIn, ToolError> {
+    let mut f: crate::flags::FlagIn = serde_json::from_value(a.clone()).map_err(|e| ToolError::Failed(format!("invalid flag: {e}")))?;
+    f.key = s(a, "key");
+    Ok(f)
+}
+
 fn engagement_args(a: &Value) -> Result<crate::cohorts::EngagementParams, ToolError> {
     Ok(crate::cohorts::EngagementParams { base: analytics_args(a)?, event: s(a, "event"), identity: s(a, "identity"), period: s(a, "period") })
 }
@@ -344,6 +350,33 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
         "create_goal" => {
             crate::product::create_goal(state, p, &req(&a, "project")?, crate::product::GoalIn { name: req(&a, "name")?, step: req(&a, "step")?, value_prop: s(&a, "value_prop") }).await?
         }
+        "list_flags" => crate::flags::list_flags(state, p, &req(&a, "project")?).await?,
+        "get_flag" => crate::flags::get_flag(state, p, &req(&a, "project")?, &req(&a, "key")?).await?,
+        "create_flag" => crate::flags::create_flag(state, p, &req(&a, "project")?, flag_in(&a)?).await?,
+        "update_flag" => {
+            let mut f = flag_in(&a)?;
+            f.key = None;
+            crate::flags::update_flag(state, p, &req(&a, "project")?, &req(&a, "key")?, f).await?
+        }
+        "delete_flag" => crate::flags::delete_flag(state, p, &req(&a, "project")?, &req(&a, "key")?).await?,
+        "flag_health" => crate::flags::flag_health(state, p, &req(&a, "project")?, &req(&a, "key")?, s(&a, "since").as_deref(), s(&a, "release").as_deref()).await?,
+        "create_experiment" => {
+            let e = crate::flags::ExperimentIn { name: req(&a, "name")?, flag: req(&a, "flag")?, goal: req(&a, "goal")?, control: s(&a, "control"), description: s(&a, "description") };
+            crate::flags::create_experiment(state, p, &req(&a, "project")?, e).await?
+        }
+        "list_experiments" => crate::flags::list_experiments(state, p, &req(&a, "project")?).await?,
+        "experiment_results" => {
+            let r = crate::flags::ResultsParams {
+                project: req(&a, "project")?,
+                experiment: s(&a, "experiment"),
+                flag: s(&a, "flag"),
+                goal: s(&a, "goal"),
+                control: s(&a, "control"),
+                since: s(&a, "since"),
+                identity: s(&a, "identity"),
+            };
+            crate::flags::experiment_results(state, p, r).await?
+        }
         "create_cohort" => {
             let def: crate::cohorts::CohortIn = serde_json::from_value(a.clone()).map_err(|e| ToolError::Failed(format!("invalid cohort: {e}")))?;
             crate::cohorts::create_cohort(state, p, &req(&a, "project")?, def).await?
@@ -453,6 +486,19 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
 
 fn prop(ty: &str, desc: &str) -> Value {
     json!({"type": ty, "description": desc})
+}
+
+fn flag_props(create: bool) -> Vec<(&'static str, Value)> {
+    vec![
+        ("project", prop("string", "Project slug or id (see list_projects)")),
+        ("key", prop("string", if create { "Flag key, e.g. new_checkout" } else { "Flag key" })),
+        ("description", prop("string", "What the flag controls")),
+        ("enabled", prop("boolean", "Master switch (default true)")),
+        ("rollout", prop("integer", "Percent of people who get the flag (0 to 100, default 100)")),
+        ("variants", json!({"type": "array", "description": "Optional variants [{key, weight}], e.g. [{\"key\": \"control\", \"weight\": 1}, {\"key\": \"new\", \"weight\": 1}]", "items": {"type": "object", "properties": {"key": {"type": "string"}, "weight": {"type": "integer"}}, "required": ["key"]}})),
+        ("rules", json!({"type": "array", "description": "Targeting rules, first match wins: {user_ids?: [..], properties?: {plan: \"pro\"}, variant?: forced variant, rollout?: percent}", "items": {"type": "object"}})),
+        ("environments", json!({"type": "object", "additionalProperties": {"type": "boolean"}, "description": "Per-environment switch, e.g. {\"staging\": true, \"production\": false}"})),
+    ]
 }
 
 fn perf_props(extra: &[(&'static str, Value)]) -> Vec<(&'static str, Value)> {
@@ -696,6 +742,78 @@ pub fn tools() -> Vec<Value> {
             ],
             &["project", "name", "step"],
             false,
+            false,
+        ),
+        tool("list_flags", "List feature flags", "Feature flags with rollout, variants, targeting rules and per-environment switches.", vec![("project", project())], &["project"], true, false),
+        tool(
+            "get_flag",
+            "Get feature flag",
+            "One flag's configuration and how many people saw each variant in the last 7 days.",
+            vec![("project", project()), ("key", prop("string", "Flag key"))],
+            &["project", "key"],
+            true,
+            false,
+        ),
+        tool(
+            "create_flag",
+            "Create feature flag",
+            "Create a flag. Without variants it is boolean (on for `rollout` percent of people); with 2 to 10 variants the rolled-out people are split by weight. Bucketing is deterministic per person (sha256 of key and id). Needs a write token.",
+            flag_props(true),
+            &["project", "key"],
+            false,
+            false,
+        ),
+        tool(
+            "update_flag",
+            "Update feature flag",
+            "Change a flag: roll out (rollout 0 to 100), turn off (enabled false, or environments {\"production\": false}), or force a safe variant with a rule {\"variant\": \"control\"}. Only given fields change. Needs a write token.",
+            flag_props(false),
+            &["project", "key"],
+            false,
+            false,
+        ),
+        tool("delete_flag", "Delete feature flag", "Delete a flag; SDKs then get false for it. Needs a write token.", vec![("project", project()), ("key", prop("string", "Flag key"))], &["project", "key"], false, true),
+        tool(
+            "flag_health",
+            "Flag health",
+            "Release health split by flag variant: sessions, crash-free and healthy session rates, errors per session, and issues that happen mostly in one variant (with lift). Use it to decide whether to roll a variant back.",
+            vec![("project", project()), ("key", prop("string", "Flag key")), ("since", prop("string", "Window start (default 7d)")), ("release", prop("string", "Only this release"))],
+            &["project", "key"],
+            true,
+            false,
+        ),
+        tool(
+            "create_experiment",
+            "Create experiment",
+            "Save an experiment: a flag and a goal event to compare variants on. Needs a write token.",
+            vec![
+                ("project", project()),
+                ("name", prop("string", "Experiment name")),
+                ("flag", prop("string", "Flag key")),
+                ("goal", prop("string", "Goal event in step syntax: `signup`, `purchase|prop:plan:pro`")),
+                ("control", prop("string", "Control variant (default: the first variant)")),
+                ("description", prop("string", "Hypothesis")),
+            ],
+            &["project", "name", "flag", "goal"],
+            false,
+            false,
+        ),
+        tool("list_experiments", "List experiments", "Saved experiments with flag, goal and control.", vec![("project", project())], &["project"], true, false),
+        tool(
+            "experiment_results",
+            "Experiment results",
+            "Conversion per variant (people exposed to the flag who did the goal), uplift against the control, 95% confidence interval, p-value of a two-proportion z-test and a plain verdict. Give `experiment`, or `flag` and `goal`.",
+            vec![
+                ("project", project()),
+                ("experiment", prop("string", "Saved experiment name")),
+                ("flag", prop("string", "Flag key (without a saved experiment)")),
+                ("goal", prop("string", "Goal step (without a saved experiment)")),
+                ("control", prop("string", "Control variant")),
+                ("since", prop("string", "Window start (default: experiment start or 14d)")),
+                ("identity", prop("string", "auto (default), user or visitor")),
+            ],
+            &["project"],
+            true,
             false,
         ),
         tool(

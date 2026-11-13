@@ -22,6 +22,7 @@ pub const MAX_ITEMS_PER_REQUEST: usize = 1000;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/ingest/v1/batch", post(batch))
+        .route("/ingest/v1/flags", post(flags))
         .route("/ingest/v1/{kind}", post(single_kind))
         .route("/ingest/v1/ping", get(|| async { Json(json!({"ok": true})) }))
 }
@@ -138,6 +139,20 @@ async fn batch(
     })?;
     let ctx = build_ctx(&state, &headers, peer, batch.sdk.unwrap_or_default());
     accept(&state, &project, &ctx, batch.items, None).await
+}
+
+/// Evaluate all feature flags for one identity: `{distinct_id, user_id?, properties?, environment?}`.
+async fn flags(State(state): State<AppState>, Query(q): Query<KeyQuery>, headers: HeaderMap, body: Bytes) -> Result<Response, IngestError> {
+    let project = authenticate(&state, &headers, &q).await?;
+    let req: crate::flags::EvalRequest = serde_json::from_value(parse_body(&body)?).map_err(|e| IngestError(StatusCode::BAD_REQUEST, format!("invalid flag request: {e}")))?;
+    match crate::flags::evaluate_all(&state, &project, &req).await {
+        Ok(v) => Ok(Json(v).into_response()),
+        Err(e) if e.to_string().contains("required") => Err(IngestError(StatusCode::BAD_REQUEST, e.to_string())),
+        Err(e) => {
+            tracing::error!("flag evaluation failed: {e:#}");
+            Err(IngestError(StatusCode::INTERNAL_SERVER_ERROR, "flag evaluation failed".into()))
+        }
+    }
 }
 
 async fn single_kind(
@@ -386,6 +401,7 @@ fn session_row(project: &ProjectInfo, s: &SessionItem, salt: &str, ctx: &Request
         timestamp: ch_time(ts.max(started)),
         duration_ms: s.duration_ms.unwrap_or_else(|| (ts - started).max(0) as u64),
         error_count: s.errors.unwrap_or(0),
+        flags: crate::models::flag_map(&s.flags),
         retention_days: project.retention_days as u16,
     }
 }
@@ -461,6 +477,7 @@ fn event_row(project: &ProjectInfo, e: &EventItem, salt: &str, ctx: &RequestCtx)
         user_id: e.user_id.clone().unwrap_or_default(),
         session_id: e.session_id.clone().unwrap_or_default(),
         props,
+        flags: crate::models::flag_map(&e.flags),
         retention_days: project.retention_days as u16,
     })
     .map(|mut r| {
