@@ -160,4 +160,4 @@ upload is needed.
 
 ## Releasing the packages
 
-See [`sdks/dotnet/RELEASING.md`](https://github.com/ErikHellman/vaka/blob/main/sdks/dotnet/RELEASING.md).
+See [releasing/dotnet.md](releasing/dotnet.md).

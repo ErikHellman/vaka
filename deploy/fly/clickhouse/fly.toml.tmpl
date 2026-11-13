@@ -1,0 +1,22 @@
+# Fly.io config template for Vaka's private ClickHouse app.
+# Private only: no public services; the server reaches it at ${VAKA_FLY_CLICKHOUSE_APP}.internal:8123.
+# Do not edit the generated fly.toml: change deploy/fly/fly.env and run deploy/fly/fly.sh render.
+# Secret: CLICKHOUSE_PASSWORD (must match VAKA_CLICKHOUSE_PASSWORD on the server app).
+app = "${VAKA_FLY_CLICKHOUSE_APP}"
+primary_region = "${VAKA_FLY_REGION}"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  CLICKHOUSE_USER = "vaka"
+  CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT = "1"
+
+[mounts]
+  source = "clickhouse_data"
+  destination = "/var/lib/clickhouse"
+  initial_size = "${VAKA_FLY_CLICKHOUSE_VOLUME_GB}gb"
+
+[[vm]]
+  size = "${VAKA_FLY_CLICKHOUSE_VM_SIZE}"
+  memory = "${VAKA_FLY_CLICKHOUSE_VM_MEMORY}"

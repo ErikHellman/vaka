@@ -1,6 +1,6 @@
 name: Release .NET SDK
 
-# Publishes Vaka, Vaka.OpenTelemetry and Vaka.AspNetCore to nuget.org. See sdks/dotnet/RELEASING.md.
+# Publishes Vaka, Vaka.OpenTelemetry and Vaka.AspNetCore to nuget.org. See docs/releasing/dotnet.md.
 on:
   workflow_dispatch:
     inputs:
@@ -54,7 +54,7 @@ jobs:
         env:
           NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY || secrets.NUGET_API_KEY }}
         run: |
-          if [ -z "$NUGET_API_KEY" ]; then echo "Set the NUGET_USER variable or the NUGET_API_KEY secret (see sdks/dotnet/RELEASING.md)"; exit 1; fi
+          if [ -z "$NUGET_API_KEY" ]; then echo "Set the NUGET_USER variable or the NUGET_API_KEY secret (see docs/releasing/dotnet.md)"; exit 1; fi
           dotnet nuget push "out/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY" --skip-duplicate
       - name: Tag
         # Tags pushed with GITHUB_TOKEN don't trigger workflows, so this doesn't start a second release.

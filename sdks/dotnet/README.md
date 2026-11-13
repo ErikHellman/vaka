@@ -31,4 +31,4 @@ VAKA_KEY=vk_... VAKA_ENDPOINT=http://localhost:8080 dotnet run --project samples
 dotnet run --project samples/Vaka.Sample.Web -- crash   # unhandled exception on a background thread
 ```
 
-Releasing to NuGet: [RELEASING.md](RELEASING.md).
+Releasing to NuGet: [docs/releasing/dotnet.md](../../docs/releasing/dotnet.md).
