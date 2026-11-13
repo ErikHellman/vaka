@@ -36,7 +36,7 @@ with the same version, by the [`release-dotnet`](../../.github/workflows/release
    <https://www.nuget.org/packages/Vaka.AspNetCore>, then `dotnet add package Vaka.AspNetCore --version X.Y.Z`
    in a scratch project.
 5. Keep `<Version>` in `sdks/dotnet/Directory.Build.props` in step with the other SDKs (see [README.md](README.md)); it is only the
-   default for local builds; the workflow always passes the version explicitly).
+   default for local builds, since the workflow always passes the version explicitly.
 
 A published version can't be deleted or replaced, only *unlisted* (nuget.org → package → *Manage* →
 *Listing*). Fix forward with a new version.
