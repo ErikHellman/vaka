@@ -710,7 +710,7 @@ pub fn dimension_expr(d: &str) -> Option<String> {
 pub const DIMENSIONS: &[&str] = &[
     "path", "url", "hostname", "referrer", "referrer_url", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
     "country", "device", "device_model", "browser", "browser_version", "os", "os_version", "app_version", "release", "environment",
-    "platform", "event", "type", "screen", "prop:<name>",
+    "platform", "event", "type", "screen", "prop:<name>", "cohort (filter only: saved cohort name, `!name` to exclude)",
 ];
 
 pub(crate) struct Where {
@@ -720,7 +720,7 @@ pub(crate) struct Where {
     pub until: i64,
 }
 
-pub(crate) fn analytics_where(project_id: &str, a: &AnalyticsParams) -> QResult<Where> {
+pub(crate) async fn analytics_where(state: &AppState, project_id: &str, a: &AnalyticsParams) -> QResult<Where> {
     let now = now_ms();
     let since = a.since.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 30 * 86_400_000);
     let until = a.until.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now);
@@ -736,6 +736,17 @@ pub(crate) fn analytics_where(project_id: &str, a: &AnalyticsParams) -> QResult<
     }
     const FILTER_NAMES: [&str; 8] = ["f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7"];
     for (i, (dim, val)) in a.filters.iter().enumerate() {
+        if dim == "cohort" {
+            // `cohort=<name>` keeps people in a saved cohort; `cohort=!<name>` everyone else.
+            let (negate, name) = match val.strip_prefix('!') {
+                Some(n) => (true, n),
+                None => (false, val.as_str()),
+            };
+            let c = crate::cohorts::resolve(state, project_id, name, crate::cohorts::POOL_FILTER).await?;
+            conds.push(c.condition(negate));
+            params.extend(c.params);
+            continue;
+        }
         let name = *FILTER_NAMES.get(i).ok_or_else(|| ApiError::bad("at most 8 filters"))?;
         let (cond, value) = filter_cond(dim, val, name)?;
         conds.push(cond);
@@ -762,14 +773,14 @@ const METRICS: &str = "uniq(visitor_id) AS visitors, countIf(type = 'pageview') 
 
 pub async fn analytics_summary(state: &AppState, p: &Principal, a: AnalyticsParams) -> QResult<Value> {
     let project = project_for(state, p, &a.project).await?;
-    let w = analytics_where(&project.id, &a)?;
+    let w = analytics_where(state, &project.id, &a).await?;
     let rows = state.ch.query(&format!("SELECT {METRICS} FROM events WHERE {}", w.sql), &w.params).await?;
     // Previous period for comparison.
     let len = w.until - w.since;
     let mut prev = a.clone();
     prev.since = Some((w.since - len).to_string());
     prev.until = Some(w.since.to_string());
-    let pw = analytics_where(&project.id, &prev)?;
+    let pw = analytics_where(state, &project.id, &prev).await?;
     let prev_rows = state.ch.query(&format!("SELECT {METRICS} FROM events WHERE {}", pw.sql), &pw.params).await?;
     Ok(json!({
         "project": project.slug,
@@ -782,7 +793,7 @@ pub async fn analytics_summary(state: &AppState, p: &Principal, a: AnalyticsPara
 
 pub async fn analytics_timeseries(state: &AppState, p: &Principal, a: AnalyticsParams, interval: Option<&str>) -> QResult<Value> {
     let project = project_for(state, p, &a.project).await?;
-    let w = analytics_where(&project.id, &a)?;
+    let w = analytics_where(state, &project.id, &a).await?;
     let interval = match interval {
         Some("hour") => "hour",
         Some("day") => "day",
@@ -807,7 +818,7 @@ pub async fn analytics_timeseries(state: &AppState, p: &Principal, a: AnalyticsP
 pub async fn analytics_breakdown(state: &AppState, p: &Principal, a: AnalyticsParams, dimension: &str, limit: Option<i64>) -> QResult<Value> {
     let project = project_for(state, p, &a.project).await?;
     let expr = dimension_expr(dimension).ok_or_else(|| ApiError::bad(format!("unknown dimension `{dimension}`; valid: {}", DIMENSIONS.join(", "))))?;
-    let mut w = analytics_where(&project.id, &a)?;
+    let mut w = analytics_where(state, &project.id, &a).await?;
     w.params.push(("lim", limit.unwrap_or(10).clamp(1, 1000).to_string()));
     let rows = state
         .ch

@@ -67,6 +67,28 @@ echo "$PATHS" | grep -q 'pageview /pricing → signup' || fail "paths: $PATHS"
 curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/events?since=1h" | grep -q '"signup"' || fail "event catalog"
 curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/users?since=1h" | grep -q 'u-funnel' || fail "identified users"
 curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/users/u-funnel/timeline?since=1h" | j 'len(d["timeline"])' | grep -q 3 || fail "user timeline"
+# Cohorts, stickiness, lifecycle
+send "{\"items\":[
+ {\"type\":\"event\",\"name\":\"cohort_buy\",\"anon_id\":\"c1\",\"user_id\":\"c-1\",\"timestamp\":$((T0-30))},
+ {\"type\":\"event\",\"name\":\"cohort_buy\",\"anon_id\":\"c1\",\"user_id\":\"c-1\",\"timestamp\":$((T0-20))},
+ {\"type\":\"event\",\"name\":\"cohort_buy\",\"anon_id\":\"c1\",\"user_id\":\"c-1\",\"timestamp\":$((T0-10))},
+ {\"type\":\"event\",\"name\":\"cohort_buy\",\"anon_id\":\"c2\",\"user_id\":\"c-2\",\"timestamp\":$((T0-10))},
+ {\"type\":\"event\",\"name\":\"cohort_login\",\"anon_id\":\"c1\",\"user_id\":\"c-1\",\"timestamp\":$((T0-5))},
+ {\"type\":\"event\",\"name\":\"cohort_login\",\"anon_id\":\"c3\",\"user_id\":\"c-3\",\"timestamp\":$((T0-10))}]}" >/dev/null || fail "cohort events"
+sleep 2
+CO=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/cohorts" -d '{"name":"buyers","identity":"user","criteria":[{"event":"cohort_buy","min_count":2}]}')
+[ "$(echo "$CO" | j 'd["size"]')" = "1" ] || fail "cohort size: $CO"
+[ "$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/cohorts" -d '{"name":"quiet","identity":"user","criteria":[{"event":"cohort_login"},{"step":"cohort_buy","negate":true}]}' | j 'd["size"]')" = "1" ] || fail "negated cohort"
+curl -s "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/cohorts" -d '{"name":"empty"}' | grep -q 'at least one criterion' || fail "cohort validation"
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/cohorts/buyers" | j 'd["sample_members"][0]["id"]')" = "c-1" ] || fail "cohort members"
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/summary?since=1h&filter=cohort:buyers" | j 'd["totals"]["events"]')" = "4" ] || fail "cohort filter"
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/summary?since=1h&filter=cohort:!buyers&filter=event:cohort_buy" | j 'd["totals"]["events"]')" = "1" ] || fail "negated cohort filter"
+CF=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/funnel?since=1h&identity=user&step=cohort_buy&step=cohort_login&breakdown=cohort:buyers")
+[ "$(echo "$CF" | j 'sorted((r["value"], [s["count"] for s in r["steps"]]) for r in d["breakdown"]["rows"])')" = "[('in buyers', [1, 1]), ('not in buyers', [1, 0])]" ] || fail "cohort funnel breakdown: $CF"
+[ "$(echo "$CF" | j '(d["conversion_time"]["converted"], d["conversion_time"]["distribution"]["under_1m"])')" = "(1, 1)" ] || fail "conversion time: $CF"
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/stickiness?since=1h&identity=user&event=cohort_buy" | j 'd["active_in_window"]')" = "2" ] || fail "stickiness"
+LC=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/lifecycle?period=day&identity=user&event=cohort_buy")
+[ "$(echo "$LC" | j '(d["periods"][-1]["new"], d["periods"][-1]["active"])')" = "(2, 2)" ] || fail "lifecycle: $LC"
 # Goals, revenue, real-time, adoption
 send "{\"items\":[{\"type\":\"event\",\"name\":\"purchase\",\"url\":\"https://ex.com/checkout\",\"referrer\":\"https://news.ycombinator.com/\",\"props\":{\"revenue\":\"19.5\",\"currency\":\"usd\"},\"anon_id\":\"p1\"},
  {\"type\":\"event\",\"name\":\"purchase\",\"url\":\"https://ex.com/checkout\",\"props\":{\"revenue\":10,\"currency\":\"USD\"},\"anon_id\":\"p2\"},
@@ -272,6 +294,7 @@ curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":1,"method":"ini
 TOOLS=$(curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | j 'len(d["result"]["tools"])')
 echo "mcp tools: $TOOLS"
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"compare_release_performance\",\"arguments\":{\"project\":\"$SLUG\",\"base\":\"p1\",\"target\":\"p2\"}}}" | j 'd["result"]["structuredContent"]["regressed"]' | grep -q True || fail mcp-perf-compare
+curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"list_cohorts\",\"arguments\":{\"project\":\"$SLUG\"}}}" | j '[c["name"] for c in d["result"]["structuredContent"]["cohorts"]]' | grep -q buyers || fail mcp-cohorts
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"list_alert_rules","arguments":{}}}' | j 'd["result"]["structuredContent"]["channels"]' | grep -q github_dispatch || fail mcp-alert-rules
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"get_fix_context\",\"arguments\":{\"issue\":\"$OWNED\"}}}" | j 'd["result"]["structuredContent"]["suggested"]["branch"]' | grep -q "^vaka/" || fail mcp-fix-context
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"resolve_issue\",\"arguments\":{\"issue\":\"$SHORT\",\"resolved_in_release\":\"1.0.1\"}}}" | j 'd["result"]["structuredContent"]["status"]' | grep -q resolved || fail mcp-resolve

@@ -182,6 +182,10 @@ fn perf_args(a: &Value) -> Result<crate::perf::PerfParams, ToolError> {
     })
 }
 
+fn engagement_args(a: &Value) -> Result<crate::cohorts::EngagementParams, ToolError> {
+    Ok(crate::cohorts::EngagementParams { base: analytics_args(a)?, event: s(a, "event"), identity: s(a, "identity"), period: s(a, "period") })
+}
+
 fn analytics_args(args: &Value) -> Result<AnalyticsParams, ToolError> {
     let filters = args
         .get("filters")
@@ -340,6 +344,15 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
         "create_goal" => {
             crate::product::create_goal(state, p, &req(&a, "project")?, crate::product::GoalIn { name: req(&a, "name")?, step: req(&a, "step")?, value_prop: s(&a, "value_prop") }).await?
         }
+        "create_cohort" => {
+            let def: crate::cohorts::CohortIn = serde_json::from_value(a.clone()).map_err(|e| ToolError::Failed(format!("invalid cohort: {e}")))?;
+            crate::cohorts::create_cohort(state, p, &req(&a, "project")?, def).await?
+        }
+        "list_cohorts" => crate::cohorts::list_cohorts(state, p, &req(&a, "project")?, a.get("sizes").and_then(|v| v.as_bool()).unwrap_or(true)).await?,
+        "get_cohort" => crate::cohorts::get_cohort(state, p, &req(&a, "project")?, &req(&a, "cohort")?, i(&a, "limit")).await?,
+        "delete_cohort" => crate::cohorts::delete_cohort(state, p, &req(&a, "project")?, &req(&a, "cohort")?).await?,
+        "analytics_stickiness" => crate::cohorts::stickiness(state, p, engagement_args(&a)?).await?,
+        "analytics_lifecycle" => crate::cohorts::lifecycle(state, p, engagement_args(&a)?).await?,
         "delete_goal" => crate::product::delete_goal(state, p, &req(&a, "project")?, &req(&a, "goal")?).await?,
         "list_identified_users" => {
             crate::product::list_users(state, p, crate::product::UserListParams { project: req(&a, "project")?, since: s(&a, "since"), query: s(&a, "query"), limit: i(&a, "limit") }).await?
@@ -477,7 +490,7 @@ pub fn tools() -> Vec<Value> {
     let until = || prop("string", "End of the window (default now)");
     let filters = || {
         json!({"type": "object", "additionalProperties": {"type": "string"},
-               "description": format!("Filter by dimension, e.g. {{\"path\": \"/pricing\", \"country\": \"SE\"}}. Prefix a value with ~ for contains or ! for not-equal. Dimensions: {}", query::DIMENSIONS.join(", "))})
+               "description": format!("Filter by dimension, e.g. {{\"path\": \"/pricing\", \"country\": \"SE\"}}. Prefix a value with ~ for contains or ! for not-equal. {{\"cohort\": \"<name>\"}} keeps people in a saved cohort (\"!<name>\" excludes them). Dimensions: {}", query::DIMENSIONS.join(", "))})
     };
     vec![
         tool("list_projects", "List projects", "List the projects this token can access, with platform, retention and ingest keys.", vec![], &[], true, false),
@@ -685,6 +698,68 @@ pub fn tools() -> Vec<Value> {
             false,
             false,
         ),
+        tool(
+            "create_cohort",
+            "Create cohort",
+            "Save a group of people defined by behavior, e.g. power users (`purchase` at least 3 times in 30d), churn risk (active in 30d but no `login` in 14d), or Swedish Pro users. Use it afterwards as filters {\"cohort\": name} in any analytics tool or breakdown `cohort:<name>` in funnels. Needs a write token.",
+            vec![
+                ("project", project()),
+                ("name", prop("string", "Cohort name, e.g. power_buyers")),
+                ("description", prop("string", "What the cohort means")),
+                ("criteria", json!({"type": "array", "maxItems": 6, "description": "All must hold. Each: {event or step (step syntax: \"purchase|prop:plan:pro\"), filters?, min_count? (default 1), within? (look-back from now, e.g. 14d), negate? (true = did NOT do it)}",
+                    "items": {"type": "object", "properties": {"event": {"type": "string"}, "step": {"type": "string"}, "filters": {"type": "object", "additionalProperties": {"type": "string"}}, "min_count": {"type": "integer"}, "within": {"type": "string"}, "negate": {"type": "boolean"}}}})),
+                ("properties", json!({"type": "object", "additionalProperties": {"type": "string"}, "description": "Dimension filters at least one of the person's events must match, e.g. {\"country\": \"SE\", \"prop:plan\": \"pro\"}"})),
+                ("within", prop("string", "Default look-back window and activity window (default 30d, max 365d)")),
+                ("identity", prop("string", "auto (default: user id when identified, else visitor id), user (identified only) or visitor")),
+            ],
+            &["project", "name"],
+            false,
+            false,
+        ),
+        tool("list_cohorts", "List cohorts", "Saved cohorts with their definitions and current sizes.", vec![("project", project()), ("sizes", prop("boolean", "Compute sizes (default true)"))], &["project"], true, false),
+        tool(
+            "get_cohort",
+            "Get cohort",
+            "A cohort's definition, current size and most recently active members (user ids for identified people, use get_user_timeline on them).",
+            vec![("project", project()), ("cohort", prop("string", "Cohort name or id")), ("limit", prop("integer", "Max sample members (default 20)"))],
+            &["project", "cohort"],
+            true,
+            false,
+        ),
+        tool("delete_cohort", "Delete cohort", "Delete a saved cohort. Needs a write token.", vec![("project", project()), ("cohort", prop("string", "Cohort name or id"))], &["project", "cohort"], false, true),
+        tool(
+            "analytics_stickiness",
+            "Stickiness",
+            "How habitual usage is: people active in the window (MAU for 30d), WAU, average DAU, DAU/MAU and how many days per week people are active. Optionally for one event (e.g. the core action).",
+            vec![
+                ("project", project()),
+                ("event", prop("string", "Only count this event (step syntax), default any event")),
+                ("identity", prop("string", "auto (default), user or visitor")),
+                ("since", prop("string", "Window start (default 30d)")),
+                ("until", until()),
+                ("filters", filters()),
+            ],
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "analytics_lifecycle",
+            "Lifecycle",
+            "Growth accounting per day or week: new, returning, resurrecting and dormant (negative) people, active total and quick ratio ((new + resurrecting) / dormant).",
+            vec![
+                ("project", project()),
+                ("period", prop("string", "day or week (default)")),
+                ("event", prop("string", "Only count this event (step syntax), default any event")),
+                ("identity", prop("string", "auto (default), user or visitor")),
+                ("since", prop("string", "Window start (default 8 weeks or 14 days)")),
+                ("until", until()),
+                ("filters", filters()),
+            ],
+            &["project"],
+            true,
+            false,
+        ),
         tool("delete_goal", "Delete goal", "Delete a saved goal by id or name. Needs a write token.", vec![("project", project()), ("goal", prop("string", "Goal id or name"))], &["project", "goal"], false, true),
         tool(
             "analytics_funnel",
@@ -694,7 +769,7 @@ pub fn tools() -> Vec<Value> {
                 ("project", project()),
                 ("steps", json!({"type": "array", "minItems": 2, "maxItems": 10, "description": "Ordered steps. Each is an event name (\"signup\"), a string \"pageview|path:/pricing\", or {\"event\": \"pageview\", \"filters\": {\"path\": \"/pricing\"}}. Event names come from list_event_names.", "items": {"anyOf": [{"type": "string"}, {"type": "object", "properties": {"event": {"type": "string"}, "filters": {"type": "object", "additionalProperties": {"type": "string"}}}, "required": ["event"]}]}})),
                 ("window", prop("string", "Max time from first to last step: 30m, 1h, 1d (default), 7d")),
-                ("breakdown", prop("string", "Optional dimension to split by, e.g. country, utm_source, os, prop:plan")),
+                ("breakdown", prop("string", "Optional dimension to split by, e.g. country, utm_source, os, prop:plan, or cohort:<name> (in vs not in a saved cohort)")),
                 ("identity", prop("string", "visitor (default), user (identified only) or auto")),
                 ("since", since()),
                 ("until", until()),

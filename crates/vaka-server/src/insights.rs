@@ -117,7 +117,7 @@ pub async fn realtime(state: &AppState, p: &Principal, project: &str, minutes: O
     let minutes = minutes.unwrap_or(5).clamp(1, 60);
     let now = now_ms();
     let a = AnalyticsParams { project: proj.id.clone(), since: Some((now - minutes * 60_000).to_string()), ..Default::default() };
-    let w = analytics_where(&proj.id, &a)?;
+    let w = analytics_where(state, &proj.id, &a).await?;
     let totals = state
         .ch
         .query(

@@ -153,7 +153,8 @@ Dimensions: `path`, `url`, `hostname`, `referrer` (referrer host or UTM source),
 `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `country`, `device`,
 `device_model`, `browser`, `browser_version`, `os`, `os_version`, `app_version`, `release`,
 `environment`, `platform`, `event` (event name), `type`, `screen`, and `prop:<name>` for custom
-event properties.
+event properties. `filter=cohort:<name>` keeps only people in a saved cohort (`cohort:!<name>`
+excludes them).
 
 ```sh
 curl -H "Authorization: Bearer $VAKA_TOKEN" \
@@ -179,6 +180,12 @@ on mobile, new every day for anonymous web visitors), `user` (only events after 
 | `GET /projects/{p}/analytics/funnel` | Repeat `step=` 2 to 10 times, in order. `window` (max time from first to last step, default `1d`), `identity` (default visitor), `breakdown` (a dimension; each person's first non-empty value), `limit` |
 | `GET /projects/{p}/analytics/retention` | `start` (step that puts a person in a cohort the first time they do it; default any event), `return` (step that counts as coming back; default any event), `period` (day\|week, default week), `periods`, `identity` (default auto). `since` = earliest cohort |
 | `GET /projects/{p}/analytics/paths` | `from` (a label such as `pageview /pricing`, `screen Checkout` or `signup`; omit to start at each visit's first event), `direction` (after\|before), `depth` (1 to 6, default 3), `identity`, `limit` |
+| `GET /projects/{p}/analytics/stickiness` | `active_in_window` (MAU for the default 30d), `wau`, `avg_dau`, `dau_over_active` (DAU/MAU) and `days_active_per_week`. `event` (step, default any), `identity` (default auto) |
+| `GET /projects/{p}/analytics/lifecycle` | Per `period` (day\|week, default week): `new`, `returning`, `resurrecting`, `dormant` (negative), `active`, `quick_ratio`. `event`, `identity` |
+| `GET /projects/{p}/cohorts` | Saved cohorts with definitions and current `size` (`sizes=false` skips counting) |
+| `POST /projects/{p}/cohorts` | Create a cohort (see below) |
+| `GET /projects/{p}/cohorts/{name}` | Definition, size and the most recently active `sample_members` (`limit`) |
+| `DELETE /projects/{p}/cohorts/{name}` | Delete a cohort |
 | `GET /projects/{p}/users` | Identified users: event and error counts, first/last seen, last release, platform. `since`, `query` (id substring), `limit` |
 | `GET /projects/{p}/users/{user_id}/timeline` | Everything one identified user did, newest first: events, errors/crashes with issue short ids, sessions. `since` (default 7d), `limit` |
 
@@ -186,6 +193,28 @@ on mobile, new every day for anonymous web visitors), `user` (only events after 
 | `POST /projects/{p}/goals` | `{"name": "Signup", "step": "signup", "value_prop"?: "revenue"}` |
 | `DELETE /projects/{p}/goals/{id or name}` | Delete a goal |
 | `GET /projects/{p}/analytics/revenue` | Revenue per currency: `event` (step, default `purchase`), `value_prop` (default `revenue`), `currency_prop` (default `currency`), optional `breakdown` dimension, `limit`. Rows have `revenue`, `conversions`, `customers`, `average` |
+
+Funnel responses include `conversion_time` (median, p90 and a distribution of the time from the
+first to the last step for people who finished). `breakdown=cohort:<name>` splits a funnel into
+people in and not in a cohort.
+
+### Cohorts
+
+A cohort is a saved group of people, evaluated when it is used. All `criteria` must hold over a
+look-back window from now; `properties` must match at least one of the person's events:
+
+```sh
+curl -X POST {{ENDPOINT}}/api/v1/projects/web/cohorts -H "Authorization: Bearer $VAKA_TOKEN" \
+  -H 'Content-Type: application/json' -d '{
+    "name": "power_buyers", "identity": "user", "within": "30d",
+    "criteria": [{"event": "purchase", "min_count": 3}, {"step": "support_ticket", "negate": true, "within": "14d"}],
+    "properties": {"country": "SE"}
+  }'
+```
+
+Criterion fields: `event` or `step` (step syntax), `filters`, `min_count` (default 1), `within`
+(default the cohort's, 30d), `negate` (did not do it). `identity`: `auto` (default), `user` or
+`visitor`.
 
 Revenue is the sum of a numeric event property, per currency as sent (no conversion). Track
 purchases as a custom event such as `purchase` with props `{"revenue": 19.5, "currency": "USD"}`.

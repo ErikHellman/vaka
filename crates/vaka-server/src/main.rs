@@ -4,6 +4,7 @@ mod alerts;
 mod api;
 mod auth;
 mod ch;
+mod cohorts;
 mod config;
 mod db;
 mod docs;
