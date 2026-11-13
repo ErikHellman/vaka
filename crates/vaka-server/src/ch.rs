@@ -258,4 +258,24 @@ CREATE TABLE IF NOT EXISTS spans (
 PARTITION BY toYYYYMM(start)
 ORDER BY (project_id, is_root, transaction, start)
 TTL toDateTime(start) + toIntervalDay(retention_days);
+
+CREATE TABLE IF NOT EXISTS logs (
+    project_id LowCardinality(String),
+    timestamp DateTime64(3, 'UTC'),
+    severity LowCardinality(String),
+    severity_number UInt8,
+    body String,
+    trace_id String,
+    span_id String,
+    service LowCardinality(String),
+    release String,
+    environment LowCardinality(String),
+    user_id String,
+    attributes Map(String, String),
+    retention_days UInt16,
+    INDEX trace_idx trace_id TYPE bloom_filter GRANULARITY 4
+) ENGINE = MergeTree
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (project_id, timestamp)
+TTL toDateTime(timestamp) + toIntervalDay(retention_days);
 "#;

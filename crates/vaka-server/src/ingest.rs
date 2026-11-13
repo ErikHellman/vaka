@@ -25,6 +25,10 @@ pub fn router() -> Router<AppState> {
         .route("/ingest/v1/flags", post(flags))
         .route("/ingest/v1/{kind}", post(single_kind))
         .route("/ingest/v1/ping", get(|| async { Json(json!({"ok": true})) }))
+        // OTLP/HTTP: set OTEL_EXPORTER_OTLP_ENDPOINT to <vaka>/ingest/otlp (the SDK appends /v1/traces).
+        .route("/ingest/otlp/v1/traces", post(otlp_traces).layer(axum::extract::DefaultBodyLimit::max(20 * 1024 * 1024)))
+        .route("/ingest/otlp/v1/logs", post(otlp_logs).layer(axum::extract::DefaultBodyLimit::max(20 * 1024 * 1024)))
+        .route("/ingest/otlp/v1/metrics", post(otlp_metrics))
 }
 
 #[derive(Deserialize)]
@@ -220,6 +224,18 @@ async fn accept(
             format!("too many items ({}), the limit is {MAX_ITEMS_PER_REQUEST} per request", items.len()),
         ));
     }
+    let (accepted, rejected) = accept_items(state, project, ctx, items, forced_type).await?;
+    let status = if accepted == 0 && !rejected.is_empty() { StatusCode::BAD_REQUEST } else { StatusCode::ACCEPTED };
+    Ok((status, Json(json!({"accepted": accepted, "rejected": rejected}))).into_response())
+}
+
+async fn accept_items(
+    state: &AppState,
+    project: &ProjectInfo,
+    ctx: &RequestCtx,
+    items: Vec<Value>,
+    forced_type: Option<&str>,
+) -> Result<(usize, Vec<Rejected>), IngestError> {
     // Refuse the whole batch up front when the queue is nearly full, so SDKs can retry it
     // without creating duplicates of items that were already enqueued.
     if state.work_tx.capacity() < items.len() {
@@ -294,8 +310,94 @@ async fn accept(
         }
         accepted += 1;
     }
-    let status = if accepted == 0 && !rejected.is_empty() { StatusCode::BAD_REQUEST } else { StatusCode::ACCEPTED };
-    Ok((status, Json(json!({"accepted": accepted, "rejected": rejected}))).into_response())
+    Ok((accepted, rejected))
+}
+
+// ---------------------------------------------------------------------------
+// OTLP/HTTP
+// ---------------------------------------------------------------------------
+
+fn otlp_reply(signal: crate::otel::Signal, proto: bool, rejected: i64, message: &str) -> Response {
+    let (body, ct) = crate::otel::response(signal, proto, rejected, message);
+    (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, ct)], body).into_response()
+}
+
+fn otlp_decode(signal: crate::otel::Signal, headers: &HeaderMap, body: &Bytes) -> Result<(Value, bool), IngestError> {
+    let ct = headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
+    crate::otel::decode(signal, ct, body).map_err(|e| {
+        if e.starts_with("unsupported content type") {
+            IngestError(StatusCode::UNSUPPORTED_MEDIA_TYPE, e)
+        } else {
+            IngestError(StatusCode::BAD_REQUEST, e)
+        }
+    })
+}
+
+fn otlp_ctx(state: &AppState, headers: &HeaderMap, peer: SocketAddr) -> RequestCtx {
+    let ua = headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("otlp");
+    let (name, version) = ua.split(' ').next().unwrap_or("otlp").split_once('/').unwrap_or((ua, ""));
+    build_ctx(state, headers, peer, SdkInfo { name: truncate(name, 64), version: truncate(version, 32) })
+}
+
+/// Enqueue converted items in chunks (OTLP batches can be larger than our per-request limit).
+async fn accept_chunks(state: &AppState, project: &ProjectInfo, ctx: &RequestCtx, items: Vec<Value>) -> Result<(usize, Vec<String>), IngestError> {
+    let mut accepted = 0;
+    let mut errors = Vec::new();
+    let mut items = items;
+    while !items.is_empty() {
+        let rest = items.split_off(items.len().min(MAX_ITEMS_PER_REQUEST));
+        let (a, r) = accept_items(state, project, ctx, std::mem::replace(&mut items, rest), None).await?;
+        accepted += a;
+        errors.extend(r.into_iter().map(|r| r.error));
+    }
+    Ok((accepted, errors))
+}
+
+async fn otlp_traces(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Query(q): Query<KeyQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, IngestError> {
+    use crate::otel::Signal;
+    let project = authenticate(&state, &headers, &q).await?;
+    let (req, proto) = otlp_decode(Signal::Traces, &headers, &body)?;
+    let items = crate::otel::trace_items(&req);
+    let ctx = otlp_ctx(&state, &headers, peer);
+    let (_, errors) = accept_chunks(&state, &project, &ctx, items).await?;
+    Ok(otlp_reply(Signal::Traces, proto, errors.len() as i64, errors.first().map(String::as_str).unwrap_or("")))
+}
+
+async fn otlp_logs(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Query(q): Query<KeyQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, IngestError> {
+    use crate::otel::Signal;
+    let project = authenticate(&state, &headers, &q).await?;
+    let (req, proto) = otlp_decode(Signal::Logs, &headers, &body)?;
+    let (rows, error_items) = crate::otel::log_rows(&project, &req, now_ms());
+    if let Err(e) = state.ch.insert("logs", &rows).await {
+        tracing::warn!("insert logs: {e:#}");
+        return Err(IngestError(StatusCode::SERVICE_UNAVAILABLE, "could not store logs, retry later".into()));
+    }
+    let ctx = otlp_ctx(&state, &headers, peer);
+    let (_, errors) = accept_chunks(&state, &project, &ctx, error_items).await?;
+    Ok(otlp_reply(Signal::Logs, proto, 0, errors.first().map(String::as_str).unwrap_or("")))
+}
+
+/// Metrics are not stored; accept them so a Collector or SDK with all signals enabled does not retry.
+async fn otlp_metrics(State(state): State<AppState>, Query(q): Query<KeyQuery>, headers: HeaderMap) -> Result<Response, IngestError> {
+    authenticate(&state, &headers, &q).await?;
+    let proto = !headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").contains("json");
+    Ok(if proto {
+        (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "application/x-protobuf")], Vec::<u8>::new()).into_response()
+    } else {
+        (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "application/json")], "{}").into_response()
+    })
 }
 
 pub async fn current_salt(state: &AppState) -> String {

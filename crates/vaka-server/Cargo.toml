@@ -36,3 +36,5 @@ url = "2.5.8"
 uuid = { version = "1.29.2", features = ["v4", "serde"] }
 woothee = "0.13.0"
 jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
+opentelemetry-proto = { version = "0.31", default-features = false, features = ["gen-tonic-messages", "trace", "logs", "with-serde"] }
+prost = "0.14"
