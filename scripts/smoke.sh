@@ -172,6 +172,24 @@ for i in $(seq 1 10); do grep -q '^/slack ' "$HOOKS" && break; sleep 0.5; done
 grep '^/slack ' "$HOOKS" | grep -q 'New issue' || fail "slack alert: $(cat "$HOOKS")"
 grep '^/slack ' "$HOOKS" | grep -q "owners $EMAIL" || fail "slack owners: $(cat "$HOOKS")"
 
+# Session timelines and crash precursors
+T1=$(date +%s)
+send "{\"items\":[
+ {\"type\":\"session\",\"session_id\":\"tl-1\",\"status\":\"crashed\",\"release\":\"5.0.0\",\"started\":$((T1-5)),\"timestamp\":$((T1-1))},
+ {\"type\":\"event\",\"name\":\"pageview\",\"url\":\"https://ex.com/cart\",\"session_id\":\"tl-1\",\"timestamp\":$((T1-4))},
+ {\"type\":\"event\",\"name\":\"add_to_cart\",\"props\":{\"sku\":\"a1\"},\"session_id\":\"tl-1\",\"timestamp\":$((T1-3))},
+ {\"type\":\"error\",\"release\":\"5.0.0\",\"session_id\":\"tl-1\",\"fatal\":true,\"timestamp\":$((T1-1)),\"breadcrumbs\":[{\"category\":\"fetch\",\"message\":\"POST /api/pay 502\",\"level\":\"warn\",\"timestamp\":$((T1-2))}],
+  \"exception\":{\"type\":\"PayError\",\"value\":\"gateway\",\"stacktrace\":[{\"function\":\"pay\",\"filename\":\"src/pay.ts\",\"lineno\":3,\"in_app\":true}]}}]}" >/dev/null
+sleep 2
+TL=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/sessions/tl-1/timeline")
+[ "$(echo "$TL" | j '[e["kind"] for e in d["timeline"]]')" = "['session_start', 'pageview', 'event', 'breadcrumb', 'crash', 'session_end']" ] || fail "session timeline: $TL"
+echo "$TL" | j '[e["title"] for e in d["timeline"] if e["kind"] == "breadcrumb"][0]' | grep -q '^http: POST /api/pay 502' || fail "breadcrumb normalization: $TL"
+PAYI=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/issues?since=1h&query=PayError" | j 'd["issues"][0]["short_id"]')
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/issues/$PAYI" | j '[e["kind"] for e in d["timeline_before_crash"]][-2:]')" = "['breadcrumb', 'crash']" ] || fail "timeline before crash"
+PRE=$(curl -sf "${A[@]}" "$VAKA/api/v1/issues/$PAYI/precursors?minutes=5")
+[ "$(echo "$PRE" | j 'sorted(s["step"] for s in d["steps"])')" = "['add_to_cart', 'pageview /cart']" ] || fail "precursors: $PRE"
+echo "$PRE" | j 'd["breadcrumbs"][0]["breadcrumb"]' | grep -q 'http: POST /api/pay 502' || fail "precursor breadcrumbs: $PRE"
+
 # Webhooks and agent triggers
 rule() { curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d "$1" | j 'd["id"]'; }
 rule "{\"project\":\"$SLUG\",\"trigger\":\"new_issue\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/hook\",\"secret\":\"s3cret\",\"filters\":{\"min_level\":\"error\",\"environment\":\"production\"}}" >/dev/null || fail "webhook rule"

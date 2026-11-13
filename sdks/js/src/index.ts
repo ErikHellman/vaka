@@ -25,8 +25,13 @@ export interface Options {
   hashRouting?: boolean;
   /** Capture uncaught errors and unhandled rejections (default true). */
   captureErrors?: boolean;
-  /** Record breadcrumbs for clicks, navigation, console and failed fetches (default true). */
+  /** Record breadcrumbs for clicks, navigation, console and fetch requests (default true). */
   breadcrumbs?: boolean;
+  /**
+   * Group events and errors of one visit (per browser tab, ends after 30 minutes of inactivity) under a
+   * session id kept in sessionStorage, so timelines before a crash can be rebuilt (default true).
+   */
+  sessions?: boolean;
   /** Fraction of error events to send, 0..1 (default 1). */
   errorSampleRate?: number;
   /** Don't send anything from localhost (default false). */
@@ -228,8 +233,37 @@ function retry(items: Item[]) {
   schedule();
 }
 
+const SESSION_IDLE_MS = 30 * 60 * 1000;
+let memSession: { id: string; last: number } | undefined;
+
+/** The current visit's session id, rotated after 30 minutes without activity. */
+export function sessionId(): string | undefined {
+  if (!opts || opts.sessions === false) return undefined;
+  const t = Date.now();
+  let s = memSession;
+  if (!s && hasWindow) {
+    try {
+      const raw = window.sessionStorage.getItem('vaka_sid');
+      if (raw) s = JSON.parse(raw);
+    } catch {
+      /* storage blocked */
+    }
+  }
+  if (!s || typeof s.id !== 'string' || t - s.last > SESSION_IDLE_MS) s = { id: uuid(), last: t };
+  s.last = t;
+  memSession = s;
+  if (hasWindow) {
+    try {
+      window.sessionStorage.setItem('vaka_sid', JSON.stringify(s));
+    } catch {
+      /* storage blocked */
+    }
+  }
+  return s.id;
+}
+
 function common() {
-  return { release: opts.release, environment: opts.environment, user_id: userId };
+  return { release: opts.release, environment: opts.environment, user_id: userId, session_id: sessionId() };
 }
 
 function clean(props?: Props): Record<string, string | number | boolean> | undefined {
@@ -328,13 +362,21 @@ function installBreadcrumbs() {
     window.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
       const method = (init && init.method) || (typeof input === 'object' && 'method' in input ? (input as Request).method : 'GET');
+      const started = Date.now();
+      const own = url.indexOf(opts.endpoint) === 0;
       return f.call(window, input, init).then(
         (r) => {
-          if (r.status >= 400 && url.indexOf(opts.endpoint) !== 0) addBreadcrumb({ category: 'fetch', level: 'warning', message: `${method} ${url} ${r.status}` });
+          if (!own)
+            addBreadcrumb({
+              category: 'http',
+              level: r.status >= 400 ? 'warning' : 'info',
+              message: `${method} ${url} ${r.status}`,
+              data: { method, url, status_code: r.status, duration_ms: Date.now() - started },
+            });
           return r;
         },
         (e: unknown) => {
-          if (url.indexOf(opts.endpoint) !== 0) addBreadcrumb({ category: 'fetch', level: 'error', message: `${method} ${url} failed` });
+          if (!own) addBreadcrumb({ category: 'http', level: 'error', message: `${method} ${url} failed`, data: { method, url, duration_ms: Date.now() - started } });
           throw e;
         },
       );
@@ -373,6 +415,7 @@ export function _reset(): void {
   disabled = false;
   queue = [];
   crumbs = [];
+  memSession = undefined;
   userId = undefined;
   tags = {};
   lastUrl = '';

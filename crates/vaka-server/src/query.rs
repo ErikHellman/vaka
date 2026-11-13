@@ -348,6 +348,9 @@ pub async fn get_issue(state: &AppState, p: &Principal, id: &str) -> QResult<Val
             json!([])
         })
     };
+    if !latest_event.is_null() {
+        issue["timeline_before_crash"] = crate::timeline::before_event(state, &project_id, &latest_event, 10, 30).await;
+    }
     issue["latest_event"] = latest_event;
     Ok(issue)
 }
