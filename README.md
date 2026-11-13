@@ -66,6 +66,7 @@ with `deploy/fly/fly.sh launch`.
 | iOS, macOS, tvOS (Swift) | [`sdks/ios`](sdks/ios) | [SDK](docs/sdk-ios.md) · [install](docs/install/ios.md) |
 | Rust | [`crates/vaka-sdk-rust`](crates/vaka-sdk-rust) | [SDK](docs/sdk-rust.md) · [install](docs/install/rust.md) |
 | Go | [`sdks/go`](sdks/go) | [SDK](docs/sdk-go.md) · [install](docs/install/go.md) · [release](docs/releasing/go.md) |
+| JVM: Java, Kotlin, Scala (OpenTelemetry-based) | [`sdks/jvm`](sdks/jvm) | [SDK](docs/sdk-jvm.md) · [install](docs/install/jvm.md) · [release](docs/releasing/jvm.md) |
 | Any OpenTelemetry backend | OTLP/HTTP | [OpenTelemetry](docs/opentelemetry.md) |
 | Anything else | [HTTP ingest API](docs/ingest.md) | [guide](docs/sdk-http.md) |
 

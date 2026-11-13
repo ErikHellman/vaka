@@ -1,0 +1,68 @@
+name: Release JVM SDK
+
+# Publishes se.hellsoft.vaka:vaka-jvm to Maven Central. Setup and checklist: docs/releasing/jvm.md.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish; must equal VERSION_NAME in sdks/jvm/gradle.properties"
+        required: true
+      mode:
+        description: "release = upload and publish, upload = upload only (publish in the portal), dry-run = local only"
+        type: choice
+        options: [release, upload, dry-run]
+        default: release
+  push:
+    tags: ["jvm-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-jvm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/jvm
+    env:
+      VERSION: ${{ inputs.version || github.ref_name }}
+      MODE: ${{ inputs.mode || 'release' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Check version
+        run: |
+          want="${VERSION#jvm-v}"
+          have=$(sed -n 's/^VERSION_NAME=//p' gradle.properties)
+          if [ "$want" != "$have" ]; then
+            echo "::error::Requested $want but gradle.properties has VERSION_NAME=$have"
+            exit 1
+          fi
+          echo "Publishing vaka-jvm $have ($MODE)"
+      - name: Test
+        run: ./gradlew :vaka-jvm:test
+      - name: Publish (dry run)
+        if: env.MODE == 'dry-run'
+        run: ./gradlew :vaka-jvm:publishToMavenLocal && ls -R ~/.m2/repository/se/hellsoft/vaka/vaka-jvm
+      - name: Publish to Maven Central
+        if: env.MODE != 'dry-run'
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ORG_GRADLE_PROJECT_mavenCentralUsername" ] || [ -z "$ORG_GRADLE_PROJECT_signingInMemoryKey" ]; then
+            echo "::error::MAVEN_CENTRAL_USERNAME/PASSWORD and SIGNING_KEY/SIGNING_KEY_PASSWORD secrets are required (docs/releasing/jvm.md)"
+            exit 1
+          fi
+          if [ "$MODE" = release ]; then task=publishAndReleaseToMavenCentral; else task=publishToMavenCentral; fi
+          ./gradlew ":vaka-jvm:$task" --no-configuration-cache
