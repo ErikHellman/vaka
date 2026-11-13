@@ -1,7 +1,7 @@
 //! Anomaly detection: compares the last window (default 24h) with the same window one to four
 //! weeks earlier, across errors, issues, crash rate, traffic, custom events, latency and Web Vitals,
-//! and explains each finding in a sentence. Also writes digest narratives (with Claude when
-//! `VAKA_ANTHROPIC_API_KEY` is set, otherwise from templates).
+//! and explains each finding in a sentence. Also writes digest narratives (with an
+//! OpenAI-compatible LLM when `VAKA_LLM_BASE_URL` and `VAKA_LLM_MODEL` are set, otherwise from templates).
 
 use crate::auth::{ApiError, Principal};
 use crate::db::RowExt;
@@ -662,19 +662,19 @@ pub fn template_narrative(payload: &Value) -> String {
     format!("{lead} {}", top.join(" "))
 }
 
-/// Write the digest narrative with Claude when configured, falling back to templates.
-/// Returns (text, source) where source is "claude" or "template".
+/// Write the digest narrative with the configured LLM, falling back to templates.
+/// Returns (text, source) where source is "llm" or "template".
 pub async fn narrative(state: &AppState, payload: &Value) -> (String, &'static str) {
     let fallback = template_narrative(payload);
-    let Some(key) = &state.config.anthropic_api_key else { return (fallback, "template") };
+    let (Some(base), Some(model)) = (&state.config.llm_base_url, &state.config.llm_model) else { return (fallback, "template") };
     if payload["projects"].as_array().map(|p| p.is_empty()).unwrap_or(true) {
         return (fallback, "template");
     }
-    match claude_narrative(state, key, payload).await {
-        Ok(t) if !t.trim().is_empty() => (t.trim().to_string(), "claude"),
+    match llm_narrative(state, base, model, payload).await {
+        Ok(t) if !t.trim().is_empty() => (t.trim().to_string(), "llm"),
         Ok(_) => (fallback, "template"),
         Err(e) => {
-            tracing::warn!("digest narrative via Claude failed, using template: {e:#}");
+            tracing::warn!("digest narrative via LLM failed, using template: {e:#}");
             (fallback, "template")
         }
     }
@@ -687,7 +687,8 @@ and why: lead with the most severe or user-facing change, connect related findin
 and say when nothing needs attention. Use only facts in the data, keep issue ids like WEB-12 and release names exactly as given, and do not \
 speculate about causes the data does not show.";
 
-async fn claude_narrative(state: &AppState, key: &str, payload: &Value) -> anyhow::Result<String> {
+/// The chat completions request body (OpenAI-compatible).
+pub fn narrative_request(model: &str, payload: &Value) -> anyhow::Result<Value> {
     // Keep the prompt small: drop evidence series and links.
     let mut slim = payload.clone();
     if let Some(ps) = slim["projects"].as_array_mut() {
@@ -700,32 +701,45 @@ async fn claude_narrative(state: &AppState, key: &str, payload: &Value) -> anyho
             }
         }
     }
-    let body = json!({
-        "model": state.config.anthropic_model,
+    Ok(json!({
+        "model": model,
         "max_tokens": 2000,
-        "output_config": {"effort": "low"},
-        "system": NARRATIVE_SYSTEM,
-        "messages": [{"role": "user", "content": format!("Digest data:\n{}", serde_json::to_string(&slim)?)}],
-    });
-    let resp = state
-        .http
-        .post(format!("{}/v1/messages", state.config.anthropic_api_url))
-        .header("x-api-key", key)
-        .header("anthropic-version", "2023-06-01")
-        .json(&body)
-        .timeout(Duration::from_secs(90))
-        .send()
-        .await?;
+        "messages": [
+            {"role": "system", "content": NARRATIVE_SYSTEM},
+            {"role": "user", "content": format!("Digest data:\n{}", serde_json::to_string(&slim)?)},
+        ],
+    }))
+}
+
+/// Text of the first choice of a chat completions response.
+pub fn narrative_text(v: &Value) -> anyhow::Result<String> {
+    let choice = &v["choices"][0];
+    if choice["finish_reason"] == "content_filter" {
+        anyhow::bail!("the model declined to write the narrative");
+    }
+    let content = &choice["message"]["content"];
+    // Some servers return content as an array of parts.
+    let text = match content {
+        Value::String(s) => s.clone(),
+        Value::Array(parts) => parts.iter().filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join(""),
+        _ => anyhow::bail!("response has no choices[0].message.content"),
+    };
+    Ok(text)
+}
+
+async fn llm_narrative(state: &AppState, base: &str, model: &str, payload: &Value) -> anyhow::Result<String> {
+    let mut req = state.http.post(format!("{base}/chat/completions")).json(&narrative_request(model, payload)?).timeout(Duration::from_secs(90));
+    if let Some(key) = &state.config.llm_api_key {
+        req = req.bearer_auth(key);
+    }
+    let resp = req.send().await?;
     let status = resp.status();
     let v: Value = resp.json().await?;
     if !status.is_success() {
-        anyhow::bail!("Claude API returned {status}: {}", v["error"]["message"].as_str().unwrap_or(""));
+        let msg = v["error"]["message"].as_str().map(str::to_string).unwrap_or_else(|| v["error"].to_string());
+        anyhow::bail!("LLM API returned {status}: {msg}");
     }
-    if v["stop_reason"] == "refusal" {
-        anyhow::bail!("Claude declined to write the narrative");
-    }
-    let text: Vec<&str> = v["content"].as_array().into_iter().flatten().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect();
-    Ok(text.join("\n"))
+    narrative_text(&v)
 }
 
 #[cfg(test)]
@@ -765,6 +779,20 @@ mod tests {
         assert!(bucket_sql("timestamp").contains("{l5:Int64}"));
         assert_eq!(fmt_n(1234567.0), "1,234,567");
         assert_eq!(fmt_ms(1530.0), "1.5 s");
+    }
+
+    #[test]
+    fn llm_request_and_response() {
+        let payload = json!({"projects": [{"project": {"name": "Shop"}, "anomalies": [{"sentence": "Errors are up 200%.", "evidence": {"x": 1}, "next_tool": {}}]}]});
+        let r = narrative_request("gpt-test", &payload).unwrap();
+        assert_eq!(r["model"], "gpt-test");
+        assert_eq!(r["messages"][0]["role"], "system");
+        let user = r["messages"][1]["content"].as_str().unwrap();
+        assert!(user.contains("Errors are up 200%.") && !user.contains("evidence"));
+        assert_eq!(narrative_text(&json!({"choices": [{"message": {"content": "All good."}, "finish_reason": "stop"}]})).unwrap(), "All good.");
+        assert_eq!(narrative_text(&json!({"choices": [{"message": {"content": [{"type": "text", "text": "A"}, {"type": "text", "text": "B"}]}}]})).unwrap(), "AB");
+        assert!(narrative_text(&json!({"choices": [{"message": {"content": ""}, "finish_reason": "content_filter"}]})).is_err());
+        assert!(narrative_text(&json!({"choices": []})).is_err());
     }
 
     #[test]

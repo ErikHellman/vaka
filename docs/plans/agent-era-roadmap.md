@@ -170,8 +170,8 @@ Funnels, retention and paths exist. New:
 - Each anomaly carries a plain-English sentence ("Checkout conversion fell from
   4.1% to 2.3% since release 2.4.0 (−44%)") with evidence and a suggested next tool.
 - Digest rules get schedules: `daily` or `weekly` with hour, weekday and IANA time
-  zone, plus an optional `focus` (free text). If `VAKA_ANTHROPIC_API_KEY` is set the
-  narrative is written by Claude from the anomaly list and focus; otherwise
+  zone, plus an optional `focus` (free text). If `VAKA_LLM_BASE_URL` and `VAKA_LLM_MODEL` are set the
+  narrative is written by an OpenAI-compatible LLM from the anomaly list and focus; otherwise
   template sentences are used. MCP `preview_digest`.
 
 ## 8. OpenTelemetry ingestion

@@ -15,10 +15,11 @@ pub struct Config {
     pub geoip_db: Option<String>,
     pub resend_api_key: Option<String>,
     pub resend_api_url: String,
-    /// Optional: write digest narratives with Claude.
-    pub anthropic_api_key: Option<String>,
-    pub anthropic_api_url: String,
-    pub anthropic_model: String,
+    /// Optional: write digest narratives with any OpenAI-compatible chat completions API.
+    /// Enabled when both base URL and model are set; the key is optional (local servers).
+    pub llm_base_url: Option<String>,
+    pub llm_model: Option<String>,
+    pub llm_api_key: Option<String>,
     /// Allow email + password login in the admin UI. Email codes are offered whenever email is configured.
     pub password_login: bool,
     pub email_from: String,
@@ -50,9 +51,9 @@ impl Config {
             geoip_db: var("VAKA_GEOIP_DB"),
             resend_api_key: var("VAKA_RESEND_API_KEY"),
             resend_api_url: var("VAKA_RESEND_API_URL").unwrap_or_else(|| "https://api.resend.com".into()).trim_end_matches('/').to_string(),
-            anthropic_api_key: var("VAKA_ANTHROPIC_API_KEY"),
-            anthropic_api_url: var("VAKA_ANTHROPIC_API_URL").unwrap_or_else(|| "https://api.anthropic.com".into()).trim_end_matches('/').to_string(),
-            anthropic_model: var("VAKA_ANTHROPIC_MODEL").unwrap_or_else(|| "claude-opus-5-5".into()),
+            llm_base_url: var("VAKA_LLM_BASE_URL").map(|u| u.trim_end_matches('/').to_string()),
+            llm_model: var("VAKA_LLM_MODEL"),
+            llm_api_key: var("VAKA_LLM_API_KEY"),
             password_login: !matches!(var("VAKA_PASSWORD_LOGIN").as_deref().map(str::to_lowercase).as_deref(), Some("false" | "0" | "no" | "off")),
             email_from: var("VAKA_EMAIL_FROM").unwrap_or_else(|| "Vaka <vaka@localhost>".into()),
             default_retention_days: var("VAKA_DEFAULT_RETENTION_DAYS")
