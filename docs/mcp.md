@@ -74,6 +74,9 @@ Read (everything a read token can call):
 | `realtime_visitors` | Traffic in the last few minutes: visitors, top pages, referrers, errors |
 | `release_adoption` | Share of sessions and users per release over time |
 | `list_identified_users` | Users the app identified, with activity and error counts |
+| `list_cohorts` / `get_cohort` | Saved cohorts with sizes; one cohort's definition and sample members |
+| `analytics_stickiness` | DAU/WAU/MAU, DAU/MAU and days active per week |
+| `analytics_lifecycle` | New, returning, resurrecting and dormant people per day or week |
 | `get_user_timeline` | One user's events, crashes and sessions, newest first |
 | `get_release_commits` | Commits recorded for a release, with changed files |
 | `get_ownership_rules` | The project's code ownership rules, parsed |
@@ -83,6 +86,7 @@ Write:
 | Tool | What it does |
 | --- | --- |
 | `create_project` | Create a project and its ingest key (all-project write token) |
+| `create_cohort` / `delete_cohort` | Save or remove a behavioral cohort (usable as `{"cohort": name}` in any analytics filter) |
 | `resolve_issue` | Resolve, optionally `resolved_in_release`; a new event reopens it as a regression |
 | `ignore_issue` | Ignore forever or for a duration (`ignore_for`: `24h`, `7d`) |
 | `reopen_issue` | Set back to open |

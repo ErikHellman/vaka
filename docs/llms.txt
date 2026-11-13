@@ -48,7 +48,10 @@ Source links need either `set-commits` (repository) or `set_code_mappings`; owne
 to learn the event names and property keys, then `analytics_funnel`, `analytics_retention` or
 `analytics_paths`. For one identified user (for example a crash report from support), use
 `get_user_timeline`. Revenue and conversions: `analytics_revenue`, `list_goals`, `create_goal`.
-Right now: `realtime_visitors`. Rollout of a release: `release_adoption`.
+Right now: `realtime_visitors`. Rollout of a release: `release_adoption`. "Are people coming back
+daily?", "are we growing?": `analytics_stickiness`, `analytics_lifecycle`. To compare a group of
+people (power users, churn risks), save it with `create_cohort` and pass `{"cohort": name}` as a
+filter to any analytics tool, or `breakdown: "cohort:<name>"` to a funnel.
 
 ## Docs
 

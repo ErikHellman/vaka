@@ -130,14 +130,25 @@ pub async fn funnel(state: &AppState, p: &Principal, f: FunnelParams) -> QResult
         return Err(ApiError::bad(format!("a funnel needs 2 to {MAX_STEPS} steps")));
     }
     let project = project_for(state, p, &f.base.project).await?;
-    let w = analytics_where(&project.id, &f.base)?;
+    let w = analytics_where(state, &project.id, &f.base).await?;
     let window = parse_window(f.window.as_deref(), 86_400)?;
     let (actor, actor_ok) = actor_expr(f.identity.as_deref(), "visitor")?;
     let mut params = Params::from_where(&w.params);
     let conds: Vec<String> = f.steps.iter().enumerate().map(|(i, s)| step_cond(i, s, &mut params)).collect::<QResult<_>>()?;
     params.push("win", window.to_string());
     let breakdown = match f.breakdown.as_deref().filter(|b| !b.is_empty()) {
-        Some(d) => Some(crate::query::dimension_expr(d).ok_or_else(|| ApiError::bad(format!("unknown breakdown dimension `{d}`")))?),
+        Some(d) if d.starts_with("cohort:") => {
+            // In or not in a saved cohort.
+            let name = &d["cohort:".len()..];
+            let c = crate::cohorts::resolve(state, &project.id, name, crate::cohorts::POOL_BREAKDOWN).await?;
+            for (k, v) in &c.params {
+                params.push(*k, v.clone());
+            }
+            params.push("cbin", format!("in {name}"));
+            params.push("cbout", format!("not in {name}"));
+            Some(format!("if({}, {{cbin:String}}, {{cbout:String}})", c.condition(false)))
+        }
+        Some(d) => Some(crate::query::dimension_expr(d).ok_or_else(|| ApiError::bad(format!("unknown breakdown dimension `{d}` (or cohort:<name>)")))?),
         None => None,
     };
     // Breakdown value = the person's first non-empty value of the dimension among matching events.
@@ -174,10 +185,42 @@ pub async fn funnel(state: &AppState, p: &Principal, f: FunnelParams) -> QResult
             })
             .collect()
     };
+    // Time from the first step to the last for people who finished (first occurrence of each).
+    let n = f.steps.len();
+    let first_cond = &conds[0];
+    let last_cond = &conds[n - 1];
+    let times = state
+        .ch
+        .query(
+            &format!(
+                "SELECT count() AS converted, quantiles(0.5, 0.9)(secs) AS q, avg(secs) AS avg_secs, \
+                 countIf(secs < 60) AS under_1m, countIf(secs >= 60 AND secs < 600) AS m1_10, countIf(secs >= 600 AND secs < 3600) AS m10_60, \
+                 countIf(secs >= 3600 AND secs < 86400) AS h1_24, countIf(secs >= 86400) AS over_1d FROM ( \
+                   SELECT {actor} AS actor, windowFunnel({{win:UInt64}})(toDateTime(timestamp), {}) AS level, \
+                          dateDiff('second', minIf(timestamp, {first_cond}), maxIf(timestamp, {last_cond})) AS secs \
+                   FROM events WHERE {} AND {actor_ok} AND ({}) GROUP BY actor HAVING level = {n} AND secs >= 0)",
+                conds.join(", "),
+                w.sql,
+                conds.join(" OR ")
+            ),
+            &params.refs(),
+        )
+        .await?;
+    let t = times.first().cloned().unwrap_or_default();
+    let q = t["q"].as_array().cloned().unwrap_or_default();
+    let conversion_time = json!({
+        "converted": t["converted"],
+        "median_seconds": q.first().and_then(|v| v.as_f64()).map(|v| v.round()),
+        "p90_seconds": q.get(1).and_then(|v| v.as_f64()).map(|v| v.round()),
+        "avg_seconds": t["avg_secs"].as_f64().map(|v| v.round()),
+        "distribution": {"under_1m": t["under_1m"], "1m_10m": t["m1_10"], "10m_1h": t["m10_60"], "1h_1d": t["h1_24"], "over_1d": t["over_1d"]},
+        "note": "From a person's first step-1 event to their last final-step event; approximate when people repeat steps.",
+    });
     let mut out = json!({
         "project": project.slug,
         "window": {"since": iso_time(w.since), "until": iso_time(w.until)},
         "conversion_window_seconds": window,
+        "conversion_time": conversion_time,
         "identity": f.identity.as_deref().unwrap_or("visitor"),
         "filters": f.base.filters,
         "steps": shape(&row),
@@ -225,7 +268,7 @@ pub async fn retention(state: &AppState, p: &Principal, r: RetentionParams) -> Q
     if base.since.is_none() {
         base.since = Some((now_ms() - default_span).to_string());
     }
-    let w = analytics_where(&project.id, &base)?;
+    let w = analytics_where(state, &project.id, &base).await?;
     let (actor, actor_ok) = actor_expr(r.identity.as_deref(), "auto")?;
     let mut params = Params::from_where(&w.params);
     let start_cond = match &r.start {
@@ -322,7 +365,7 @@ pub struct PathParams {
 
 pub async fn paths(state: &AppState, p: &Principal, a: PathParams) -> QResult<Value> {
     let project = project_for(state, p, &a.base.project).await?;
-    let w = analytics_where(&project.id, &a.base)?;
+    let w = analytics_where(state, &project.id, &a.base).await?;
     let (actor, actor_ok) = actor_expr(a.identity.as_deref(), "visitor")?;
     let depth = a.depth.unwrap_or(3).clamp(1, 6);
     let before = match a.direction.as_deref().unwrap_or("after") {
@@ -398,7 +441,7 @@ pub async fn paths(state: &AppState, p: &Principal, a: PathParams) -> QResult<Va
 /// The event catalog: which event names exist, how often, and which property keys they carry.
 pub async fn event_catalog(state: &AppState, p: &Principal, a: AnalyticsParams, limit: Option<i64>) -> QResult<Value> {
     let project = project_for(state, p, &a.project).await?;
-    let w = analytics_where(&project.id, &a)?;
+    let w = analytics_where(state, &project.id, &a).await?;
     let mut params = Params::from_where(&w.params);
     params.push("lim", limit.unwrap_or(100).clamp(1, 1000).to_string());
     let rows = state
@@ -589,7 +632,7 @@ pub struct RevenueParams {
 
 pub async fn revenue(state: &AppState, p: &Principal, r: RevenueParams) -> QResult<Value> {
     let project = project_for(state, p, &r.base.project).await?;
-    let w = analytics_where(&project.id, &r.base)?;
+    let w = analytics_where(state, &project.id, &r.base).await?;
     let step = Step::parse(r.event.as_deref().unwrap_or("purchase"))?;
     let vp = r.value_prop.as_deref().unwrap_or("revenue");
     let cp = r.currency_prop.as_deref().unwrap_or("currency");
@@ -613,7 +656,7 @@ pub async fn revenue(state: &AppState, p: &Principal, r: RevenueParams) -> QResu
 
 pub async fn list_goals(state: &AppState, p: &Principal, a: AnalyticsParams) -> QResult<Value> {
     let project = project_for(state, p, &a.project).await?;
-    let w = analytics_where(&project.id, &a)?;
+    let w = analytics_where(state, &project.id, &a).await?;
     let rows = sqlx::query("SELECT id, name, step, value_prop, created_at, created_by FROM goals WHERE project_id = $1 ORDER BY name LIMIT 100")
         .bind(&project.id)
         .fetch_all(&state.db)

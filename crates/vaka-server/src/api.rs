@@ -61,6 +61,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/projects/{p}/analytics/revenue", get(analytics_revenue))
         .route("/api/v1/projects/{p}/analytics/realtime", get(analytics_realtime))
         .route("/api/v1/projects/{p}/goals", get(list_goals).post(create_goal))
+        .route("/api/v1/projects/{p}/cohorts", get(list_cohorts).post(create_cohort))
+        .route("/api/v1/projects/{p}/cohorts/{cohort}", get(get_cohort).delete(delete_cohort))
+        .route("/api/v1/projects/{p}/analytics/stickiness", get(analytics_stickiness))
+        .route("/api/v1/projects/{p}/analytics/lifecycle", get(analytics_lifecycle))
         .route("/api/v1/projects/{p}/goals/{goal}", delete(delete_goal))
         .route("/api/v1/projects/{p}/releases/adoption", get(release_adoption))
         .route("/api/v1/projects/{p}/users", get(list_identified_users))
@@ -573,6 +577,42 @@ async fn list_goals(State(s): State<AppState>, p: Principal, Path(project): Path
 
 async fn create_goal(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(g): Json<crate::product::GoalIn>) -> Result<(StatusCode, Json<Value>), ApiError> {
     Ok((StatusCode::CREATED, Json(crate::product::create_goal(&s, &p, &project, g).await?)))
+}
+
+#[derive(Deserialize)]
+struct CohortListQuery {
+    sizes: Option<bool>,
+}
+
+async fn list_cohorts(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<CohortListQuery>) -> J {
+    Ok(Json(crate::cohorts::list_cohorts(&s, &p, &project, q.sizes.unwrap_or(true)).await?))
+}
+
+async fn create_cohort(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(c): Json<crate::cohorts::CohortIn>) -> Result<(StatusCode, Json<Value>), ApiError> {
+    Ok((StatusCode::CREATED, Json(crate::cohorts::create_cohort(&s, &p, &project, c).await?)))
+}
+
+async fn get_cohort(State(s): State<AppState>, p: Principal, Path((project, cohort)): Path<(String, String)>, Query(q): Query<LimitQuery>) -> J {
+    Ok(Json(crate::cohorts::get_cohort(&s, &p, &project, &cohort, q.limit).await?))
+}
+
+async fn delete_cohort(State(s): State<AppState>, p: Principal, Path((project, cohort)): Path<(String, String)>) -> J {
+    Ok(Json(crate::cohorts::delete_cohort(&s, &p, &project, &cohort).await?))
+}
+
+fn engagement_params(project: String, raw: Option<String>) -> crate::cohorts::EngagementParams {
+    let (base, extra) = analytics_params(project, raw);
+    crate::cohorts::EngagementParams { base, event: extra.get("event").cloned(), identity: extra.get("identity").cloned(), period: extra.get("period").cloned() }
+}
+
+/// Stickiness: DAU/WAU/MAU and days active per week (`event`, `identity`).
+async fn analytics_stickiness(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
+    Ok(Json(crate::cohorts::stickiness(&s, &p, engagement_params(project, raw)).await?))
+}
+
+/// Lifecycle: new, returning, resurrecting, dormant per `period` (`event`, `identity`).
+async fn analytics_lifecycle(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
+    Ok(Json(crate::cohorts::lifecycle(&s, &p, engagement_params(project, raw)).await?))
 }
 
 async fn delete_goal(State(s): State<AppState>, p: Principal, Path((project, goal)): Path<(String, String)>) -> J {
