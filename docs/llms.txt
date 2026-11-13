@@ -73,7 +73,8 @@ filter to any analytics tool, or `breakdown: "cohort:<name>"` to a funnel.
 - [Anomaly detection and scheduled digests]({{ENDPOINT}}/docs/anomalies.md)
 - [OpenTelemetry: OTLP traces and logs from any backend]({{ENDPOINT}}/docs/opentelemetry.md)
 - [Privacy, retention, user deletion]({{ENDPOINT}}/docs/privacy.md)
-- [Self-hosting]({{ENDPOINT}}/docs/self-hosting.md)
+- [Self-hosting: Docker Compose, configuration, backups]({{ENDPOINT}}/docs/self-hosting.md)
+- [Deploy on Fly.io]({{ENDPOINT}}/docs/deploy-fly.md)
 
 ## SDK references
 

@@ -20,6 +20,7 @@ pub const DOCS: &[(&str, &str)] = &[
     doc!("index.md"),
     doc!("quickstart.md"),
     doc!("self-hosting.md"),
+    doc!("deploy-fly.md"),
     doc!("ingest.md"),
     doc!("api.md"),
     doc!("mcp.md"),
