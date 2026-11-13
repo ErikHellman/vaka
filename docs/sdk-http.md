@@ -2,7 +2,10 @@
 
 Vaka has SDKs for JavaScript, Android, iOS and Rust. For anything else (Go, Node.js, Python,
 .NET, JVM servers...), the [ingest protocol](ingest.md) is small enough for a coding agent to
-write a client in one sitting.
+write a client in one sitting. Backends that already use OpenTelemetry can instead send OTLP
+traces and logs directly, and span exceptions and ERROR logs become issues (see
+[OpenTelemetry](opentelemetry.md)); use the ingest protocol for sessions (crash-free rates),
+breadcrumbs and analytics events.
 
 Agent-followable guide: [`/docs/install/http`]({{ENDPOINT}}/docs/install/http).
 
