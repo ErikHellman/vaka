@@ -1,0 +1,50 @@
+name: Release Go SDK
+
+# Publishes github.com/ErikHellman/vaka/sdks/go: Go modules are published by tagging, here
+# sdks/go/vX.Y.Z, and the Go module proxy fetches the tag on first request.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the v, e.g. 0.1.0. Must match Version in sdks/go/vaka.go."
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      MODULE: github.com/ErikHellman/vaka/sdks/go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sdks/go/go.mod
+          cache-dependency-path: sdks/go/go.sum
+      - name: Check version
+        working-directory: sdks/go
+        run: |
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' || { echo "bad version $VERSION"; exit 1; }
+          grep -q "const Version = \"$VERSION\"" vaka.go || { echo "sdks/go/vaka.go Version is not $VERSION"; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/sdks/go/v$VERSION" >/dev/null; then echo "tag exists"; exit 1; fi
+      - name: Test
+        working-directory: sdks/go
+        run: go vet ./... && go test -race ./...
+      - name: Tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "sdks/go/v$VERSION" -m "Vaka Go SDK $VERSION"
+          git push origin "refs/tags/sdks/go/v$VERSION"
+      - name: Publish to the Go module proxy
+        run: |
+          mkdir -p /tmp/probe && cd /tmp/probe && go mod init probe
+          for i in 1 2 3 4 5; do
+            GOPROXY=https://proxy.golang.org GOFLAGS=-mod=mod go list -m "$MODULE@v$VERSION" && break
+            sleep $((i * 15))
+          done
+          GOPROXY=https://proxy.golang.org go list -m "$MODULE@v$VERSION"
+          echo "Published: https://pkg.go.dev/$MODULE@v$VERSION"
