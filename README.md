@@ -63,6 +63,7 @@ login, Fly.io): see [self-hosting](docs/self-hosting.md).
 | Android (Kotlin) | [`sdks/android`](sdks/android) | [SDK](docs/sdk-android.md) · [install](docs/install/android.md) |
 | iOS, macOS, tvOS (Swift) | [`sdks/ios`](sdks/ios) | [SDK](docs/sdk-ios.md) · [install](docs/install/ios.md) |
 | Rust | [`crates/vaka-sdk-rust`](crates/vaka-sdk-rust) | [SDK](docs/sdk-rust.md) · [install](docs/install/rust.md) |
+| Python (Django, Flask, FastAPI) | [`sdks/python`](sdks/python) | [SDK](docs/sdk-python.md) · [install](docs/install/python.md) |
 | Any OpenTelemetry backend | OTLP/HTTP | [OpenTelemetry](docs/opentelemetry.md) |
 | Anything else | [HTTP ingest API](docs/ingest.md) | [guide](docs/sdk-http.md) |
 
