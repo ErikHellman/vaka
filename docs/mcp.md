@@ -43,6 +43,8 @@ Read (everything a read token can call):
 | `get_install_instructions` | Install guide for a platform with the project's endpoint and key filled in |
 | `list_issues` | Grouped errors with event and user counts in a window (`status`, `query`, `release`, `environment`, `since`, `sort`, `limit`) |
 | `get_issue` | Latest event with symbolicated stack trace (`frames[0]` is the crash site), source context, breadcrumbs, tags, breakdowns, `owners` and `suspect_commits` |
+| `get_fix_context` | Start here to fix a crash: in-app frames with repository source links, breadcrumbs, suspect commits, owners, linked PRs, suggested branch and `Fixes <ID>` trailer |
+| `get_code_mappings` | How stack paths map to repository paths |
 | `list_issue_events` | Recent individual events for an issue |
 | `get_event` | One event in full |
 | `search_events` | Search events by text, level, release, environment, user id or exception type |
@@ -78,6 +80,9 @@ Write:
 | `create_goal` | Save a named conversion goal (a step, optionally with a revenue property) |
 | `delete_goal` | Delete a goal |
 | `set_ownership_rules` | Replace the project's ownership rules (CODEOWNERS-like; see the REST docs) |
+| `link_issue` | Record a PR, ticket or commit URL on an issue (do this right after opening a fix PR) |
+| `set_code_mappings` | Replace the stack path → repository path mappings |
+| `apply_ownership_rules` | Re-apply ownership rules to open issues |
 | `comment_issue` | Add a Markdown comment, e.g. root cause and a link to the fix |
 | `create_alert_rule` | Webhook, Slack or email on new issues, regressions or spikes, or a daily digest |
 | `delete_user_data` | Delete all data for a user id in a project (cannot be undone) |

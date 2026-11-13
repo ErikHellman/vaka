@@ -51,7 +51,18 @@ vaka releases commits --release 1.4.0
 ```
 
 Issues first seen in that release then list `suspect_commits`: commits that changed files in the
-stack trace. The checkout must have enough history for the range (`fetch-depth: 0` in GitHub Actions).
+stack trace. The checkout must have enough history for the range (`fetch-depth: 0` in GitHub Actions). Commit messages
+containing `Fixes WEB-12` (or `Closes`/`Resolves`) resolve those issues in the release. The
+release's head commit pins source links on stack frames to the exact code that crashed.
+
+## Code mappings
+
+```sh
+# Stack paths under src/ live under packages/web/src/ in the repository
+vaka code-mappings set-one --stack-root src/ --source-root packages/web/src/ --repository https://github.com/acme/shop
+vaka code-mappings set mappings.json   # [{"stack_root", "source_root", "repository", "default_branch"}]
+vaka code-mappings show
+```
 
 ## Ownership rules
 

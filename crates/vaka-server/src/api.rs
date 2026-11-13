@@ -35,6 +35,11 @@ pub fn router() -> Router<AppState> {
             get(get_release_commits).put(put_release_commits).layer(DefaultBodyLimit::max(32 * 1024 * 1024)),
         )
         .route("/api/v1/projects/{p}/ownership", get(get_ownership).put(put_ownership))
+        .route("/api/v1/projects/{p}/ownership/apply", post(apply_ownership))
+        .route("/api/v1/projects/{p}/code-mappings", get(get_code_mappings).put(put_code_mappings))
+        .route("/api/v1/issues/{id}/fix-context", get(fix_context))
+        .route("/api/v1/issues/{id}/links", get(list_links).post(add_link))
+        .route("/api/v1/issues/{id}/links/{link}", delete(delete_link))
         .route("/api/v1/projects/{p}/analytics/summary", get(analytics_summary))
         .route("/api/v1/projects/{p}/analytics/timeseries", get(analytics_timeseries))
         .route("/api/v1/projects/{p}/analytics/breakdown", get(analytics_breakdown))
@@ -96,6 +101,46 @@ async fn put_release_commits(
     Json(body): Json<crate::ownership::SetCommits>,
 ) -> J {
     Ok(Json(crate::ownership::put_release_commits(&s, &p, &project, &version, body).await?))
+}
+
+#[derive(Deserialize)]
+struct ApplyQuery {
+    #[serde(default)]
+    all: Option<bool>,
+}
+
+async fn apply_ownership(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<ApplyQuery>) -> J {
+    Ok(Json(crate::ownership::apply_ownership(&s, &p, &project, q.all.unwrap_or(false)).await?))
+}
+
+async fn get_code_mappings(State(s): State<AppState>, p: Principal, Path(project): Path<String>) -> J {
+    Ok(Json(crate::fixctx::get_code_mappings(&s, &p, &project).await?))
+}
+
+#[derive(Deserialize)]
+struct MappingsBody {
+    mappings: Vec<crate::fixctx::CodeMapping>,
+}
+
+async fn put_code_mappings(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(b): Json<MappingsBody>) -> J {
+    Ok(Json(crate::fixctx::set_code_mappings(&s, &p, &project, b.mappings).await?))
+}
+
+async fn fix_context(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {
+    Ok(Json(crate::fixctx::fix_context(&s, &p, &id).await?))
+}
+
+async fn list_links(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {
+    let issue = query::issue_for(&s, &p, &id).await?;
+    Ok(Json(json!({"issue": issue["short_id"], "links": crate::fixctx::links_for(&s, issue["id"].as_str().unwrap_or("")).await?})))
+}
+
+async fn add_link(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Json(l): Json<crate::fixctx::LinkIn>) -> J {
+    Ok(Json(crate::fixctx::add_link(&s, &p, &id, l).await?))
+}
+
+async fn delete_link(State(s): State<AppState>, p: Principal, Path((id, link)): Path<(String, String)>) -> J {
+    Ok(Json(crate::fixctx::delete_link(&s, &p, &id, &link).await?))
 }
 
 async fn get_ownership(State(s): State<AppState>, p: Principal, Path(project): Path<String>) -> J {

@@ -23,8 +23,9 @@ pub fn router() -> Router<AppState> {
 }
 
 const INSTRUCTIONS: &str = "Vaka is a crash-reporting and analytics service. Typical workflow: \
-list_projects -> list_issues (sort=events, since=24h) -> get_issue (full symbolicated stack trace, breadcrumbs, \
-affected releases/devices) -> fix the code -> resolve_issue with resolved_in_release. For 'why did X spike' use explain_spike; \
+list_projects -> list_issues (sort=events, since=24h) -> get_fix_context (in-app frames with repository source links, \
+breadcrumbs, suspect commits, owners) -> fix the code with `Fixes <ID>` in the commit message -> link_issue with the PR URL \
+(or resolve_issue with resolved_in_release). For 'why did X spike' use explain_spike; \
 for release quality use release_health and compare_releases; for traffic use analytics_summary, analytics_timeseries and analytics_breakdown. \
 To instrument a new app: create_project then get_install_instructions. Issues can be referenced by short id like WEB-12.";
 
@@ -338,6 +339,17 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
             query::update_issue(state, p, &req(&a, "issue")?, IssueUpdate { assignee: Some(s(&a, "assignee").unwrap_or_default()), ..Default::default() }).await?
         }
         "comment_issue" => query::comment_issue(state, p, &req(&a, "issue")?, &req(&a, "body")?).await?,
+        "get_fix_context" => crate::fixctx::fix_context(state, p, &req(&a, "issue")?).await?,
+        "link_issue" => {
+            crate::fixctx::add_link(state, p, &req(&a, "issue")?, crate::fixctx::LinkIn { url: req(&a, "url")?, kind: s(&a, "kind"), title: s(&a, "title") }).await?
+        }
+        "get_code_mappings" => crate::fixctx::get_code_mappings(state, p, &req(&a, "project")?).await?,
+        "set_code_mappings" => {
+            let mappings: Vec<crate::fixctx::CodeMapping> = serde_json::from_value(a.get("mappings").cloned().unwrap_or(json!([])))
+                .map_err(|e| ToolError::Failed(format!("`mappings` must be an array of {{stack_root, source_root, repository, default_branch}}: {e}")))?;
+            crate::fixctx::set_code_mappings(state, p, &req(&a, "project")?, mappings).await?
+        }
+        "apply_ownership_rules" => crate::ownership::apply_ownership(state, p, &req(&a, "project")?, a.get("all").and_then(|v| v.as_bool()).unwrap_or(false)).await?,
         "get_ownership_rules" => crate::ownership::get_ownership(state, p, &req(&a, "project")?).await?,
         "set_ownership_rules" => crate::ownership::set_ownership(state, p, &req(&a, "project")?, &s(&a, "rules").unwrap_or_default()).await?,
         "get_release_commits" => crate::ownership::get_release_commits(state, p, &req(&a, "project")?, &req(&a, "release")?).await?,
@@ -692,6 +704,43 @@ pub fn tools() -> Vec<Value> {
         tool("reopen_issue", "Reopen issue", "Set an issue back to open. Needs a write token.", vec![("issue", issue())], &["issue"], false, false),
         tool("assign_issue", "Assign issue", "Assign an issue to a user by email (empty string unassigns). Needs a write token.", vec![("issue", issue()), ("assignee", prop("string", "User email"))], &["issue", "assignee"], false, false),
         tool("get_release_commits", "Get release commits", "Commits recorded for a release (via `vaka releases set-commits`), with changed files. Used for suspect commits on issues.", vec![("project", project()), ("release", prop("string", "Release version"))], &["project", "release"], true, false),
+        tool(
+            "get_fix_context",
+            "Get fix context",
+            "Everything needed to fix an issue in one call: the crash's in-app frames with repository source links (url, path, line at the release's commit) and context lines, last breadcrumbs, tags, suspect commits, owners, linked PRs, and a suggested branch name, PR title and `Fixes <ID>` commit trailer that auto-resolves the issue when the release's commits reach Vaka. Start here when asked to fix a crash.",
+            vec![("issue", issue())],
+            &["issue"],
+            true,
+            false,
+        ),
+        tool(
+            "link_issue",
+            "Link PR to issue",
+            "Record a pull request, ticket or commit URL on an issue (e.g. right after opening a fix PR) so people and other agents can see work is in progress. Kind is guessed from the URL when omitted. Needs a write token.",
+            vec![("issue", issue()), ("url", prop("string", "https URL of the PR, ticket or commit")), ("kind", prop("string", "pull_request, issue, commit or other")), ("title", prop("string", "Optional title"))],
+            &["issue", "url"],
+            false,
+            false,
+        ),
+        tool("get_code_mappings", "Get code mappings", "How stack-trace paths map to repository paths (used for source links on frames).", vec![("project", project())], &["project"], true, false),
+        tool(
+            "set_code_mappings",
+            "Set code mappings",
+            "Replace the project's code mappings. Each maps a stack path prefix to a repository path: {stack_root: \"build/src/\", source_root: \"packages/web/src/\", repository: \"https://github.com/acme/shop\", default_branch: \"main\"}. Longest stack_root wins; empty stack_root matches everything. Needs a write token.",
+            vec![("project", project()), ("mappings", json!({"type": "array", "items": {"type": "object", "properties": {"stack_root": {"type": "string"}, "source_root": {"type": "string"}, "repository": {"type": "string"}, "default_branch": {"type": "string"}}}}))],
+            &["project", "mappings"],
+            false,
+            false,
+        ),
+        tool(
+            "apply_ownership_rules",
+            "Apply ownership rules",
+            "Re-apply the project's ownership rules to open issues: by default only issues without owners, with all=true every open issue. Needs a write token.",
+            vec![("project", project()), ("all", prop("boolean", "Also recompute issues that already have owners"))],
+            &["project"],
+            false,
+            false,
+        ),
         tool("get_ownership_rules", "Get ownership rules", "The project's code ownership rules (CODEOWNERS-like; last match wins), parsed, with any problems.", vec![("project", project())], &["project"], true, false),
         tool(
             "set_ownership_rules",
