@@ -35,6 +35,8 @@ All SDKs share the server's version. Change all of these together:
 | `sdks/android/gradle.properties` | `VERSION_NAME` |
 | `sdks/android/vaka-gradle-plugin/build.gradle.kts` | `version` |
 | `sdks/ios/Sources/Vaka/Vaka.swift` | `sdkVersion` |
+| `Package.swift`, `docs/install/ios.md`, `docs/install/android.md` | Version numbers in the examples |
+| `Cargo.lock`, `sdks/js/package-lock.json`, `sdks/node/package-lock.json` | Regenerate (`cargo update -w`, `npm install`); rebuild `sdks/js/dist/vaka.min.js` |
 
 `grep -rn '"0.2.0"\|= "0.2.0"\|VERSION_NAME=' --include=*.json --include=*.ts --include=*.toml --include=*.kts --include=*.properties --include=*.swift .`
 (with the old version) finds them.
