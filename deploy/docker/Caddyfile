@@ -1,0 +1,6 @@
+# Used by the `caddy` profile in docker-compose.yml. Caddy gets a Let's Encrypt certificate
+# for VAKA_DOMAIN automatically; point the domain's DNS at this host and open ports 80 and 443.
+{$VAKA_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy vaka:8080
+}

@@ -10,6 +10,7 @@ released by [`release.yml`](../../.github/workflows/release.yml) (see
 | `se.hellsoft.vaka:vaka-android` + Gradle plugin `se.hellsoft.vaka` | Maven Central, Gradle Plugin Portal | [android.md](android.md) |
 | `Vaka` (iOS, macOS, tvOS) | Swift Package Manager (git tags), CocoaPods trunk | [ios.md](ios.md) |
 | `vaka-sdk` (Rust) | crates.io | [rust.md](rust.md) |
+| `github.com/ErikHellman/vaka/sdks/go` | Go module proxy (git tags) | [go.md](go.md) |
 
 ## Release order
 
