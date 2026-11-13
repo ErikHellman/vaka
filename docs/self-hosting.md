@@ -62,6 +62,8 @@ All settings are environment variables.
 | `VAKA_CLICKHOUSE_USER` / `_PASSWORD` / `_DATABASE` | `default` / empty / `vaka` | ClickHouse credentials |
 | `VAKA_DEFAULT_RETENTION_DAYS` | `90` | Retention for new projects |
 | `VAKA_RESEND_API_KEY` | | Enables email alerts, invite emails and email-code login via Resend |
+| `VAKA_ANTHROPIC_API_KEY` | | Optional: Claude writes the opening paragraph of digests ([anomalies.md](anomalies.md#the-narrative)) |
+| `VAKA_ANTHROPIC_MODEL` | `claude-opus-5-5` | Model for digest narratives |
 | `VAKA_EMAIL_FROM` | `Vaka <vaka@localhost>` | Sender for emails |
 | `VAKA_PASSWORD_LOGIN` | `true` | Set to `false` to allow only email-code login (needs `VAKA_RESEND_API_KEY`) |
 | `VAKA_GEOIP_DB` | | Optional MaxMind/DB-IP country `.mmdb` file |

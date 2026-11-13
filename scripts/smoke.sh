@@ -231,6 +231,47 @@ for i in $(seq 1 10); do grep -q '^/slack ' "$HOOKS" && break; sleep 0.5; done
 grep '^/slack ' "$HOOKS" | grep -q 'New issue' || fail "slack alert: $(cat "$HOOKS")"
 grep '^/slack ' "$HOOKS" | grep -q "owners $EMAIL" || fail "slack owners: $(cat "$HOOKS")"
 
+# Anomaly detection and digests (own project): three quiet weeks, then a burst today
+APROJ=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects" -d "{\"name\":\"$SLUG-anomaly\",\"platform\":\"javascript\"}")
+AKEY=$(echo "$APROJ" | j 'd["ingest_key"]'); ASLUG=$(echo "$APROJ" | j 'd["slug"]')
+AITEMS=$(python3 - <<'PY'
+import json, time
+t = int(time.time())
+items = []
+def err(ts, kind, release):
+    return {"type": "error", "release": release, "timestamp": ts, "exception": {"type": kind, "value": "boom", "stacktrace": [{"function": kind.lower(), "filename": "a.ts", "lineno": 1, "in_app": True}]}}
+for k in (1, 2, 3):
+    base = t - k * 7 * 86400 - 20 * 3600
+    items += [err(base + i, "AnomSteady", "r1") for i in range(2)]
+    items += [{"type": "event", "name": "pageview", "url": "https://anom.example.com/", "timestamp": base + i} for i in range(60)]
+    items += [{"type": "session", "session_id": f"as-{k}-{i}", "status": "exited", "release": "r1", "started": base + i, "timestamp": base + i + 5} for i in range(30)]
+now = t - 600
+items += [err(now + i, "AnomBurst", "r2") for i in range(40)]
+items += [err(now, "AnomSteady", "r2") for i in range(2)]
+items += [{"type": "event", "name": "pageview", "url": "https://anom.example.com/", "timestamp": now + i} for i in range(5)]
+items += [{"type": "session", "session_id": f"as-0-{i}", "status": "crashed" if i < 10 else "exited", "release": "r2", "started": now + i, "timestamp": now + i + 5} for i in range(30)]
+items += [{"type": "session", "session_id": f"as-0-r1-{i}", "status": "exited", "release": "r1", "started": now + i, "timestamp": now + i + 5} for i in range(30)]
+print(json.dumps({"items": items}))
+PY
+)
+curl -sf -X POST "$VAKA/ingest/v1/batch" -H "x-vaka-key: $AKEY" -H 'content-type: application/json' -d "$AITEMS" >/dev/null || fail "anomaly items"
+sleep 2
+AN=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$ASLUG/anomalies?window=24h")
+[ "$(echo "$AN" | j 'sorted({a["metric"] for a in d["anomalies"]} & {"errors", "issue_errors", "crash_free_sessions", "release_crash_free", "pageviews"})')" = "['crash_free_sessions', 'errors', 'issue_errors', 'pageviews', 'release_crash_free']" ] || fail "anomalies: $AN"
+[ "$(echo "$AN" | j '[a["subject"]["title"].split(":")[0] for a in d["anomalies"] if a["metric"] == "issue_errors"]')" = "['AnomBurst']" ] || fail "issue anomaly: $AN"
+echo "$AN" | j 'd["baseline"]' | grep -q '3 weeks' || fail "anomaly baseline: $AN"
+echo "$AN" | j '[a["next_tool"]["tool"] for a in d["anomalies"] if a["metric"] == "errors"][0]' | grep -q explain_spike || fail "anomaly next tool"
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/anomalies?window=9d" -o /dev/null -w '%{http_code}' || true)" != "200" ] || fail "anomaly window validation"
+PV=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$ASLUG/digest/preview")
+[ "$(echo "$PV" | j '(d["narrative_source"], d["title"], "Unusual:" in d["text"])')" = "('template', 'Vaka daily digest', True)" ] || fail "digest preview: $PV"
+curl -s "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d "{\"project\":\"$ASLUG\",\"trigger\":\"digest\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:1/x\",\"schedule\":{\"timezone\":\"Mars/Base\"}}" | grep -q 'unknown time zone' || fail "schedule validation"
+ADIG=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d "{\"project\":\"$ASLUG\",\"trigger\":\"digest\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/anomaly-digest\",\"schedule\":{\"frequency\":\"weekly\",\"weekday\":\"monday\",\"hour\":9,\"timezone\":\"Europe/Stockholm\"}}")
+[ "$(echo "$ADIG" | j 'd["schedule"]["timezone"]')" = "Europe/Stockholm" ] || fail "digest schedule: $ADIG"
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules/$(echo "$ADIG" | j 'd["id"]')/test" >/dev/null || fail "anomaly digest test"
+grep '^/anomaly-digest ' "$HOOKS" | grep -q '"issue_errors"' || fail "anomaly digest payload: $(grep '^/anomaly-digest ' "$HOOKS")"
+grep '^/anomaly-digest ' "$HOOKS" | grep -q '"title":"Vaka weekly digest"' || fail "weekly digest title"
+grep '^/anomaly-digest ' "$HOOKS" | grep -q '"narrative":"' || fail "digest narrative"
+
 # Session timelines and crash precursors
 T1=$(date +%s)
 send "{\"items\":[
@@ -333,6 +374,7 @@ echo "mcp tools: $TOOLS"
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"compare_release_performance\",\"arguments\":{\"project\":\"$SLUG\",\"base\":\"p1\",\"target\":\"p2\"}}}" | j 'd["result"]["structuredContent"]["regressed"]' | grep -q True || fail mcp-perf-compare
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"list_cohorts\",\"arguments\":{\"project\":\"$SLUG\"}}}" | j '[c["name"] for c in d["result"]["structuredContent"]["cohorts"]]' | grep -q buyers || fail mcp-cohorts
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/call\",\"params\":{\"name\":\"experiment_results\",\"arguments\":{\"project\":\"$FSLUG\",\"flag\":\"pricing\",\"goal\":\"exp_buy\",\"control\":\"a\",\"since\":\"1h\"}}}" | j 'd["result"]["structuredContent"]["winner"]' | grep -q b || fail mcp-experiment
+curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"detect_anomalies\",\"arguments\":{\"project\":\"$ASLUG\"}}}" | j '[a["metric"] for a in d["result"]["structuredContent"]["anomalies"]]' | grep -q issue_errors || fail mcp-anomalies
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"list_alert_rules","arguments":{}}}' | j 'd["result"]["structuredContent"]["channels"]' | grep -q github_dispatch || fail mcp-alert-rules
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"get_fix_context\",\"arguments\":{\"issue\":\"$OWNED\"}}}" | j 'd["result"]["structuredContent"]["suggested"]["branch"]' | grep -q "^vaka/" || fail mcp-fix-context
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"resolve_issue\",\"arguments\":{\"issue\":\"$SHORT\",\"resolved_in_release\":\"1.0.1\"}}}" | j 'd["result"]["structuredContent"]["status"]' | grep -q resolved || fail mcp-resolve

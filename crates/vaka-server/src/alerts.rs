@@ -39,6 +39,10 @@ pub struct Rule {
     pub filters: Value,
     /// 0 = unlimited.
     pub max_per_hour: i64,
+    /// Digests only: {frequency, hour, weekday, timezone}; null = daily at `threshold` (UTC).
+    pub schedule: Value,
+    #[serde(skip)]
+    pub created_at: i64,
 }
 
 pub fn rule_from_row(r: &sqlx::any::AnyRow) -> Rule {
@@ -53,10 +57,12 @@ pub fn rule_from_row(r: &sqlx::any::AnyRow) -> Rule {
         enabled: r.i("enabled") != 0,
         filters: serde_json::from_str(&r.s("filters")).unwrap_or_else(|_| json!({})),
         max_per_hour: r.i("max_per_hour"),
+        schedule: serde_json::from_str(&r.s("schedule")).unwrap_or(Value::Null),
+        created_at: r.i("created_at"),
     }
 }
 
-pub const RULE_COLS: &str = "id, project_id, name, trigger, channel, target, secret, threshold, enabled, filters, max_per_hour";
+pub const RULE_COLS: &str = "id, project_id, name, trigger, channel, target, secret, threshold, enabled, filters, max_per_hour, schedule, created_at";
 
 pub const FILTER_KEYS: &[&str] = &["environment", "min_level", "release", "owner", "unhandled_only", "tags", "mention"];
 
@@ -740,18 +746,107 @@ pub fn spawn_digest_scheduler(state: AppState) {
     });
 }
 
-/// When today's digest for `hour` is due (ms since epoch).
-pub fn digest_due_at(now: i64, hour: i64) -> i64 {
-    let day = now - now.rem_euclid(86_400_000);
-    day + hour.clamp(0, 23) * 3_600_000
+/// When a digest goes out: daily or weekly, at a local hour in an IANA time zone.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Schedule {
+    #[serde(default = "daily")]
+    pub frequency: String,
+    #[serde(default = "eight")]
+    pub hour: i64,
+    #[serde(default)]
+    pub weekday: Option<String>,
+    #[serde(default = "utc")]
+    pub timezone: String,
+}
+
+fn daily() -> String {
+    "daily".into()
+}
+fn eight() -> i64 {
+    8
+}
+fn utc() -> String {
+    "UTC".into()
+}
+
+const WEEKDAYS: &[&str] = &["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+
+impl Schedule {
+    pub fn parse(v: &Value) -> Result<Schedule, String> {
+        let s: Schedule = serde_json::from_value(v.clone()).map_err(|e| format!("bad schedule: {e}"))?;
+        if !matches!(s.frequency.as_str(), "daily" | "weekly") {
+            return Err("schedule.frequency must be daily or weekly".into());
+        }
+        if !(0..=23).contains(&s.hour) {
+            return Err("schedule.hour must be 0 to 23 (local time in schedule.timezone)".into());
+        }
+        if let Some(w) = &s.weekday {
+            if !WEEKDAYS.contains(&w.to_lowercase().as_str()) {
+                return Err("schedule.weekday must be a day name like monday".into());
+            }
+        }
+        jiff::tz::TimeZone::get(&s.timezone).map_err(|_| format!("unknown time zone `{}`; use an IANA name like Europe/Stockholm", s.timezone))?;
+        Ok(s)
+    }
+
+    /// For a rule without a schedule: daily at `threshold` UTC.
+    pub fn of(rule: &Rule) -> Schedule {
+        Schedule::parse(&rule.schedule).unwrap_or(Schedule { frequency: daily(), hour: rule.threshold.clamp(0, 23), weekday: None, timezone: utc() })
+    }
+
+    pub fn window_ms(&self) -> i64 {
+        if self.frequency == "weekly" {
+            7 * 86_400_000
+        } else {
+            86_400_000
+        }
+    }
+
+    pub fn title(&self) -> &'static str {
+        if self.frequency == "weekly" {
+            "Vaka weekly digest"
+        } else {
+            "Vaka daily digest"
+        }
+    }
+
+    /// The most recent scheduled time at or before `now` (ms since epoch).
+    pub fn last_due(&self, now: i64) -> anyhow::Result<i64> {
+        let tz = jiff::tz::TimeZone::get(&self.timezone)?;
+        let local = jiff::Timestamp::from_millisecond(now)?.to_zoned(tz.clone());
+        let wd = WEEKDAYS.iter().position(|d| Some(*d) == self.weekday.as_deref().map(str::to_lowercase).as_deref()).unwrap_or(0);
+        let mut date = local.date();
+        for _ in 0..9 {
+            let ok_day = self.frequency != "weekly" || date.weekday().to_monday_zero_offset() as usize == wd;
+            if ok_day {
+                let at = date.at(self.hour as i8, 0, 0, 0).to_zoned(tz.clone())?.timestamp().as_millisecond();
+                if at <= now {
+                    return Ok(at);
+                }
+            }
+            date = date.yesterday()?;
+        }
+        anyhow::bail!("no scheduled time found")
+    }
+
+    pub fn describe(&self) -> String {
+        let when = format!("{:02}:00 {}", self.hour, self.timezone);
+        if self.frequency == "weekly" {
+            let d = self.weekday.clone().unwrap_or_else(|| "monday".into());
+            format!("weekly on {}{} at {when}", d[..1].to_uppercase(), &d[1..].to_lowercase())
+        } else {
+            format!("daily at {when}")
+        }
+    }
 }
 
 async fn run_digests(state: &AppState, now: i64) -> anyhow::Result<()> {
     let rows = sqlx::query(&format!("SELECT {RULE_COLS} FROM alert_rules WHERE enabled = 1 AND trigger = 'digest'")).fetch_all(&state.db).await?;
     for row in rows {
         let rule = rule_from_row(&row);
-        let due = digest_due_at(now, rule.threshold);
-        if now < due {
+        let Ok(due) = Schedule::of(&rule).last_due(now) else { continue };
+        // Not before the first scheduled time after the rule was created.
+        if due < rule.created_at {
             continue;
         }
         let last = sqlx::query("SELECT MAX(created_at) AS t FROM alert_deliveries WHERE rule_id = $1 AND status IN ('ok', 'retrying')")
@@ -763,40 +858,57 @@ async fn run_digests(state: &AppState, now: i64) -> anyhow::Result<()> {
         if last >= due {
             continue;
         }
-        send_digest(state, &rule, &row.s("secret"), now).await?;
+        if let Err(e) = send_digest(state, &rule, &row.s("secret"), now).await {
+            tracing::warn!("digest {} failed: {e:#}", rule.id);
+        }
     }
     Ok(())
 }
 
 /// Build and send one digest now. Returns the delivery detail.
 pub async fn send_digest(state: &AppState, rule: &Rule, secret: &str, now: i64) -> anyhow::Result<String> {
-    let projects = match &rule.project_id {
+    let payload = build_digest(state, rule.project_id.as_deref(), &Schedule::of(rule), now, true).await?;
+    deliver_new(state, rule, secret, "digest", "", payload).await
+}
+
+/// The digest payload for one project (or all), with anomalies and a narrative.
+pub async fn build_digest(state: &AppState, project_id: Option<&str>, schedule: &Schedule, now: i64, with_narrative: bool) -> anyhow::Result<Value> {
+    let projects = match project_id {
         Some(pid) => crate::projects::find(state, pid).await?.into_iter().collect(),
         None => crate::projects::list(state).await?,
     };
+    let w = schedule.window_ms();
     let mut items = Vec::new();
     for p in &projects {
-        let d = project_digest(state, p, now).await?;
-        let quiet = d["errors"].as_i64() == Some(0) && d["visitors"].as_i64() == Some(0) && d["sessions"].as_i64() == Some(0);
+        let d = project_digest(state, p, now, w).await?;
+        let quiet = d["errors"].as_i64() == Some(0) && d["visitors"].as_i64() == Some(0) && d["sessions"].as_i64() == Some(0) && d["anomalies"].as_array().map(|a| a.is_empty()).unwrap_or(true);
         if !quiet {
             items.push(d);
         }
     }
-    let payload = json!({
+    let label = if w == 86_400_000 { "the last 24 hours" } else { "the last 7 days" };
+    let mut payload = json!({
         "trigger": "digest",
-        "period": {"since": crate::util::iso_time(now - 86_400_000), "until": crate::util::iso_time(now)},
+        "title": schedule.title(),
+        "schedule": schedule.describe(),
+        "period": {"since": crate::util::iso_time(now - w), "until": crate::util::iso_time(now), "label": label},
         "projects": items,
         "sent_at": crate::util::iso_time(now),
     });
-    deliver_new(state, rule, secret, "digest", "", payload).await
+    if with_narrative {
+        let (text, source) = crate::anomalies::narrative(state, &payload).await;
+        payload["narrative"] = json!(text);
+        payload["narrative_source"] = json!(source);
+    }
+    Ok(payload)
 }
 
 fn n(v: &serde_json::Value) -> i64 {
     v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)).or_else(|| v.as_str().and_then(|s| s.parse().ok())).unwrap_or(0)
 }
 
-async fn project_digest(state: &AppState, p: &ProjectInfo, now: i64) -> anyhow::Result<serde_json::Value> {
-    let ps = [("p", p.id.clone()), ("d1", (now - 86_400_000).to_string()), ("d2", (now - 2 * 86_400_000).to_string())];
+async fn project_digest(state: &AppState, p: &ProjectInfo, now: i64, w: i64) -> anyhow::Result<serde_json::Value> {
+    let ps = [("p", p.id.clone()), ("d1", (now - w).to_string()), ("d2", (now - 2 * w).to_string())];
     let t1 = "fromUnixTimestamp64Milli({d1:Int64})";
     let t2 = "fromUnixTimestamp64Milli({d2:Int64})";
     let errs = state
@@ -836,10 +948,10 @@ async fn project_digest(state: &AppState, p: &ProjectInfo, now: i64) -> anyhow::
         .await?;
     let new_rows = sqlx::query("SELECT id FROM issues WHERE project_id = $1 AND first_seen >= $2 ORDER BY times_seen DESC LIMIT 5")
         .bind(&p.id)
-        .bind(now - 86_400_000)
+        .bind(now - w)
         .fetch_all(&state.db)
         .await?;
-    let new_count = sqlx::query("SELECT COUNT(*) AS n FROM issues WHERE project_id = $1 AND first_seen >= $2").bind(&p.id).bind(now - 86_400_000).fetch_one(&state.db).await?.i("n");
+    let new_count = sqlx::query("SELECT COUNT(*) AS n FROM issues WHERE project_id = $1 AND first_seen >= $2").bind(&p.id).bind(now - w).fetch_one(&state.db).await?.i("n");
     let slim = |i: &serde_json::Value| json!({"short_id": i["short_id"], "title": i["title"], "culprit": i["culprit"], "status": i["status"], "url": i["url"], "owners": i["owners"]});
     let mut new_issues = Vec::new();
     for r in &new_rows {
@@ -860,7 +972,15 @@ async fn project_digest(state: &AppState, p: &ProjectInfo, now: i64) -> anyhow::
     let t = traffic.first().cloned().unwrap_or(json!({}));
     let s = sessions.first().cloned().unwrap_or(json!({}));
     let (sess, crashed) = (n(&s["sessions"]), n(&s["crashed"]));
+    let anomalies = match crate::anomalies::detect_for(state, p, now, w).await {
+        Ok(a) => a["anomalies"].as_array().map(|v| v.iter().take(8).cloned().collect::<Vec<_>>()).unwrap_or_default(),
+        Err(e) => {
+            tracing::warn!("anomaly detection for {} failed: {e:#}", p.slug);
+            Vec::new()
+        }
+    };
     Ok(json!({
+        "anomalies": anomalies,
         "project": {"id": p.id, "slug": p.slug, "name": p.name},
         "errors": n(&e["errors"]), "errors_prev": n(&e["errors_prev"]),
         "new_issue_count": new_count, "new_issues": new_issues, "top_issues": top_issues,
@@ -883,10 +1003,14 @@ fn delta(now: i64, prev: i64) -> String {
 pub fn digest_lines(payload: &serde_json::Value, slack: bool) -> Vec<String> {
     let mut out = Vec::new();
     let projects = payload["projects"].as_array().cloned().unwrap_or_default();
-    if projects.is_empty() {
-        out.push("No activity in the last 24 hours.".to_string());
-    }
     let esc = |s: &str| if slack { slack_escape(s) } else { s.to_string() };
+    if let Some(t) = payload["narrative"].as_str().filter(|t| !t.is_empty() && !projects.is_empty()) {
+        out.push(esc(t));
+        out.push(String::new());
+    }
+    if projects.is_empty() {
+        out.push(format!("No activity in {}.", payload["period"]["label"].as_str().unwrap_or("the last 24 hours")));
+    }
     for p in projects {
         let name = esc(p["project"]["name"].as_str().unwrap_or(""));
         out.push(if slack { format!("*{name}*") } else { format!("== {name} ==") });
@@ -898,6 +1022,11 @@ pub fn digest_lines(payload: &serde_json::Value, slack: bool) -> Vec<String> {
             facts.push(format!("{} visitors{}, {} pageviews{}", n(&p["visitors"]), delta(n(&p["visitors"]), n(&p["visitors_prev"])), n(&p["pageviews"]), delta(n(&p["pageviews"]), n(&p["pageviews_prev"]))));
         }
         out.push(facts.join(" · "));
+        let unusual: Vec<_> = p["anomalies"].as_array().cloned().unwrap_or_default();
+        if !unusual.is_empty() {
+            out.push("Unusual:".into());
+            out.extend(unusual.iter().map(|a| format!("{} {}", if slack { "•" } else { " " }, esc(a["sentence"].as_str().unwrap_or("")))));
+        }
         let issue_line = |i: &serde_json::Value, extra: String| {
             let short = i["short_id"].as_str().unwrap_or("");
             let title = esc(i["title"].as_str().unwrap_or(""));
@@ -924,10 +1053,11 @@ pub fn digest_lines(payload: &serde_json::Value, slack: bool) -> Vec<String> {
 
 fn slack_digest_message(payload: &serde_json::Value, _public_url: &str) -> serde_json::Value {
     let text = digest_lines(payload, true).join("\n");
+    let title = payload["title"].as_str().unwrap_or("Vaka daily digest");
     json!({
-        "text": "Vaka daily digest",
+        "text": title,
         "blocks": [
-            {"type": "header", "text": {"type": "plain_text", "text": "Vaka daily digest"}},
+            {"type": "header", "text": {"type": "plain_text", "text": title}},
             {"type": "section", "text": {"type": "mrkdwn", "text": crate::util::truncate(&text, 2900)}},
         ],
         "unfurl_links": false,
@@ -938,7 +1068,8 @@ async fn send_digest_email(state: &AppState, to: &str, payload: &serde_json::Val
     let Some(key) = &state.config.resend_api_key else {
         anyhow::bail!("email digests need VAKA_RESEND_API_KEY");
     };
-    let text = format!("Vaka daily digest\n\n{}", digest_lines(payload, false).join("\n"));
+    let title = payload["title"].as_str().unwrap_or("Vaka daily digest").to_string();
+    let text = format!("{title}\n\n{}", digest_lines(payload, false).join("\n"));
     let html = format!("<pre style=\"font-family:ui-monospace,monospace\">{}</pre>", html_escape(&text));
     let resp = state
         .http
@@ -947,7 +1078,7 @@ async fn send_digest_email(state: &AppState, to: &str, payload: &serde_json::Val
         .json(&json!({
             "from": state.config.email_from,
             "to": to.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect::<Vec<_>>(),
-            "subject": "Vaka daily digest",
+            "subject": title,
             "text": text,
             "html": html,
         }))
@@ -1039,8 +1170,26 @@ mod tests {
     #[test]
     fn digest_schedule_and_text() {
         let day = 1_763_000_000_000 - 1_763_000_000_000 % 86_400_000;
-        assert_eq!(digest_due_at(day + 5 * 3_600_000, 8), day + 8 * 3_600_000);
-        assert_eq!(digest_due_at(day + 9 * 3_600_000, 8), day + 8 * 3_600_000);
+        let h = 3_600_000;
+        let utc8 = Schedule::parse(&json!({"hour": 8})).unwrap();
+        assert_eq!(utc8.last_due(day + 5 * h).unwrap(), day - 16 * h);
+        assert_eq!(utc8.last_due(day + 9 * h).unwrap(), day + 8 * h);
+        // Stockholm is UTC+1 in November.
+        let sthlm = Schedule::parse(&json!({"hour": 8, "timezone": "Europe/Stockholm"})).unwrap();
+        assert_eq!(sthlm.last_due(day + 9 * h).unwrap(), day + 7 * h);
+        // 2025-11-13 is a Thursday; the last Monday 08:00 UTC is three days earlier.
+        let weekly = Schedule::parse(&json!({"frequency": "weekly", "weekday": "Monday", "hour": 8})).unwrap();
+        assert_eq!(weekly.last_due(day + 9 * h).unwrap(), day - 3 * 86_400_000 + 8 * h);
+        assert_eq!(weekly.window_ms(), 7 * 86_400_000);
+        assert_eq!(weekly.describe(), "weekly on Monday at 08:00 UTC");
+        assert!(Schedule::parse(&json!({"timezone": "Mars/Olympus"})).is_err());
+        assert!(Schedule::parse(&json!({"hour": 24})).is_err());
+        assert!(Schedule::parse(&json!({"frequency": "hourly"})).is_err());
+        let with_anomaly = json!({"narrative": "Errors doubled.", "projects": [{"project": {"name": "Web"}, "errors": 1, "errors_prev": 0, "new_issue_count": 0,
+            "anomalies": [{"sentence": "Errors are up 100%."}]}]});
+        let text = digest_lines(&with_anomaly, false).join("\n");
+        assert!(text.starts_with("Errors doubled."), "{text}");
+        assert!(text.contains("Unusual:\n  Errors are up 100%."), "{text}");
         let payload = json!({"projects": [{"project": {"name": "Web <prod>"}, "errors": 12, "errors_prev": 10, "new_issue_count": 1,
             "new_issues": [{"short_id": "WEB-3", "title": "TypeError", "url": "https://v/x"}], "top_issues": [], "sessions": 0,
             "crash_free_sessions": null, "visitors": 5, "visitors_prev": 0, "pageviews": 9, "pageviews_prev": 0}]});

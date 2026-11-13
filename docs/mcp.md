@@ -74,6 +74,8 @@ Read (everything a read token can call):
 | `realtime_visitors` | Traffic in the last few minutes: visitors, top pages, referrers, errors |
 | `release_adoption` | Share of sessions and users per release over time |
 | `list_identified_users` | Users the app identified, with activity and error counts |
+| `detect_anomalies` | What is unusual: errors, issues, crash rate, traffic, events, latency and Web Vitals vs the same window in earlier weeks, with a next tool for each |
+| `preview_digest` | The digest a digest rule would send now, with narrative and text |
 | `list_flags` / `get_flag` | Feature flags; one flag with exposure per variant |
 | `flag_health` | Crash-free sessions, errors and over-represented issues per flag variant |
 | `list_experiments` / `experiment_results` | Experiments; conversion per variant with uplift, CI and p-value |
@@ -103,7 +105,7 @@ Write:
 | `set_code_mappings` | Replace the stack path → repository path mappings |
 | `apply_ownership_rules` | Re-apply ownership rules to open issues |
 | `comment_issue` | Add a Markdown comment, e.g. root cause and a link to the fix |
-| `create_alert_rule` | Webhook, Slack, email, GitHub repository_dispatch or GitHub issue on new issues, regressions, spikes, thresholds, resolves, assignments, comments, new releases, or a daily digest; with filters and rate limits |
+| `create_alert_rule` | Webhook, Slack, email, GitHub repository_dispatch or GitHub issue on new issues, regressions, spikes, thresholds, resolves, assignments, comments, new releases, or a daily or weekly digest (`schedule` with a time zone); with filters and rate limits |
 | `list_alert_rules` | Rules with triggers, channels and filters |
 | `update_alert_rule` / `delete_alert_rule` | Change or delete a rule |
 | `test_alert_rule` | Send a test notification |
@@ -121,6 +123,8 @@ Write:
 - "What are the top new crashes in the iOS app since yesterday's release? Fix the worst one."
 - "Compare release 2.3.0 with 2.4.0 for the web project. Did crash-free sessions drop?"
 - "Errors spiked in the last hour. Explain why."
+- "Is anything unusual in the web app today? Dig into the worst finding."
+- "Send me a weekly digest every Monday at 9 in Stockholm time."
 - "Which referrers brought the most visitors to /pricing this month?"
 - "Where do people drop off between the pricing page and purchase? Does it differ by country?"
 - "Do users who sign up on the pro plan come back more in the following weeks?"
