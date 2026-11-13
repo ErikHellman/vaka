@@ -11,6 +11,7 @@ released by [`release.yml`](../../.github/workflows/release.yml) (see
 | `Vaka` (iOS, macOS, tvOS) | Swift Package Manager (git tags), CocoaPods trunk | [ios.md](ios.md) |
 | `vaka-sdk` (Rust) | crates.io | [rust.md](rust.md) |
 | `github.com/ErikHellman/vaka/sdks/go` | Go module proxy (git tags) | [go.md](go.md) |
+| `se.hellsoft.vaka:vaka-jvm` | Maven Central | [jvm.md](jvm.md) |
 | `vaka-sdk` (Python) | PyPI (trusted publishing) | [python.md](python.md) |
 
 ## Release order
@@ -36,6 +37,7 @@ All SDKs share the server's version. Change all of these together:
 | `sdks/python/src/vaka/_version.py` | `__version__` |
 | `sdks/android/gradle.properties` | `VERSION_NAME` |
 | `sdks/android/vaka-gradle-plugin/build.gradle.kts` | `version` |
+| `sdks/jvm/gradle.properties`, `docs/install/jvm.md` | `VERSION_NAME`, version in the examples |
 | `sdks/ios/Sources/Vaka/Vaka.swift` | `sdkVersion` |
 | `Package.swift`, `docs/install/ios.md`, `docs/install/android.md` | Version numbers in the examples |
 | `Cargo.lock`, `sdks/js/package-lock.json`, `sdks/node/package-lock.json` | Regenerate (`cargo update -w`, `npm install`); rebuild `sdks/js/dist/vaka.min.js` |
