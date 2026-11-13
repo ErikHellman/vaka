@@ -249,11 +249,18 @@ async fn process_error(
         }
     }
     if change != IssueChange::Seen {
-        crate::alerts::notify_issue(state, project, &issue_id, if change == IssueChange::New { "new_issue" } else { "regression" });
+        let ctx = serde_json::json!({
+            "environment": item.environment.clone().unwrap_or_else(|| "production".into()), "level": level, "release": release,
+            "handled": item.handled.unwrap_or(true), "tags": item.tags,
+        });
+        crate::alerts::notify_issue(state, project, &issue_id, if change == IssueChange::New { "new_issue" } else { "regression" }, Some(ctx));
     }
     if !release.is_empty() {
-        sqlx::query("INSERT INTO releases (project_id, version, created_at) VALUES ($1, $2, $3) ON CONFLICT (project_id, version) DO NOTHING")
-            .bind(&project.id).bind(&release).bind(ts).execute(&state.db).await.ok();
+        let created = sqlx::query("INSERT INTO releases (project_id, version, created_at) VALUES ($1, $2, $3) ON CONFLICT (project_id, version) DO NOTHING")
+            .bind(&project.id).bind(&release).bind(ts).execute(&state.db).await.map(|r| r.rows_affected() == 1).unwrap_or(false);
+        if created {
+            crate::alerts::notify_release(state, project, &release);
+        }
     }
 
     let mut breadcrumbs = serde_json::Value::Array(item.breadcrumbs.iter().rev().take(100).rev().cloned().collect());

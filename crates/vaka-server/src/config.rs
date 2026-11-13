@@ -20,6 +20,8 @@ pub struct Config {
     pub email_from: String,
     pub default_retention_days: i64,
     pub secure_cookies: bool,
+    /// GitHub REST API base for the github_dispatch / github_issue alert channels.
+    pub github_api_url: String,
 }
 
 fn var(name: &str) -> Option<String> {
@@ -49,6 +51,7 @@ impl Config {
             default_retention_days: var("VAKA_DEFAULT_RETENTION_DAYS")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(90),
+            github_api_url: var("VAKA_GITHUB_API_URL").unwrap_or_else(|| "https://api.github.com".into()).trim_end_matches('/').to_string(),
             data_dir,
         })
     }

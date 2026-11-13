@@ -764,6 +764,7 @@ async fn alerts_action(State(s): State<AppState>, headers: HeaderMap, Form(f): F
                 secret: f.secret.filter(|s| !s.is_empty()),
                 threshold: f.threshold.and_then(|t| t.parse().ok()),
                 enabled: Some(true),
+                ..Default::default()
             };
             match crate::api::create_rule_inner(&s, &user, body).await {
                 Ok(_) => back("/ui/alerts", "Rule created"),

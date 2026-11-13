@@ -381,12 +381,19 @@ pub struct SetCommits {
 pub async fn set_release_commits(state: &AppState, project_id: &str, release: &str, body: SetCommits) -> anyhow::Result<usize> {
     let head = body.head_commit.clone().filter(|h| !h.trim().is_empty()).or_else(|| body.commits.first().map(|c| c.sha.clone())).unwrap_or_default();
     let now = now_ms();
-    sqlx::query("INSERT INTO releases (project_id, version, created_at) VALUES ($1, $2, $3) ON CONFLICT (project_id, version) DO NOTHING")
+    let created = sqlx::query("INSERT INTO releases (project_id, version, created_at) VALUES ($1, $2, $3) ON CONFLICT (project_id, version) DO NOTHING")
         .bind(project_id)
         .bind(release)
         .bind(now)
         .execute(&state.db)
-        .await?;
+        .await?
+        .rows_affected()
+        == 1;
+    if created {
+        if let Some(p) = crate::projects::find(state, project_id).await? {
+            crate::alerts::notify_release(state, &p, release);
+        }
+    }
     let mut tx = state.db.begin().await?;
     if let Some(repo) = body.repository.as_deref() {
         sqlx::query("UPDATE releases SET repository = $1 WHERE project_id = $2 AND version = $3").bind(repo).bind(project_id).bind(release).execute(&mut *tx).await?;

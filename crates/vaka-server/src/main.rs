@@ -8,6 +8,7 @@ mod config;
 mod db;
 mod docs;
 mod fixctx;
+mod github;
 mod grouping;
 mod insights;
 mod ingest;
@@ -86,6 +87,7 @@ async fn main() -> anyhow::Result<()> {
     maintenance::spawn(state.clone());
     alerts::spawn_spike_detector(state.clone());
     alerts::spawn_digest_scheduler(state.clone());
+    alerts::spawn_delivery_worker(state.clone());
     s3::spawn_startup_sync(state.clone());
 
     let ingest_cors = CorsLayer::new()
