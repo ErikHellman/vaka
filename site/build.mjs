@@ -27,11 +27,12 @@ const nav = [
   ['SDK: Android', 'sdk-android'],
   ['SDK: iOS', 'sdk-ios'],
   ['SDK: Rust', 'sdk-rust'],
+  ['SDK: Go', 'sdk-go'],
   ['SDK: Python', 'sdk-python'],
   ['SDK: HTTP', 'sdk-http'],
 ];
-const installs = ['javascript', 'android', 'ios', 'rust', 'python', 'http'];
-const installLabel = { javascript: 'JavaScript', android: 'Android', ios: 'iOS', rust: 'Rust', python: 'Python', http: 'Other (HTTP)' };
+const installs = ['javascript', 'android', 'ios', 'rust', 'go', 'python', 'http'];
+const installLabel = { javascript: 'JavaScript', android: 'Android', ios: 'iOS', rust: 'Rust', go: 'Go', python: 'Python', http: 'Other (HTTP)' };
 
 const fill = (s) =>
   s.replaceAll('{{ENDPOINT}}', ENDPOINT).replaceAll('{{KEY}}', 'vk_your_ingest_key').replaceAll('{{PROJECT}}', 'your-project');

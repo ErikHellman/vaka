@@ -155,5 +155,5 @@ without recording. See [flags.md](flags.md).
 
 ## Releasing
 
-Maintainers: see [`sdks/python/RELEASING.md`](https://github.com/ErikHellman/vaka/blob/main/sdks/python/RELEASING.md)
+Maintainers: see [releasing/python.md](https://github.com/ErikHellman/vaka/blob/main/docs/releasing/python.md)
 for publishing to PyPI.

@@ -44,7 +44,7 @@ path = "src/vaka/_version.py"
 packages = ["src/vaka"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/vaka", "tests", "README.md", "RELEASING.md", "LICENSE-*", "pyproject.toml"]
+include = ["src/vaka", "tests", "README.md", "LICENSE-*", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

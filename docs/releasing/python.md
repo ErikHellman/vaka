@@ -24,26 +24,21 @@ its identity to PyPI with OIDC, so no API token is stored anywhere.
    After the first release, the publisher shows under the project's *Settings → Publishing*.
 3. **GitHub environments.** In the repository, *Settings → Environments*, create `pypi` and
    `testpypi`. For `pypi`, add yourself as a required reviewer so every upload waits for a click,
-   and limit deployment to tags matching `python-v*` (plus `main` if you will publish from a manual run).
+   and limit deployment to the `main` branch and tags matching `python-v*`.
 
 ## Release steps
 
-1. Bump `__version__` in [`src/vaka/_version.py`](src/vaka/_version.py) (PEP 440: `0.3.0`,
+1. Bump `__version__` in [`sdks/python/src/vaka/_version.py`](../../sdks/python/src/vaka/_version.py) (PEP 440: `0.3.0`,
    `0.3.0rc1`). PyPI never accepts the same version twice, even after deleting a file.
 2. Update the docs if the API changed (`docs/sdk-python.md`, `docs/install/python.md`), commit, and
    merge to `main`.
-3. Optional dry run: *Actions → Release Python SDK → Run workflow* with `repository: testpypi`, then
+3. Optional dry run: *Actions → Release Python SDK → Run workflow* on `main` with `version` set to
+   the new version and `repository: testpypi`, then
    `pip install -i https://test.pypi.org/simple/ vaka-sdk==<version>` in a clean venv.
-4. Release: push a tag `python-v<version>` on the release commit, for example
-
-   ```sh
-   git tag -a python-v0.3.0 -m "vaka-sdk 0.3.0" && git push origin python-v0.3.0
-   ```
-
-   The workflow checks that the tag matches `_version.py`, runs the tests, builds the sdist and
-   wheel, runs `twine check`, and publishes to PyPI after the `pypi` environment is approved.
-   (A manual run with `repository: pypi` publishes the dispatched commit instead; use it when you
-   cannot push tags, such as from a cloud session.)
+4. Release: run the same workflow with `repository: pypi`. It checks that `version` matches
+   `_version.py`, runs the tests, builds the sdist and wheel, runs `twine check`, publishes to PyPI
+   once the `pypi` environment is approved, and then pushes the tag `python-v<version>` on the
+   released commit. (Pushing a `python-v<version>` tag yourself does the same without the tag step.)
 5. Check <https://pypi.org/project/vaka-sdk/> and install it in a clean venv:
    `pip install "vaka-sdk[otel]==0.3.0" && python -c "import vaka; print(vaka.__version__)"`.
 
