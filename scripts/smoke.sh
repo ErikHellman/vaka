@@ -89,15 +89,18 @@ CF=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/funnel?since=1h&i
 [ "$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/stickiness?since=1h&identity=user&event=cohort_buy" | j 'd["active_in_window"]')" = "2" ] || fail "stickiness"
 LC=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/analytics/lifecycle?period=day&identity=user&event=cohort_buy")
 [ "$(echo "$LC" | j '(d["periods"][-1]["new"], d["periods"][-1]["active"])')" = "(2, 2)" ] || fail "lifecycle: $LC"
-# Feature flags and experiments
-FL="$VAKA/api/v1/projects/$SLUG/flags"
+# Feature flags and experiments (own project, so its sessions and events don't skew the other checks)
+FPROJ=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects" -d "{\"name\":\"$SLUG-flags\",\"platform\":\"javascript\"}")
+FKEY=$(echo "$FPROJ" | j 'd["ingest_key"]')
+FSLUG=$(echo "$FPROJ" | j 'd["slug"]')
+FL="$VAKA/api/v1/projects/$FSLUG/flags"
 curl -sf "${A[@]}" -X POST "$FL" -d '{"key":"smoke_bool"}' >/dev/null || fail "create bool flag"
 curl -sf "${A[@]}" -X POST "$FL" -d '{"key":"pricing","variants":[{"key":"a"},{"key":"b"}],"rules":[{"user_ids":["vip"],"variant":"b"}]}' >/dev/null || fail "create variant flag"
 curl -s "${A[@]}" -X POST "$FL" -d '{"key":"bad","variants":[{"key":"a"}]}' | grep -q '2 to 10' || fail "flag validation"
-EV=$(curl -sf -X POST "$VAKA/ingest/v1/flags" -H "x-vaka-key: $KEY" -d '{"distinct_id":"d1","user_id":"vip"}')
+EV=$(curl -sf -X POST "$VAKA/ingest/v1/flags" -H "x-vaka-key: $FKEY" -d '{"distinct_id":"d1","user_id":"vip"}')
 [ "$(echo "$EV" | j '(d["flags"]["pricing"], d["flags"]["smoke_bool"], d["details"]["pricing"]["reason"])')" = "('b', True, 'rule')" ] || fail "flag evaluation: $EV"
 curl -sf "${A[@]}" -X PATCH "$FL/smoke_bool" -d '{"enabled":false}' >/dev/null || fail "update flag"
-[ "$(curl -sf -X POST "$VAKA/ingest/v1/flags" -H "x-vaka-key: $KEY" -d '{"distinct_id":"d1"}' | j 'd["flags"]["smoke_bool"]')" = "False" ] || fail "flag kill switch"
+[ "$(curl -sf -X POST "$VAKA/ingest/v1/flags" -H "x-vaka-key: $FKEY" -d '{"distinct_id":"d1"}' | j 'd["flags"]["smoke_bool"]')" = "False" ] || fail "flag kill switch"
 FLAGITEMS=$(python3 - <<'PY'
 import json, time
 t = int(time.time())
@@ -115,13 +118,13 @@ for v, buyers in (("a", 4), ("b", 20)):
 print(json.dumps({"items": items}))
 PY
 )
-send "$FLAGITEMS" >/dev/null || fail "flag items"
+curl -sf -X POST "$VAKA/ingest/v1/batch" -H "x-vaka-key: $FKEY" -H 'content-type: application/json' -d "$FLAGITEMS" >/dev/null || fail "flag items"
 sleep 2
 FH=$(curl -sf "${A[@]}" "$FL/pricing/health?since=1h")
 [ "$(echo "$FH" | j '[(v["variant"], v["sessions"], v["crash_free_sessions"]) for v in d["variants"]]')" = "[('a', 10, 1.0), ('b', 10, 0.5)]" ] || fail "flag health: $FH"
 [ "$(echo "$FH" | j '(d["over_represented_issues"][0]["variant"], d["over_represented_issues"][0]["title"].startswith("FlagCrash"))')" = "('b', True)" ] || fail "flag issues: $FH"
-curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/experiments" -d '{"name":"price test","flag":"pricing","goal":"exp_buy","control":"a"}' >/dev/null || fail "create experiment"
-ER=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/experiments/price%20test/results?since=1h")
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$FSLUG/experiments" -d '{"name":"price test","flag":"pricing","goal":"exp_buy","control":"a"}' >/dev/null || fail "create experiment"
+ER=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$FSLUG/experiments/price%20test/results?since=1h")
 [ "$(echo "$ER" | j '(d["winner"], [(v["variant"], v["exposed"], v["converted"]) for v in d["variants"]])')" = "('b', [('a', 40, 4), ('b', 40, 20)])" ] || fail "experiment results: $ER"
 # Goals, revenue, real-time, adoption
 send "{\"items\":[{\"type\":\"event\",\"name\":\"purchase\",\"url\":\"https://ex.com/checkout\",\"referrer\":\"https://news.ycombinator.com/\",\"props\":{\"revenue\":\"19.5\",\"currency\":\"usd\"},\"anon_id\":\"p1\"},
@@ -329,7 +332,7 @@ TOOLS=$(curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":2,"meth
 echo "mcp tools: $TOOLS"
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"compare_release_performance\",\"arguments\":{\"project\":\"$SLUG\",\"base\":\"p1\",\"target\":\"p2\"}}}" | j 'd["result"]["structuredContent"]["regressed"]' | grep -q True || fail mcp-perf-compare
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"list_cohorts\",\"arguments\":{\"project\":\"$SLUG\"}}}" | j '[c["name"] for c in d["result"]["structuredContent"]["cohorts"]]' | grep -q buyers || fail mcp-cohorts
-curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/call\",\"params\":{\"name\":\"experiment_results\",\"arguments\":{\"project\":\"$SLUG\",\"flag\":\"pricing\",\"goal\":\"exp_buy\",\"control\":\"a\",\"since\":\"1h\"}}}" | j 'd["result"]["structuredContent"]["winner"]' | grep -q b || fail mcp-experiment
+curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/call\",\"params\":{\"name\":\"experiment_results\",\"arguments\":{\"project\":\"$FSLUG\",\"flag\":\"pricing\",\"goal\":\"exp_buy\",\"control\":\"a\",\"since\":\"1h\"}}}" | j 'd["result"]["structuredContent"]["winner"]' | grep -q b || fail mcp-experiment
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"list_alert_rules","arguments":{}}}' | j 'd["result"]["structuredContent"]["channels"]' | grep -q github_dispatch || fail mcp-alert-rules
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"get_fix_context\",\"arguments\":{\"issue\":\"$OWNED\"}}}" | j 'd["result"]["structuredContent"]["suggested"]["branch"]' | grep -q "^vaka/" || fail mcp-fix-context
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"resolve_issue\",\"arguments\":{\"issue\":\"$SHORT\",\"resolved_in_release\":\"1.0.1\"}}}" | j 'd["result"]["structuredContent"]["status"]' | grep -q resolved || fail mcp-resolve
