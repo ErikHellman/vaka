@@ -179,6 +179,13 @@ applies the source map uploaded for that file and `release`.
 - `props`: flat string/number/bool values, at most 64 keys.
 - `user_id` only after the app calls `identify()` (opt-in).
 
+## Feature flags
+
+Error, session and event items accept `flags`: the flag values the app used, e.g.
+`{"new_checkout": "one_page", "beta": "false"}` (at most 32). Evaluate them with
+`POST /ingest/v1/flags` `{"distinct_id", "user_id"?, "environment"?, "properties"?}`; see
+[flags.md](flags.md).
+
 ## Span item (performance)
 
 ```json

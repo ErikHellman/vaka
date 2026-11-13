@@ -66,6 +66,7 @@ pub struct SessionRow {
     pub timestamp: String,
     pub duration_ms: u64,
     pub error_count: u32,
+    pub flags: BTreeMap<String, String>,
     pub retention_days: u16,
 }
 
@@ -101,6 +102,7 @@ pub struct EventRow {
     pub user_id: String,
     pub session_id: String,
     pub props: BTreeMap<String, String>,
+    pub flags: BTreeMap<String, String>,
     pub retention_days: u16,
 }
 
@@ -141,6 +143,7 @@ pub struct ErrorRow {
     pub sdk_version: String,
     pub symbolicated: u8,
     pub trace_id: String,
+    pub flags: BTreeMap<String, String>,
     pub retention_days: u16,
 }
 
@@ -366,6 +369,7 @@ async fn process_error(
         sdk_version: sdk.version,
         symbolicated: symbolicated as u8,
         trace_id,
+        flags: crate::models::flag_map(&item.flags),
         retention_days: project.retention_days as u16,
     })
 }

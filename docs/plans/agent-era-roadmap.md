@@ -212,6 +212,6 @@ threads; iOS verification needs Erik's Mac.
 - [x] 1 Session timelines
 - [x] 3 Performance tracing
 - [x] 4 Cohorts
-- [ ] 6 Feature flags and experiments
+- [x] 6 Feature flags and experiments
 - [ ] 7 Anomaly digests
 - [ ] 8 OTLP ingestion

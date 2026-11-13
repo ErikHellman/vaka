@@ -43,6 +43,13 @@ export interface Options {
    * (default: same-origin requests only). Your backend can continue the trace with it.
    */
   tracePropagationTargets?: (string | RegExp)[];
+  /**
+   * Load feature flags on init (default false). Evaluated flags are attached to every event,
+   * error and session as `flags` so Vaka can split health and conversion by variant.
+   */
+  flags?: boolean;
+  /** Stable id for flag bucketing when the user is not identified (default: the session id). */
+  distinctId?: string;
   /** Fraction of error events to send, 0..1 (default 1). */
   errorSampleRate?: number;
   /** Don't send anything from localhost (default false). */
@@ -123,6 +130,7 @@ export function init(options: Options): void {
     return;
   }
   if ((opts.tracesSampleRate ?? 0) > 0 && Math.random() < (opts.tracesSampleRate ?? 0)) installTracing();
+  if (opts.flags) loadFlags().catch(() => undefined);
   if (opts.captureErrors) installErrorHandlers();
   if (opts.breadcrumbs) installBreadcrumbs();
   if (opts.autoPageviews) installPageviews();
@@ -157,7 +165,9 @@ export function track(name: string, props?: Props): void {
 
 /** Opt-in user identification. Pass null to clear. */
 export function identify(id: string | null): void {
+  const changed = (id || undefined) !== userId;
   userId = id || undefined;
+  if (changed && started && opts.flags) loadFlags().catch(() => undefined);
 }
 
 export function setTag(key: string, value: string): void {
@@ -276,7 +286,58 @@ export function sessionId(): string | undefined {
 }
 
 function common() {
-  return { release: opts.release, environment: opts.environment, user_id: userId, session_id: sessionId() };
+  return { release: opts.release, environment: opts.environment, user_id: userId, session_id: sessionId(), flags: activeFlags() };
+}
+
+// ---------------------------------------------------------------------------
+// Feature flags
+// ---------------------------------------------------------------------------
+
+export type FlagValue = boolean | string;
+let flagValues: Record<string, FlagValue> | undefined;
+let flagListeners: ((flags: Record<string, FlagValue>) => void)[] = [];
+
+function activeFlags(): Record<string, string> | undefined {
+  if (!flagValues) return undefined;
+  const out: Record<string, string> = {};
+  for (const k of Object.keys(flagValues)) out[k] = String(flagValues[k]);
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Fetch flag values for the current person (user id after identify(), else distinctId or session). */
+export function loadFlags(properties?: Props): Promise<Record<string, FlagValue>> {
+  if (!started || disabled || typeof fetch === 'undefined') return Promise.resolve(flagValues || {});
+  const distinct = userId || opts.distinctId || sessionId() || (memFlagId = memFlagId || uuid());
+  return origFetch(`${opts.endpoint}/ingest/v1/flags`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain', 'X-Vaka-Key': opts.key },
+    body: JSON.stringify({ distinct_id: distinct, user_id: userId, environment: opts.environment, properties: clean(properties) }),
+  })
+    .then((r) => (r.status === 200 ? r.json() : Promise.reject(new Error(`flags: HTTP ${r.status}`))))
+    .then((d: { flags?: Record<string, FlagValue> }) => {
+      flagValues = d.flags || {};
+      for (const cb of flagListeners) cb(flagValues);
+      log('flags', flagValues);
+      return flagValues;
+    });
+}
+let memFlagId: string | undefined;
+
+/** A flag's value: `true`/`false` for boolean flags, the variant key for multivariate ones. */
+export function getFlag(key: string, fallback: FlagValue = false): FlagValue {
+  return flagValues && key in flagValues ? flagValues[key] : fallback;
+}
+
+/** True when a flag is on (any variant). */
+export function isEnabled(key: string): boolean {
+  const v = getFlag(key, false);
+  return v !== false && v !== 'false';
+}
+
+/** Called with all flag values whenever they are (re)loaded. */
+export function onFlags(cb: (flags: Record<string, FlagValue>) => void): void {
+  flagListeners.push(cb);
+  if (flagValues) cb(flagValues);
 }
 
 function clean(props?: Props): Record<string, string | number | boolean> | undefined {
@@ -587,6 +648,9 @@ export function _reset(): void {
   crumbs = [];
   memSession = undefined;
   trace = undefined;
+  flagValues = undefined;
+  flagListeners = [];
+  memFlagId = undefined;
   userId = undefined;
   tags = {};
   lastUrl = '';

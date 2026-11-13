@@ -61,6 +61,12 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/projects/{p}/analytics/revenue", get(analytics_revenue))
         .route("/api/v1/projects/{p}/analytics/realtime", get(analytics_realtime))
         .route("/api/v1/projects/{p}/goals", get(list_goals).post(create_goal))
+        .route("/api/v1/projects/{p}/flags", get(list_flags).post(create_flag))
+        .route("/api/v1/projects/{p}/flags/{key}", get(get_flag).patch(update_flag).delete(delete_flag))
+        .route("/api/v1/projects/{p}/flags/{key}/health", get(flag_health))
+        .route("/api/v1/projects/{p}/flags/{key}/results", get(flag_results))
+        .route("/api/v1/projects/{p}/experiments", get(list_experiments).post(create_experiment))
+        .route("/api/v1/projects/{p}/experiments/{name}/results", get(experiment_results))
         .route("/api/v1/projects/{p}/cohorts", get(list_cohorts).post(create_cohort))
         .route("/api/v1/projects/{p}/cohorts/{cohort}", get(get_cohort).delete(delete_cohort))
         .route("/api/v1/projects/{p}/analytics/stickiness", get(analytics_stickiness))
@@ -577,6 +583,57 @@ async fn list_goals(State(s): State<AppState>, p: Principal, Path(project): Path
 
 async fn create_goal(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(g): Json<crate::product::GoalIn>) -> Result<(StatusCode, Json<Value>), ApiError> {
     Ok((StatusCode::CREATED, Json(crate::product::create_goal(&s, &p, &project, g).await?)))
+}
+
+async fn list_flags(State(s): State<AppState>, p: Principal, Path(project): Path<String>) -> J {
+    Ok(Json(crate::flags::list_flags(&s, &p, &project).await?))
+}
+
+async fn create_flag(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(f): Json<crate::flags::FlagIn>) -> Result<(StatusCode, Json<Value>), ApiError> {
+    Ok((StatusCode::CREATED, Json(crate::flags::create_flag(&s, &p, &project, f).await?)))
+}
+
+async fn get_flag(State(s): State<AppState>, p: Principal, Path((project, key)): Path<(String, String)>) -> J {
+    Ok(Json(crate::flags::get_flag(&s, &p, &project, &key).await?))
+}
+
+async fn update_flag(State(s): State<AppState>, p: Principal, Path((project, key)): Path<(String, String)>, Json(f): Json<crate::flags::FlagIn>) -> J {
+    Ok(Json(crate::flags::update_flag(&s, &p, &project, &key, f).await?))
+}
+
+async fn delete_flag(State(s): State<AppState>, p: Principal, Path((project, key)): Path<(String, String)>) -> J {
+    Ok(Json(crate::flags::delete_flag(&s, &p, &project, &key).await?))
+}
+
+#[derive(Deserialize, Default)]
+struct FlagQuery {
+    since: Option<String>,
+    release: Option<String>,
+    goal: Option<String>,
+    control: Option<String>,
+    identity: Option<String>,
+}
+
+async fn flag_health(State(s): State<AppState>, p: Principal, Path((project, key)): Path<(String, String)>, Query(q): Query<FlagQuery>) -> J {
+    Ok(Json(crate::flags::flag_health(&s, &p, &project, &key, q.since.as_deref(), q.release.as_deref()).await?))
+}
+
+async fn flag_results(State(s): State<AppState>, p: Principal, Path((project, key)): Path<(String, String)>, Query(q): Query<FlagQuery>) -> J {
+    let a = crate::flags::ResultsParams { project, experiment: None, flag: Some(key), goal: q.goal, control: q.control, since: q.since, identity: q.identity };
+    Ok(Json(crate::flags::experiment_results(&s, &p, a).await?))
+}
+
+async fn list_experiments(State(s): State<AppState>, p: Principal, Path(project): Path<String>) -> J {
+    Ok(Json(crate::flags::list_experiments(&s, &p, &project).await?))
+}
+
+async fn create_experiment(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(e): Json<crate::flags::ExperimentIn>) -> Result<(StatusCode, Json<Value>), ApiError> {
+    Ok((StatusCode::CREATED, Json(crate::flags::create_experiment(&s, &p, &project, e).await?)))
+}
+
+async fn experiment_results(State(s): State<AppState>, p: Principal, Path((project, name)): Path<(String, String)>, Query(q): Query<FlagQuery>) -> J {
+    let a = crate::flags::ResultsParams { project, experiment: Some(name), flag: None, goal: None, control: q.control, since: q.since, identity: q.identity };
+    Ok(Json(crate::flags::experiment_results(&s, &p, a).await?))
 }
 
 #[derive(Deserialize)]

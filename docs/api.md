@@ -198,6 +198,13 @@ Funnel responses include `conversion_time` (median, p90 and a distribution of th
 first to the last step for people who finished). `breakdown=cohort:<name>` splits a funnel into
 people in and not in a cohort.
 
+### Feature flags and experiments
+
+See [flags.md](flags.md): `GET/POST /projects/{p}/flags`, `GET/PATCH/DELETE /projects/{p}/flags/{key}`,
+`GET /projects/{p}/flags/{key}/health`, `GET /projects/{p}/flags/{key}/results?goal=`,
+`GET/POST /projects/{p}/experiments`, `GET /projects/{p}/experiments/{name}/results`. SDKs evaluate
+flags with `POST /ingest/v1/flags`.
+
 ### Cohorts
 
 A cohort is a saved group of people, evaluated when it is used. All `criteria` must hold over a

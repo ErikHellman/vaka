@@ -166,6 +166,9 @@ pub struct ErrorItem {
     /// Trace the error happened in (also read from `contexts.trace.trace_id`).
     #[serde(default)]
     pub trace_id: Option<String>,
+    /// Feature flags active for this item: {"new_checkout": "on", "pricing": "b"}.
+    #[serde(default)]
+    pub flags: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -192,6 +195,9 @@ pub struct SessionItem {
     pub user_id: Option<String>,
     #[serde(default)]
     pub anon_id: Option<String>,
+    /// Feature flags active for this item: {"new_checkout": "on", "pricing": "b"}.
+    #[serde(default)]
+    pub flags: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -225,6 +231,14 @@ pub struct EventItem {
     pub platform: Option<String>,
     #[serde(default)]
     pub device: Option<Device>,
+    /// Feature flags active for this item: {"new_checkout": "on", "pricing": "b"}.
+    #[serde(default)]
+    pub flags: BTreeMap<String, Value>,
+}
+
+/// Flags as stored: at most 32, keys and values truncated, booleans as "true"/"false".
+pub fn flag_map(flags: &BTreeMap<String, Value>) -> BTreeMap<String, String> {
+    flags.iter().take(32).map(|(k, v)| (crate::util::truncate(k, 64), crate::util::truncate(&value_to_string(v), 64))).collect()
 }
 
 pub fn value_to_string(v: &Value) -> String {

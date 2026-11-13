@@ -74,6 +74,9 @@ Read (everything a read token can call):
 | `realtime_visitors` | Traffic in the last few minutes: visitors, top pages, referrers, errors |
 | `release_adoption` | Share of sessions and users per release over time |
 | `list_identified_users` | Users the app identified, with activity and error counts |
+| `list_flags` / `get_flag` | Feature flags; one flag with exposure per variant |
+| `flag_health` | Crash-free sessions, errors and over-represented issues per flag variant |
+| `list_experiments` / `experiment_results` | Experiments; conversion per variant with uplift, CI and p-value |
 | `list_cohorts` / `get_cohort` | Saved cohorts with sizes; one cohort's definition and sample members |
 | `analytics_stickiness` | DAU/WAU/MAU, DAU/MAU and days active per week |
 | `analytics_lifecycle` | New, returning, resurrecting and dormant people per day or week |
@@ -86,6 +89,8 @@ Write:
 | Tool | What it does |
 | --- | --- |
 | `create_project` | Create a project and its ingest key (all-project write token) |
+| `create_flag` / `update_flag` / `delete_flag` | Create, roll out, kill or retarget a feature flag |
+| `create_experiment` | Save a flag + goal experiment |
 | `create_cohort` / `delete_cohort` | Save or remove a behavioral cohort (usable as `{"cohort": name}` in any analytics filter) |
 | `resolve_issue` | Resolve, optionally `resolved_in_release`; a new event reopens it as a regression |
 | `ignore_issue` | Ignore forever or for a duration (`ignore_for`: `24h`, `7d`) |

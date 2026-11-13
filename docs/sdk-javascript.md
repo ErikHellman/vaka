@@ -21,6 +21,8 @@ Agent-followable install guide: [`/docs/install/javascript`]({{ENDPOINT}}/docs/i
 | `sessions` | `true` | A per-tab session id (in `sessionStorage`, rotated after 30 idle minutes) on every item, for session timelines. No cookies, nothing shared across tabs or sites |
 | `tracesSampleRate` | `0` | Fraction of page loads to trace: a `pageload` span, an `http.client` span per fetch and a `web.vitals` span (LCP, INP, CLS, FCP, TTFB) when the page is hidden. Errors on traced pages carry the trace id |
 | `tracePropagationTargets` | same origin | URL prefixes (or RegExps) whose fetches get a W3C `traceparent` header so your backend can continue the trace |
+| `flags` | `false` | Load feature flags on init (and after `identify`); their values are attached to every item |
+| `distinctId` | session id | Stable id for flag bucketing before `identify()` |
 | `errorSampleRate` | `1` | Fraction of errors to send |
 | `ignoreLocalhost` | `false` | Send nothing from localhost |
 | `beforeSend` | | `(item) => item \| null` to edit or drop data |
@@ -28,7 +30,7 @@ Agent-followable install guide: [`/docs/install/javascript`]({{ENDPOINT}}/docs/i
 
 Script tag attributes: `data-key`, `data-endpoint`, `data-release`, `data-environment`,
 `data-pageviews="false"`, `data-hash="true"`, `data-errors="false"`,
-`data-ignore-localhost="true"`, `data-traces-sample-rate="0.1"`, `data-debug="true"`.
+`data-ignore-localhost="true"`, `data-traces-sample-rate="0.1"`, `data-flags="true"`, `data-debug="true"`.
 
 ## API
 
@@ -45,6 +47,10 @@ flush()                                 // send queued items now
 const span = startSpan({ name, op?, attributes?, root? }) // time an operation
 span.setAttribute(k, v); span.setMeasurement(k, n); span.end(status?)
 traceId()                               // current trace id on traced pages
+await loadFlags(props?)                 // (re)load flags; with `flags: true` this runs on init
+getFlag('pricing', 'control')           // true/false or the variant key
+isEnabled('new_checkout')
+onFlags((flags) => ...)
 ```
 
 Data is batched and sent every few seconds, and with `navigator.sendBeacon` when the page is hidden.
