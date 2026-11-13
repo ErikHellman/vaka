@@ -68,6 +68,7 @@ with `deploy/fly/fly.sh launch`.
 | Rust | [`crates/vaka-sdk-rust`](crates/vaka-sdk-rust) | [SDK](docs/sdk-rust.md) · [install](docs/install/rust.md) |
 | Go | [`sdks/go`](sdks/go) | [SDK](docs/sdk-go.md) · [install](docs/install/go.md) · [release](docs/releasing/go.md) |
 | JVM: Java, Kotlin, Scala (OpenTelemetry-based) | [`sdks/jvm`](sdks/jvm) | [SDK](docs/sdk-jvm.md) · [install](docs/install/jvm.md) · [release](docs/releasing/jvm.md) |
+| Python (Django, Flask, FastAPI) | [`sdks/python`](sdks/python) | [SDK](docs/sdk-python.md) · [install](docs/install/python.md) · [release](docs/releasing/python.md) |
 | .NET (ASP.NET Core, workers, console) | [`sdks/dotnet`](sdks/dotnet) | [SDK](docs/sdk-dotnet.md) · [install](docs/install/dotnet.md) · [release](docs/releasing/dotnet.md) |
 | Any OpenTelemetry backend | OTLP/HTTP | [OpenTelemetry](docs/opentelemetry.md) |
 | Anything else | [HTTP ingest API](docs/ingest.md) | [guide](docs/sdk-http.md) |

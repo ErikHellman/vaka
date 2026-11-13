@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vaka-sdk"
+dynamic = ["version"]
+description = "Python SDK for Vaka: crash reporting, release health, analytics, feature flags and OpenTelemetry export"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
+authors = [{ name = "Erik Hellman" }]
+keywords = ["crash-reporting", "error-tracking", "analytics", "opentelemetry", "feature-flags", "vaka"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Framework :: Django",
+    "Framework :: Flask",
+    "Framework :: FastAPI",
+    "Topic :: Software Development :: Bug Tracking",
+    "Topic :: System :: Monitoring",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.optional-dependencies]
+otel = [
+    "opentelemetry-sdk>=1.24",
+    "opentelemetry-exporter-otlp-proto-http>=1.24",
+]
+
+[project.urls]
+Homepage = "https://vaka.hellsoft.se"
+Documentation = "https://vaka.hellsoft.se/docs/sdk-python"
+Source = "https://github.com/ErikHellman/vaka/tree/main/sdks/python"
+Issues = "https://github.com/ErikHellman/vaka/issues"
+
+[tool.hatch.version]
+path = "src/vaka/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vaka"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/vaka", "tests", "README.md", "LICENSE-*", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

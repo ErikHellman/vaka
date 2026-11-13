@@ -1,0 +1,92 @@
+name: Release Python SDK
+
+# Publishes sdks/python to PyPI as `vaka-sdk` with trusted publishing (no API token).
+# See docs/releasing/python.md for the one-time PyPI setup and the release steps.
+on:
+  push:
+    tags: ["python-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release; must match sdks/python/src/vaka/_version.py (e.g. 0.3.0)"
+        required: true
+      repository:
+        description: "Where to publish: none (build and test only), testpypi or pypi"
+        required: true
+        default: none
+        type: choice
+        options: [none, testpypi, pypi]
+
+permissions:
+  contents: read
+
+env:
+  VERSION: ${{ inputs.version || '' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the version
+        run: |
+          version=$(python -c 'import re;print(re.search(r"\"(.+)\"", open("src/vaka/_version.py").read()).group(1))')
+          expected="${VERSION:-${GITHUB_REF_NAME#python-v}}"
+          test "$version" = "$expected" || { echo "requested $expected but _version.py says $version"; exit 1; }
+      - name: Test
+        run: |
+          pip install -e ".[otel]" pytest flask django fastapi httpx
+          pytest -q
+      - name: Build sdist and wheel
+        run: |
+          pip install build twine
+          python -m build
+          twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: sdks/python/dist/
+
+  publish:
+    needs: build
+    if: github.event_name == 'push' || inputs.repository != 'none'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.repository == 'testpypi' && 'testpypi' || 'pypi' }}
+      url: ${{ inputs.repository == 'testpypi' && 'https://test.pypi.org/p/vaka-sdk' || 'https://pypi.org/p/vaka-sdk' }}
+    permissions:
+      id-token: write   # trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+      - name: Publish to TestPyPI
+        if: inputs.repository == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+      - name: Publish to PyPI
+        if: github.event_name == 'push' || inputs.repository == 'pypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  # A manual PyPI release tags the released commit, like a pushed python-v* tag would have.
+  tag:
+    needs: publish
+    if: github.event_name == 'workflow_dispatch' && inputs.repository == 'pypi'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "python-v$VERSION" -m "vaka-sdk $VERSION (Python)"
+          git push origin "refs/tags/python-v$VERSION"
