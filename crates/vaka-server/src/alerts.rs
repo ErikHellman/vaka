@@ -17,6 +17,7 @@ pub const TRIGGERS: &[&str] = &[
     "issue_assigned",
     "issue_commented",
     "release_created",
+    "perf_regression",
     "digest",
 ];
 pub const CHANNELS: &[&str] = &["webhook", "slack", "email", "github_dispatch", "github_issue"];
@@ -342,6 +343,11 @@ async fn send(state: &AppState, rule: &Rule, secret: &str, trigger: &str, issue_
         ("webhook", _) => send_webhook(state, &rule.target, secret, trigger, delivery_id, payload).await,
         ("slack", "digest") => send_slack(state, &rule.target, &slack_digest_message(payload, &state.config.public_url)).await,
         ("slack", "release_created") => send_slack(state, &rule.target, &slack_release_message(payload)).await,
+        ("slack", "perf_regression") => send_slack(state, &rule.target, &json!({"text": perf_text(payload), "unfurl_links": false})).await,
+        ("email", "perf_regression") => {
+            let p = json!({"project": payload["project"], "url": payload["url"], "issue": {"title": perf_text(payload), "culprit": "", "times_seen": payload["regressions"].as_array().map(|a| a.len()).unwrap_or(0), "last_release": payload["target"]}});
+            send_email(state, &rule.target, trigger, &p).await
+        }
         ("slack", _) => send_slack(state, &rule.target, &slack_issue_message(trigger, payload)).await,
         ("email", "digest") => send_digest_email(state, &rule.target, payload).await,
         ("email", _) => send_email(state, &rule.target, trigger, payload).await,
@@ -366,6 +372,11 @@ pub fn spawn_delivery_worker(state: AppState) {
             if n % 2 == 0 {
                 if let Err(e) = check_thresholds(&state).await {
                     tracing::warn!("threshold alerts failed: {e:#}");
+                }
+            }
+            if n % 20 == 1 {
+                if let Err(e) = check_perf_regressions(&state, false).await {
+                    tracing::warn!("performance regression alerts failed: {e:#}");
                 }
             }
         }
@@ -464,6 +475,85 @@ async fn check_thresholds(state: &AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// One-line summary of a perf_regression payload for Slack and email.
+fn perf_text(payload: &Value) -> String {
+    let mut parts: Vec<String> = payload["regressions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(3)
+        .map(|r| format!("{} p95 {} → {} ms ({:+.0}%)", r["transaction"].as_str().unwrap_or(""), r["base"]["p95_ms"], r["target"]["p95_ms"], r["p95_change"].as_f64().unwrap_or(0.0) * 100.0))
+        .collect();
+    for v in payload["web_vitals"].as_array().into_iter().flatten().filter(|v| v["regressed"] == true).take(2) {
+        parts.push(format!("{} p75 {} → {}", v["metric"].as_str().unwrap_or("").to_uppercase(), v["base_p75"], v["target_p75"]));
+    }
+    format!(
+        "Performance regression in {} {} (vs {}): {}",
+        payload["project"]["name"].as_str().unwrap_or(""),
+        payload["target"].as_str().unwrap_or(""),
+        payload["base"].as_str().unwrap_or(""),
+        parts.join("; ")
+    )
+}
+
+/// `perf_regression` rules: compare the newest release with spans against the previous one
+/// (p95 per transaction and Web Vitals) and notify once per rule and release. `force` (rule
+/// tests) sends even without a regression or when already sent.
+pub async fn check_perf_regressions(state: &AppState, force: bool) -> anyhow::Result<Vec<String>> {
+    let rules = sqlx::query(&format!("SELECT {RULE_COLS} FROM alert_rules WHERE enabled = 1 AND trigger = 'perf_regression'")).fetch_all(&state.db).await?;
+    let mut out = Vec::new();
+    for row in rules {
+        let rule = rule_from_row(&row);
+        out.extend(perf_regression_for_rule(state, &rule, &row.s("secret"), force).await?);
+    }
+    Ok(out)
+}
+
+async fn perf_regression_for_rule(state: &AppState, rule: &Rule, secret: &str, force: bool) -> anyhow::Result<Vec<String>> {
+    let projects: Vec<String> = match rule.project_id.as_deref().filter(|p| !p.is_empty()) {
+        Some(p) => vec![p.to_string()],
+        None => sqlx::query("SELECT id FROM projects").fetch_all(&state.db).await?.iter().map(|r| r.s("id")).collect(),
+    };
+    let min_count = 20;
+    let mut out = Vec::new();
+    for pid in projects {
+        let Some(project) = crate::projects::find(state, &pid).await? else { continue };
+        let Some((target, base)) = crate::perf::latest_two_releases(state, &project.id, min_count).await? else { continue };
+        if let Some(g) = rule.filters["release"].as_str().filter(|g| !g.is_empty()) {
+            if !crate::ownership::glob(g, &target) {
+                continue;
+            }
+        }
+        let key = format!("perf:{target}");
+        if !force {
+            let sent = sqlx::query("SELECT COUNT(*) AS n FROM alert_deliveries WHERE rule_id = $1 AND issue_id = $2").bind(&rule.id).bind(&key).fetch_one(&state.db).await?.i("n");
+            if sent > 0 {
+                continue;
+            }
+        }
+        let threshold = if rule.threshold > 0 { rule.threshold as f64 / 100.0 } else { 0.2 };
+        let cmp = crate::perf::compare_inner(state, &project, &base, &target, min_count, threshold).await?;
+        if cmp["regressed"] != true && !force {
+            continue;
+        }
+        let mut payload = json!({
+            "trigger": "perf_regression",
+            "project": {"id": project.id, "slug": project.slug, "name": project.name},
+            "release": {"version": target},
+            "base": base, "target": target, "threshold": threshold,
+            "regressions": cmp["regressions"], "web_vitals": cmp["web_vitals"],
+            "url": format!("{}/ui/projects/{}", state.config.public_url, project.slug),
+            "api_url": format!("{}/api/v1/projects/{}/performance/compare?base={}&target={}", state.config.public_url, project.slug, url_encode(&base), url_encode(&target)),
+            "sent_at": crate::util::iso_time(now_ms()),
+        });
+        if cmp["regressed"] != true {
+            payload["test"] = json!(true);
+        }
+        out.push(deliver_new(state, rule, secret, "perf_regression", &key, payload).await?);
+    }
+    Ok(out)
+}
+
 pub fn sign(secret: &str, body: &[u8]) -> String {
     use hmac_lite::hmac_sha256;
     hex::encode(hmac_sha256(secret.as_bytes(), body))
@@ -526,6 +616,7 @@ async fn send_email(state: &AppState, to: &str, trigger: &str, payload: &serde_j
         "issue_resolved" => "Resolved",
         "issue_assigned" => "Assigned",
         "issue_commented" => "New comment",
+        "perf_regression" => "Performance regression",
         _ => "Alert",
     };
     let subject = format!("[{}] {what}: {}", payload["project"]["name"].as_str().unwrap_or(""), issue["title"].as_str().unwrap_or(""));
@@ -921,6 +1012,12 @@ pub async fn test_rule(state: &AppState, rule_id: &str) -> anyhow::Result<String
     let rule = rule_from_row(&row);
     if rule.trigger == "digest" {
         return send_digest(state, &rule, &row.s("secret"), now_ms()).await;
+    }
+    if rule.trigger == "perf_regression" {
+        let sent = perf_regression_for_rule(state, &rule, &row.s("secret"), true).await?;
+        if !sent.is_empty() {
+            return Ok(sent.join("; "));
+        }
     }
     let payload = json!({
         "trigger": "test",

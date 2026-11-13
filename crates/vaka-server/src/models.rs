@@ -29,6 +29,7 @@ pub enum Item {
     Error(Box<ErrorItem>),
     Session(SessionItem),
     Event(EventItem),
+    Span(Box<SpanItem>),
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -162,6 +163,9 @@ pub struct ErrorItem {
     pub debug_images: Vec<DebugImage>,
     #[serde(default)]
     pub fingerprint: Option<Vec<String>>,
+    /// Trace the error happened in (also read from `contexts.trace.trace_id`).
+    #[serde(default)]
+    pub trace_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -229,4 +233,67 @@ pub fn value_to_string(v: &Value) -> String {
         Value::Null => String::new(),
         other => other.to_string(),
     }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct HttpInfo {
+    #[serde(default)]
+    pub method: Option<String>,
+    #[serde(default, alias = "status")]
+    pub status_code: Option<u16>,
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// A timed operation (performance tracing). Root spans (no parent) are transactions.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SpanItem {
+    pub trace_id: String,
+    #[serde(default)]
+    pub span_id: Option<String>,
+    #[serde(default)]
+    pub parent_span_id: Option<String>,
+    pub name: String,
+    /// Kind of work: http.server, http.client, db, ui.load, pageload, navigation, app.start.cold,
+    /// app.start.warm, web.vitals, function, ...
+    #[serde(default)]
+    pub op: Option<String>,
+    /// server | client | internal | producer | consumer
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Treat this span as a transaction even though it has a parent (the parent is in another
+    /// service). Defaults to true for `kind: "server"`.
+    #[serde(default, alias = "is_segment")]
+    pub is_transaction: Option<bool>,
+    /// ok | error | cancelled (http status >= 500 also means error)
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Name of the root transaction this span belongs to (defaults to the root span's name).
+    #[serde(default)]
+    pub transaction: Option<String>,
+    #[serde(default, alias = "start")]
+    pub start_timestamp: Option<Value>,
+    #[serde(default, alias = "end")]
+    pub timestamp: Option<Value>,
+    #[serde(default)]
+    pub duration_ms: Option<f64>,
+    #[serde(default)]
+    pub release: Option<String>,
+    #[serde(default)]
+    pub environment: Option<String>,
+    #[serde(default)]
+    pub platform: Option<String>,
+    #[serde(default)]
+    pub service: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub user_id: Option<String>,
+    #[serde(default, alias = "data")]
+    pub attributes: BTreeMap<String, Value>,
+    /// Numeric measurements: lcp, fcp, inp, cls, ttfb (web vitals), or anything else.
+    #[serde(default)]
+    pub measurements: BTreeMap<String, f64>,
+    #[serde(default)]
+    pub http: Option<HttpInfo>,
 }

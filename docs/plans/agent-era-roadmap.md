@@ -125,8 +125,9 @@ performance regressions between releases.
   transaction), `compare_release_performance` (p95 regressions with minimum counts).
 - Alert trigger `perf_regression`: hourly check of the newest release against the
   previous one.
-- SDKs: JS pageload span, fetch/XHR spans, Web Vitals; Rust `vaka::span`; Android
-  and iOS app-start spans in their SDK threads.
+- SDKs: JS pageload span, fetch spans, Web Vitals (`tracesSampleRate`); Rust
+  `vaka_sdk::start_span` / `continue_span` (W3C traceparent); Android and iOS app-start spans
+  in their SDK threads.
 
 ## 4. Funnels, retention and cohorts via MCP
 
@@ -209,7 +210,7 @@ threads; iOS verification needs Erik's Mac.
 - [x] 2 Source/commit linking
 - [x] 5 Webhooks and agent triggers
 - [x] 1 Session timelines
-- [ ] 3 Performance tracing
+- [x] 3 Performance tracing
 - [ ] 4 Cohorts
 - [ ] 6 Feature flags and experiments
 - [ ] 7 Anomaly digests

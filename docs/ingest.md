@@ -21,14 +21,14 @@ Content-Encoding: gzip          (optional)
 
 {
   "sdk": {"name": "vaka-android", "version": "0.1.0"},
-  "items": [ {"type": "error", ...}, {"type": "session", ...}, {"type": "event", ...} ]
+  "items": [ {"type": "error", ...}, {"type": "session", ...}, {"type": "event", ...}, {"type": "span", ...} ]
 }
 ```
 
 - At most 1000 items and 20 MB (after decompression) per request.
 - The body is parsed as JSON regardless of `Content-Type` (so `text/plain` beacons work).
 - Single-kind shortcuts accept one item or an array, without `type`:
-  `POST /ingest/v1/errors`, `/ingest/v1/sessions`, `/ingest/v1/events`.
+  `POST /ingest/v1/errors`, `/ingest/v1/sessions`, `/ingest/v1/events`, `/ingest/v1/spans`.
 
 ## Response
 
@@ -178,6 +178,15 @@ applies the source map uploaded for that file and `release`.
   in app storage; it is hashed server-side before storage).
 - `props`: flat string/number/bool values, at most 64 keys.
 - `user_id` only after the app calls `identify()` (opt-in).
+
+## Span item (performance)
+
+```json
+{"type": "span", "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736", "name": "GET /api/carts/123",
+ "op": "http.server", "start_timestamp": 1794564000.0, "duration_ms": 250, "http": {"status_code": 200}}
+```
+
+See [performance.md](performance.md) for all fields. Error items may carry `trace_id`.
 
 ## Privacy guarantees
 

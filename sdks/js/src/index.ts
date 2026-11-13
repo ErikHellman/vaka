@@ -32,6 +32,17 @@ export interface Options {
    * session id kept in sessionStorage, so timelines before a crash can be rebuilt (default true).
    */
   sessions?: boolean;
+  /**
+   * Fraction of page loads to trace, 0..1 (default 0: no tracing). Traced page loads send a
+   * `pageload` span, an `http.client` span per fetch and a `web.vitals` span (LCP, INP, CLS, FCP,
+   * TTFB) when the page is hidden. Errors carry the current trace id.
+   */
+  tracesSampleRate?: number;
+  /**
+   * Add a W3C `traceparent` header to fetch requests whose URL starts with one of these
+   * (default: same-origin requests only). Your backend can continue the trace with it.
+   */
+  tracePropagationTargets?: (string | RegExp)[];
   /** Fraction of error events to send, 0..1 (default 1). */
   errorSampleRate?: number;
   /** Don't send anything from localhost (default false). */
@@ -51,7 +62,7 @@ export interface Breadcrumb {
 }
 
 export interface Item {
-  type: 'error' | 'event' | 'session';
+  type: 'error' | 'event' | 'session' | 'span';
   [k: string]: unknown;
 }
 
@@ -111,6 +122,7 @@ export function init(options: Options): void {
     log('disabled on localhost');
     return;
   }
+  if ((opts.tracesSampleRate ?? 0) > 0 && Math.random() < (opts.tracesSampleRate ?? 0)) installTracing();
   if (opts.captureErrors) installErrorHandlers();
   if (opts.breadcrumbs) installBreadcrumbs();
   if (opts.autoPageviews) installPageviews();
@@ -175,6 +187,7 @@ export function captureError(error: unknown, ctx: CaptureContext = {}): string |
     contexts: ctx.extra ? { extra: ctx.extra } : undefined,
     fingerprint: ctx.fingerprint,
     url: hasWindow ? location.href : undefined,
+    trace_id: trace?.id,
     ...common(),
   });
   addBreadcrumb({ category: 'error', message: String((error as Error)?.message || error), level: 'error' });
@@ -364,8 +377,15 @@ function installBreadcrumbs() {
       const method = (init && init.method) || (typeof input === 'object' && 'method' in input ? (input as Request).method : 'GET');
       const started = Date.now();
       const own = url.indexOf(opts.endpoint) === 0;
+      const span = !own && trace ? startSpan({ name: `${method.toUpperCase()} ${url}`, op: 'http.client', kind: 'client' }) : undefined;
+      if (span && propagate(url)) {
+        const h = new Headers((init && init.headers) || (typeof input === 'object' && 'headers' in input ? (input as Request).headers : undefined));
+        if (!h.has('traceparent')) h.set('traceparent', `00-${span.traceId}-${span.spanId}-01`);
+        init = { ...(init || {}), headers: h };
+      }
       return f.call(window, input, init).then(
         (r) => {
+          span?.end(r.status >= 500 ? 'error' : 'ok', { method: method.toUpperCase(), status_code: r.status });
           if (!own)
             addBreadcrumb({
               category: 'http',
@@ -376,6 +396,7 @@ function installBreadcrumbs() {
           return r;
         },
         (e: unknown) => {
+          span?.end('error', { method: method.toUpperCase() });
           if (!own) addBreadcrumb({ category: 'http', level: 'error', message: `${method} ${url} failed`, data: { method, url, duration_ms: Date.now() - started } });
           throw e;
         },
@@ -409,6 +430,155 @@ function installPageviews() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Tracing
+// ---------------------------------------------------------------------------
+
+export interface Span {
+  traceId: string;
+  spanId: string;
+  setAttribute(key: string, value: string | number | boolean): void;
+  setMeasurement(key: string, value: number): void;
+  /** Finish the span and send it. */
+  end(status?: 'ok' | 'error' | 'cancelled', http?: { method?: string; status_code?: number }): void;
+}
+
+export interface SpanOptions {
+  name: string;
+  /** Kind of work, e.g. `function`, `ui.render`, `http.client` (default `function`). */
+  op?: string;
+  kind?: string;
+  /** Start a new trace instead of nesting under the current one. */
+  root?: boolean;
+  attributes?: Record<string, string | number | boolean>;
+}
+
+let trace: { id: string; rootSpanId: string; transaction: string } | undefined;
+
+function hex(bytes: number): string {
+  let out = '';
+  const c = hasWindow ? window.crypto : undefined;
+  if (c && c.getRandomValues) {
+    const a = new Uint8Array(bytes);
+    c.getRandomValues(a);
+    a.forEach((b) => (out += b.toString(16).padStart(2, '0')));
+    return out;
+  }
+  for (let i = 0; i < bytes * 2; i++) out += ((Math.random() * 16) | 0).toString(16);
+  return out;
+}
+
+/** The current trace id, if this page load is traced. */
+export function traceId(): string | undefined {
+  return trace?.id;
+}
+
+/**
+ * Time an operation. Child of the current page load's trace unless `root` is set or the page is
+ * not traced (then it starts its own trace).
+ */
+export function startSpan(o: SpanOptions): Span {
+  const start = Date.now();
+  const nested = !o.root && trace;
+  const tid = nested ? trace!.id : hex(16);
+  const sid = hex(8);
+  const attributes: Record<string, string | number | boolean> = { ...(o.attributes || {}) };
+  const measurements: Record<string, number> = {};
+  let done = false;
+  return {
+    traceId: tid,
+    spanId: sid,
+    setAttribute: (k, v) => {
+      attributes[k] = v;
+    },
+    setMeasurement: (k, v) => {
+      measurements[k] = v;
+    },
+    end: (status = 'ok', http) => {
+      if (done || !started) return;
+      done = true;
+      sendSpan({
+        trace_id: tid,
+        span_id: sid,
+        parent_span_id: nested ? trace!.rootSpanId : undefined,
+        name: o.name,
+        op: o.op || 'function',
+        kind: o.kind,
+        status,
+        transaction: nested ? trace!.transaction : undefined,
+        start_timestamp: start,
+        timestamp: Date.now(),
+        http,
+        attributes: Object.keys(attributes).length ? attributes : undefined,
+        measurements: Object.keys(measurements).length ? measurements : undefined,
+      });
+    },
+  };
+}
+
+function sendSpan(span: Record<string, unknown>) {
+  enqueue({ type: 'span', platform: 'javascript', ...span, ...common() } as Item);
+}
+
+function propagate(url: string): boolean {
+  const targets = opts.tracePropagationTargets;
+  if (!targets) {
+    if (!hasWindow) return false;
+    return url.indexOf('/') === 0 || url.indexOf(location.origin) === 0;
+  }
+  return targets.some((t) => (typeof t === 'string' ? url.indexOf(t) === 0 : t.test(url)));
+}
+
+function installTracing() {
+  const path = location.pathname;
+  trace = { id: hex(16), rootSpanId: hex(8), transaction: path };
+  const t = trace;
+  const perf = window.performance;
+  const origin = perf && perf.timeOrigin ? perf.timeOrigin : Date.now();
+  const vitals: Record<string, number> = {};
+  const sendPageload = () => {
+    const nav = perf && perf.getEntriesByType ? (perf.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined) : undefined;
+    const end = nav && nav.loadEventEnd > 0 ? nav.loadEventEnd : perf ? perf.now() : 0;
+    const m: Record<string, number> = {};
+    if (nav) {
+      m.ttfb = Math.max(0, nav.responseStart);
+      m.dom_content_loaded = nav.domContentLoadedEventEnd;
+      m.load = nav.loadEventEnd;
+      if (nav.responseStart > 0) vitals.ttfb = Math.max(0, nav.responseStart);
+    }
+    sendSpan({ trace_id: t.id, span_id: t.rootSpanId, name: path, op: 'pageload', transaction: path, start_timestamp: Math.round(origin), timestamp: Math.round(origin + end), measurements: m });
+  };
+  if (document.readyState === 'complete') setTimeout(sendPageload, 0);
+  else window.addEventListener('load', () => setTimeout(sendPageload, 0), { once: true });
+  const observe = (type: string, cb: (entries: PerformanceEntry[]) => void, extra?: Record<string, unknown>) => {
+    try {
+      if (typeof PerformanceObserver === 'undefined' || !(PerformanceObserver.supportedEntryTypes || []).includes(type)) return;
+      new PerformanceObserver((list) => cb(list.getEntries())).observe({ type, buffered: true, ...(extra || {}) } as PerformanceObserverInit);
+    } catch {
+      /* unsupported */
+    }
+  };
+  observe('paint', (es) => es.forEach((e) => e.name === 'first-contentful-paint' && (vitals.fcp = e.startTime)));
+  observe('largest-contentful-paint', (es) => es.length && (vitals.lcp = es[es.length - 1].startTime));
+  let cls = 0;
+  observe('layout-shift', (es) =>
+    es.forEach((e) => {
+      const ls = e as PerformanceEntry & { value: number; hadRecentInput: boolean };
+      if (!ls.hadRecentInput) vitals.cls = cls += ls.value;
+    }),
+  );
+  observe('event', (es) => es.forEach((e) => (e as PerformanceEntry & { interactionId?: number }).interactionId && (vitals.inp = Math.max(vitals.inp || 0, e.duration))), { durationThreshold: 40 });
+  let sent = false;
+  const sendVitals = () => {
+    if (sent || !Object.keys(vitals).length) return;
+    sent = true;
+    const now = Date.now();
+    sendSpan({ trace_id: t.id, span_id: hex(8), parent_span_id: t.rootSpanId, name: path, op: 'web.vitals', transaction: path, start_timestamp: Math.round(origin), timestamp: now, measurements: { ...vitals } });
+  };
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && sendVitals());
+  window.addEventListener('pagehide', sendVitals);
+}
+
 /** For tests: reset all state. */
 export function _reset(): void {
   started = false;
@@ -416,6 +586,7 @@ export function _reset(): void {
   queue = [];
   crumbs = [];
   memSession = undefined;
+  trace = undefined;
   userId = undefined;
   tags = {};
   lastUrl = '';

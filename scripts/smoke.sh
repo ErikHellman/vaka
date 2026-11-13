@@ -190,6 +190,52 @@ PRE=$(curl -sf "${A[@]}" "$VAKA/api/v1/issues/$PAYI/precursors?minutes=5")
 [ "$(echo "$PRE" | j 'sorted(s["step"] for s in d["steps"])')" = "['add_to_cart', 'pageview /cart']" ] || fail "precursors: $PRE"
 echo "$PRE" | j 'd["breadcrumbs"][0]["breadcrumb"]' | grep -q 'http: POST /api/pay 502' || fail "precursor breadcrumbs: $PRE"
 
+# Performance tracing
+SPANS=$(python3 - <<'PY'
+import json, time
+now = int(time.time() * 1000)
+items = []
+for rel, base, dur in (("p1", now - 600_000, 100), ("p2", now - 300_000, 300)):
+    for n in range(25):
+        tid = f"{rel}{n:030d}"
+        st = base + n * 1000
+        items.append({"type": "span", "trace_id": tid, "span_id": f"{n:016d}", "name": f"GET /api/carts/{1000 + n}", "op": "http.server", "release": rel,
+                      "start_timestamp": st, "duration_ms": dur + n, "http": {"method": "GET", "status_code": 500 if n == 0 else 200}})
+        items.append({"type": "span", "trace_id": tid, "span_id": f"{n:015d}d", "parent_span_id": f"{n:016d}", "name": "SELECT carts", "op": "db", "release": rel,
+                      "start_timestamp": st + 5, "duration_ms": dur * 0.8})
+        items.append({"type": "span", "trace_id": f"w{rel}{n:029d}", "name": "/checkout/42", "op": "web.vitals", "transaction": "/checkout/42", "release": rel,
+                      "start_timestamp": st, "duration_ms": 0, "measurements": {"lcp": 2000 if rel == "p1" else 4500, "cls": 0.05, "inp": 120}})
+    items.append({"type": "span", "trace_id": f"s{rel}" + "0" * 29, "name": "app start", "op": "app.start.cold", "release": rel, "start_timestamp": base, "duration_ms": 800})
+items.append({"type": "error", "release": "p2", "trace_id": "p2" + "0" * 30, "exception": {"type": "CartError", "value": "slow cart", "stacktrace": [{"function": "cart", "filename": "cart.rs", "lineno": 1, "in_app": True}]}})
+print(json.dumps({"items": items}))
+PY
+)
+[ "$(send "$SPANS" | j 'd["accepted"]')" = "153" ] || fail "span ingest"
+curl -s -X POST "$VAKA/ingest/v1/spans" -H "x-vaka-key: $KEY" -H 'content-type: application/json' -d '[{"trace_id":"","name":"x"}]' | grep -q 'trace_id' || fail "span validation"
+sleep 2
+PERF="$VAKA/api/v1/projects/$SLUG/performance"
+SUM=$(curl -sf "${A[@]}" "$PERF/summary?since=1h")
+[ "$(echo "$SUM" | j '[(t["transaction"], t["count"]) for t in d["transactions"] if t["op"] == "http.server"]')" = "[('GET /api/carts/:id', 50)]" ] || fail "perf summary: $SUM"
+EP=$(curl -sf "${A[@]}" "$PERF/endpoints?since=1h")
+[ "$(echo "$EP" | j '(d["endpoints"][0]["endpoint"], d["endpoints"][0]["server_errors"])')" = "('GET /api/carts/:id', 2)" ] || fail "slow endpoints: $EP"
+curl -sf "${A[@]}" "$PERF/app-start?since=1h" | j 'sorted((a["release"], a["start_type"], a["count"]) for a in d["app_starts"])' | grep -q "('p1', 'cold', 1)" || fail "app start"
+WV=$(curl -sf "${A[@]}" "$PERF/web-vitals?since=1h&release=p2")
+[ "$(echo "$WV" | j '[(m["metric"], m["rating"]) for m in d["overall"]]')" = "[('cls', 'good'), ('inp', 'good'), ('lcp', 'poor')]" ] || fail "web vitals: $WV"
+[ "$(echo "$WV" | j 'd["pages"][0]["page"]')" = "/checkout/:id" ] || fail "web vitals pages: $WV"
+TID=$(curl -sf "${A[@]}" "$PERF/traces?since=1h&op=http.server&limit=1" | j 'd["traces"][0]["trace_id"]')
+[ "$TID" = "p2000000000000000000000000000024" ] || fail "slow traces: $TID"
+TR=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/traces/$TID")
+[ "$(echo "$TR" | j '[(s["op"], s["depth"]) for s in d["spans"]]')" = "[('http.server', 0), ('db', 1)]" ] || fail "trace tree: $TR"
+curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/traces/p2000000000000000000000000000000" | j 'd["errors"][0]["title"]' | grep -q CartError || fail "trace errors"
+BD=$(curl -sf "${A[@]}" "$PERF/breakdown?since=1h&transaction=GET%20/api/carts/:id")
+[ "$(echo "$BD" | j '(d["spans"][0]["op"], d["spans"][0]["per_transaction"])')" = "('db', 1.0)" ] || fail "span breakdown: $BD"
+CMP=$(curl -sf "${A[@]}" "$PERF/compare?base=p1&target=p2")
+[ "$(echo "$CMP" | j '(d["regressed"], [r["transaction"] for r in d["regressions"]], [v["metric"] for v in d["web_vitals"] if v["regressed"]])')" = "(True, ['GET /api/carts/:id'], ['lcp'])" ] || fail "compare performance: $CMP"
+PR=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d "{\"project\":\"$SLUG\",\"trigger\":\"perf_regression\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/perf\"}" | j 'd["id"]') || fail "perf rule"
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules/$PR/test" >/dev/null || fail "perf rule test"
+for i in $(seq 1 10); do grep -q '^/perf ' "$HOOKS" && break; sleep 0.5; done
+grep '^/perf perf_regression ' "$HOOKS" | grep -q '"target":"p2"' || fail "perf_regression webhook: $(grep '^/perf' "$HOOKS")"
+
 # Webhooks and agent triggers
 rule() { curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d "$1" | j 'd["id"]'; }
 rule "{\"project\":\"$SLUG\",\"trigger\":\"new_issue\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/hook\",\"secret\":\"s3cret\",\"filters\":{\"min_level\":\"error\",\"environment\":\"production\"}}" >/dev/null || fail "webhook rule"
@@ -225,6 +271,7 @@ M=(-H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -H 'acc
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' | grep -q '"vaka"' || fail mcp-init
 TOOLS=$(curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | j 'len(d["result"]["tools"])')
 echo "mcp tools: $TOOLS"
+curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"compare_release_performance\",\"arguments\":{\"project\":\"$SLUG\",\"base\":\"p1\",\"target\":\"p2\"}}}" | j 'd["result"]["structuredContent"]["regressed"]' | grep -q True || fail mcp-perf-compare
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"list_alert_rules","arguments":{}}}' | j 'd["result"]["structuredContent"]["channels"]' | grep -q github_dispatch || fail mcp-alert-rules
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"get_fix_context\",\"arguments\":{\"issue\":\"$OWNED\"}}}" | j 'd["result"]["structuredContent"]["suggested"]["branch"]' | grep -q "^vaka/" || fail mcp-fix-context
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"resolve_issue\",\"arguments\":{\"issue\":\"$SHORT\",\"resolved_in_release\":\"1.0.1\"}}}" | j 'd["result"]["structuredContent"]["status"]' | grep -q resolved || fail mcp-resolve

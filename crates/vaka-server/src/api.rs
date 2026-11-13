@@ -40,6 +40,14 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/issues/{id}/fix-context", get(fix_context))
         .route("/api/v1/issues/{id}/precursors", get(issue_precursors))
         .route("/api/v1/projects/{p}/sessions/{session_id}/timeline", get(session_timeline))
+        .route("/api/v1/projects/{p}/performance/summary", get(perf_summary))
+        .route("/api/v1/projects/{p}/performance/endpoints", get(perf_endpoints))
+        .route("/api/v1/projects/{p}/performance/app-start", get(perf_app_start))
+        .route("/api/v1/projects/{p}/performance/web-vitals", get(perf_web_vitals))
+        .route("/api/v1/projects/{p}/performance/traces", get(perf_traces))
+        .route("/api/v1/projects/{p}/performance/breakdown", get(perf_breakdown))
+        .route("/api/v1/projects/{p}/performance/compare", get(perf_compare))
+        .route("/api/v1/projects/{p}/traces/{trace_id}", get(get_trace))
         .route("/api/v1/issues/{id}/links", get(list_links).post(add_link))
         .route("/api/v1/issues/{id}/links/{link}", delete(delete_link))
         .route("/api/v1/projects/{p}/analytics/summary", get(analytics_summary))
@@ -133,6 +141,74 @@ async fn put_code_mappings(State(s): State<AppState>, p: Principal, Path(project
 struct PrecursorQuery {
     minutes: Option<i64>,
     limit: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+struct PerfQuery {
+    since: Option<String>,
+    until: Option<String>,
+    environment: Option<String>,
+    release: Option<String>,
+    op: Option<String>,
+    transaction: Option<String>,
+    limit: Option<i64>,
+    sort: Option<String>,
+    min_count: Option<i64>,
+    min_ms: Option<f64>,
+    by_page: Option<bool>,
+    base: Option<String>,
+    target: Option<String>,
+    threshold: Option<f64>,
+}
+
+impl PerfQuery {
+    fn params(&self, project: String) -> crate::perf::PerfParams {
+        crate::perf::PerfParams {
+            project,
+            since: self.since.clone(),
+            until: self.until.clone(),
+            environment: self.environment.clone(),
+            release: self.release.clone(),
+            op: self.op.clone(),
+            transaction: self.transaction.clone(),
+            limit: self.limit,
+            sort: self.sort.clone(),
+        }
+    }
+}
+
+async fn perf_summary(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<PerfQuery>) -> J {
+    Ok(Json(crate::perf::summary(&s, &p, q.params(project)).await?))
+}
+
+async fn perf_endpoints(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<PerfQuery>) -> J {
+    Ok(Json(crate::perf::slow_endpoints(&s, &p, q.params(project), q.min_count).await?))
+}
+
+async fn perf_app_start(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<PerfQuery>) -> J {
+    Ok(Json(crate::perf::app_startup(&s, &p, q.params(project)).await?))
+}
+
+async fn perf_web_vitals(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<PerfQuery>) -> J {
+    Ok(Json(crate::perf::web_vitals(&s, &p, q.params(project), q.by_page).await?))
+}
+
+async fn perf_traces(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<PerfQuery>) -> J {
+    Ok(Json(crate::perf::slow_traces(&s, &p, q.params(project), q.min_ms).await?))
+}
+
+async fn perf_breakdown(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<PerfQuery>) -> J {
+    Ok(Json(crate::perf::span_breakdown(&s, &p, q.params(project)).await?))
+}
+
+async fn perf_compare(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<PerfQuery>) -> J {
+    let base = q.base.clone().ok_or_else(|| ApiError::bad("`base` is required"))?;
+    let target = q.target.clone().ok_or_else(|| ApiError::bad("`target` is required"))?;
+    Ok(Json(crate::perf::compare_releases(&s, &p, &project, &base, &target, q.min_count, q.threshold).await?))
+}
+
+async fn get_trace(State(s): State<AppState>, p: Principal, Path((project, trace_id)): Path<(String, String)>) -> J {
+    Ok(Json(crate::perf::get_trace(&s, &p, &project, &trace_id).await?))
 }
 
 async fn issue_precursors(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Query(q): Query<PrecursorQuery>) -> J {
@@ -787,6 +863,12 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
     if trigger == "digest" && !(0..=23).contains(&b.threshold.unwrap_or(8)) {
         return Err(ApiError::bad("for digests, threshold is the UTC hour to send at (0 to 23, default 8)"));
     }
+    if channel == "github_issue" && matches!(trigger.as_str(), "digest" | "release_created" | "perf_regression") {
+        return Err(ApiError::bad("github_issue works with issue triggers; use github_dispatch or a webhook for digests, releases and performance regressions"));
+    }
+    if trigger == "perf_regression" && !(1..=1000).contains(&b.threshold.unwrap_or(20)) {
+        return Err(ApiError::bad("for perf_regression, threshold is the p95 increase in percent (1 to 1000, default 20)"));
+    }
     if channel.starts_with("github_") && b.secret.as_deref().unwrap_or("").is_empty() {
         return Err(ApiError::bad("GitHub channels need `secret`: a GitHub token that can write to the repository (contents for dispatch, issues for issues)"));
     }
@@ -806,6 +888,7 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
         "spike" => 50,
         "digest" => 8,
         "threshold" => 100,
+        "perf_regression" => 20,
         _ => 0,
     }))
     .bind(b.enabled.unwrap_or(true) as i64)

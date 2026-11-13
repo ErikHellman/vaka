@@ -16,6 +16,7 @@ tool `create_alert_rule`.
 | `issue_assigned` | An issue is assigned |
 | `issue_commented` | Someone comments on an issue (`event.actor` says who, so an agent can ignore its own comments) |
 | `release_created` | Vaka sees a release for the first time (first event or `set-commits`) |
+| `perf_regression` | The newest release with spans is slower than the previous one: a transaction's p95 grew by more than `threshold` percent (default 20) or a Web Vital got worse. Once per release, checked every 10 minutes. See [performance](performance.md) |
 | `digest` | Once a day at `threshold` o'clock UTC (default 8): per project, errors and new issues with the change from the day before, top issues, crash-free sessions, visitors and pageviews. Quiet projects are left out |
 
 A rule without `project` applies to all projects. A spike rule notifies at most once per issue
