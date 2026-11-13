@@ -335,6 +335,7 @@ pub async fn resolve_from_commits(state: &AppState, project_id: &str, slug: &str
                     .bind(now)
                     .execute(&state.db)
                     .await?;
+                crate::alerts::notify_issue_by_project(state, project_id, &issue_id, "issue_resolved", Some(json!({"actor": "vaka", "resolved_in_release": release, "commit": sha})));
                 if !resolved.contains(&short) {
                     resolved.push(short.clone());
                 }

@@ -481,6 +481,13 @@ pub async fn update_issue(state: &AppState, p: &Principal, id: &str, upd: IssueU
         };
         sqlx::query("UPDATE issues SET assignee_id = $1 WHERE id = $2").bind(user_id).bind(&issue_id).execute(&state.db).await?;
     }
+    let project_id = issue["project_id"].as_str().unwrap_or("").to_string();
+    if upd.status.as_deref() == Some("resolved") && issue["status"] != "resolved" {
+        crate::alerts::notify_issue_by_project(state, &project_id, &issue_id, "issue_resolved", Some(json!({"actor": p.label(), "resolved_in_release": upd.resolved_in_release})));
+    }
+    if let Some(a) = upd.assignee.as_deref().filter(|a| !a.is_empty()) {
+        crate::alerts::notify_issue_by_project(state, &project_id, &issue_id, "issue_assigned", Some(json!({"actor": p.label(), "assignee": a})));
+    }
     crate::auth::audit(state, &p.label(), "update_issue", &issue_id, &serde_json::to_string(&json!({"status": upd.status, "assignee": upd.assignee})).unwrap_or_default()).await;
     Ok(get_issue_row(state, &issue_id).await?.unwrap_or(Value::Null))
 }
@@ -501,6 +508,13 @@ pub async fn comment_issue(state: &AppState, p: &Principal, id: &str, body: &str
         .bind(now_ms())
         .execute(&state.db)
         .await?;
+    crate::alerts::notify_issue_by_project(
+        state,
+        issue["project_id"].as_str().unwrap_or(""),
+        issue["id"].as_str().unwrap_or(""),
+        "issue_commented",
+        Some(json!({"actor": p.label(), "comment": crate::util::truncate(body, 4000)})),
+    );
     Ok(json!({"ok": true, "issue": issue["short_id"]}))
 }
 

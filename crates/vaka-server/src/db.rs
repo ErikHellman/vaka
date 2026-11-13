@@ -14,6 +14,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (3, include_str!("../migrations/003_ownership_commits.sql")),
     (4, include_str!("../migrations/004_goals.sql")),
     (5, include_str!("../migrations/005_source_links.sql")),
+    (6, include_str!("../migrations/006_webhooks.sql")),
 ];
 
 pub async fn connect(url: &str) -> anyhow::Result<Pool> {

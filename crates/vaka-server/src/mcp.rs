@@ -366,10 +366,37 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
                     secret: s(&a, "secret"),
                     threshold: i(&a, "threshold"),
                     enabled: Some(true),
+                    filters: a.get("filters").cloned(),
+                    max_per_hour: i(&a, "max_per_hour"),
                 },
             )
             .await?
         }
+        "list_alert_rules" => crate::api::list_rules_inner(state, p).await?,
+        "update_alert_rule" => {
+            crate::api::update_rule_inner(
+                state,
+                p,
+                &req(&a, "rule_id")?,
+                crate::api::RuleBody {
+                    name: s(&a, "name"),
+                    target: s(&a, "target"),
+                    secret: s(&a, "secret"),
+                    threshold: i(&a, "threshold"),
+                    enabled: a.get("enabled").and_then(|v| v.as_bool()),
+                    filters: a.get("filters").cloned(),
+                    max_per_hour: i(&a, "max_per_hour"),
+                    ..Default::default()
+                },
+            )
+            .await?
+        }
+        "delete_alert_rule" => crate::api::delete_rule_inner(state, p, &req(&a, "rule_id")?).await?,
+        "test_alert_rule" => crate::api::test_rule_inner(state, p, &req(&a, "rule_id")?).await?,
+        "list_alert_deliveries" => {
+            crate::api::deliveries_inner(state, p, &req(&a, "rule_id")?, a.get("include_payload").and_then(|v| v.as_bool()).unwrap_or(false), i(&a, "limit")).await?
+        }
+        "redeliver_alert" => crate::api::redeliver_inner(state, p, &req(&a, "rule_id")?, &req(&a, "delivery_id")?).await?,
         "delete_user_data" => {
             let proj = query::project_for(state, p, &req(&a, "project")?).await?;
             if !p.can_write(&proj.id) {
@@ -755,20 +782,53 @@ pub fn tools() -> Vec<Value> {
         tool(
             "create_alert_rule",
             "Create alert rule",
-            "Notify a webhook, Slack incoming webhook or email address on new issues, regressions or spikes, or send a daily digest. Needs a write token.",
+            "Notify or wake an agent when something happens. Triggers: new_issue, regression, spike, threshold (issue reaches N events), issue_resolved, issue_assigned, issue_commented, release_created, digest. Channels: webhook (signed JSON with the full fix context), slack, email, github_dispatch (repository_dispatch `vaka.<trigger>` to start a GitHub Actions workflow, e.g. a coding agent), github_issue (opens one GitHub issue per Vaka issue; later alerts comment). Failed deliveries are retried with backoff. Needs a write token.",
             vec![
                 ("project", prop("string", "Project slug; omit for all projects")),
-                ("trigger", prop("string", "new_issue, regression, spike or digest (daily summary)")),
-                ("channel", prop("string", "webhook, slack or email")),
-                ("target", prop("string", "Webhook URL, Slack incoming webhook URL, or comma-separated emails")),
-                ("secret", prop("string", "Webhook signing secret (HMAC-SHA256 in X-Vaka-Signature)")),
-                ("threshold", prop("integer", "Spike: minimum events in the last hour (default 50). Digest: UTC hour to send at (default 8)")),
+                ("trigger", prop("string", "new_issue, regression, spike, threshold, issue_resolved, issue_assigned, issue_commented, release_created or digest")),
+                ("channel", prop("string", "webhook, slack, email, github_dispatch or github_issue")),
+                ("target", prop("string", "Webhook URL, Slack incoming webhook URL, comma-separated emails, or owner/repo for GitHub channels")),
+                ("secret", prop("string", "Webhook signing secret (HMAC-SHA256 in X-Vaka-Signature), or the GitHub token for GitHub channels")),
+                ("threshold", prop("integer", "Spike: minimum events in the last hour (default 50). Threshold: events (default 100). Digest: UTC hour (default 8)")),
+                ("filters", json!({"type": "object", "description": "Optional: {environment, min_level (debug|info|warning|error|fatal), release (glob), owner (email), unhandled_only (bool), tags: {key: glob}, mention (github_issue: first line of the issue body, e.g. an agent mention)}"})),
+                ("max_per_hour", prop("integer", "Rate limit per rule (default 10 for GitHub channels, otherwise unlimited)")),
                 ("name", prop("string", "Optional name")),
             ],
             &["trigger", "channel", "target"],
             false,
             false,
         ),
+        tool("list_alert_rules", "List alert rules", "Alert rules visible to this token, with triggers, channels and filters (secrets are never returned).", vec![], &[], true, false),
+        tool(
+            "update_alert_rule",
+            "Update alert rule",
+            "Change an alert rule: name, target, secret, threshold, enabled, filters (null clears), max_per_hour. Needs a write token.",
+            vec![
+                ("rule_id", prop("string", "Rule id (see list_alert_rules)")),
+                ("name", prop("string", "New name")),
+                ("target", prop("string", "New target")),
+                ("secret", prop("string", "New secret or token")),
+                ("threshold", prop("integer", "New threshold")),
+                ("enabled", prop("boolean", "Enable or disable")),
+                ("filters", json!({"type": ["object", "null"], "description": "New filters (see create_alert_rule)"})),
+                ("max_per_hour", prop("integer", "New rate limit (0 = unlimited)")),
+            ],
+            &["rule_id"],
+            false,
+            false,
+        ),
+        tool("delete_alert_rule", "Delete alert rule", "Delete an alert rule. Needs a write token.", vec![("rule_id", prop("string", "Rule id"))], &["rule_id"], false, true),
+        tool("test_alert_rule", "Test alert rule", "Send a test notification (digests: a real digest) through a rule now. Needs a write token.", vec![("rule_id", prop("string", "Rule id"))], &["rule_id"], false, false),
+        tool(
+            "list_alert_deliveries",
+            "List alert deliveries",
+            "Recent deliveries for a rule: status (ok, retrying, failed, rate_limited, skipped), attempts, next retry and error detail, optionally with the payload that was sent. Needs a write token.",
+            vec![("rule_id", prop("string", "Rule id")), ("include_payload", prop("boolean", "Include the JSON payload")), ("limit", prop("integer", "Max rows (default 50)"))],
+            &["rule_id"],
+            true,
+            false,
+        ),
+        tool("redeliver_alert", "Redeliver alert", "Send a stored delivery's payload again now. Needs a write token.", vec![("rule_id", prop("string", "Rule id")), ("delivery_id", prop("string", "Delivery id from list_alert_deliveries"))], &["rule_id", "delivery_id"], false, false),
         tool(
             "delete_user_data",
             "Delete user data (GDPR)",

@@ -84,7 +84,12 @@ Write:
 | `set_code_mappings` | Replace the stack path → repository path mappings |
 | `apply_ownership_rules` | Re-apply ownership rules to open issues |
 | `comment_issue` | Add a Markdown comment, e.g. root cause and a link to the fix |
-| `create_alert_rule` | Webhook, Slack or email on new issues, regressions or spikes, or a daily digest |
+| `create_alert_rule` | Webhook, Slack, email, GitHub repository_dispatch or GitHub issue on new issues, regressions, spikes, thresholds, resolves, assignments, comments, new releases, or a daily digest; with filters and rate limits |
+| `list_alert_rules` | Rules with triggers, channels and filters |
+| `update_alert_rule` / `delete_alert_rule` | Change or delete a rule |
+| `test_alert_rule` | Send a test notification |
+| `list_alert_deliveries` | Delivery log with status, attempts and optional payloads |
+| `redeliver_alert` | Send a stored delivery again |
 | `delete_user_data` | Delete all data for a user id in a project (cannot be undone) |
 
 ## Resources

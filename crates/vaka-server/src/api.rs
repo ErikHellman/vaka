@@ -69,6 +69,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/alert-rules/{id}", patch(update_rule).delete(delete_rule))
         .route("/api/v1/alert-rules/{id}/test", post(test_rule))
         .route("/api/v1/alert-rules/{id}/deliveries", get(rule_deliveries))
+        .route("/api/v1/alert-rules/{id}/deliveries/{delivery}/redeliver", post(redeliver))
         .route("/api/v1/tokens", get(list_tokens).post(create_token))
         .route("/api/v1/tokens/{id}", delete(revoke_token))
         .route("/api/v1/users", get(list_users))
@@ -695,7 +696,7 @@ async fn install_instructions(State(s): State<AppState>, p: Principal, Path((pro
 // Alert rules
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct RuleBody {
     pub project: Option<String>,
     pub name: Option<String>,
@@ -705,9 +706,11 @@ pub struct RuleBody {
     pub secret: Option<String>,
     pub threshold: Option<i64>,
     pub enabled: Option<bool>,
+    pub filters: Option<Value>,
+    pub max_per_hour: Option<i64>,
 }
 
-async fn list_rules(State(s): State<AppState>, p: Principal) -> J {
+pub async fn list_rules_inner(s: &AppState, p: &Principal) -> QResult<Value> {
     let rows = sqlx::query(&format!("SELECT {} FROM alert_rules ORDER BY created_at", crate::alerts::RULE_COLS)).fetch_all(&s.db).await?;
     let rules: Vec<Value> = rows
         .iter()
@@ -715,7 +718,30 @@ async fn list_rules(State(s): State<AppState>, p: Principal) -> J {
         .filter(|r| r.project_id.as_deref().map(|pid| p.can_read(pid)).unwrap_or(p.project_scope().is_none()))
         .map(|r| json!(r))
         .collect();
-    Ok(Json(json!({"rules": rules, "triggers": crate::alerts::TRIGGERS, "channels": crate::alerts::CHANNELS})))
+    Ok(json!({"rules": rules, "triggers": crate::alerts::TRIGGERS, "channels": crate::alerts::CHANNELS, "filters": crate::alerts::FILTER_KEYS}))
+}
+
+async fn list_rules(State(s): State<AppState>, p: Principal) -> J {
+    Ok(Json(list_rules_inner(&s, &p).await?))
+}
+
+fn validate_target(channel: &str, target: &str) -> QResult<()> {
+    match channel {
+        "webhook" if !(target.starts_with("https://") || target.starts_with("http://")) => Err(ApiError::bad("webhook target must be an http(s) URL")),
+        "slack" if !(target.starts_with("https://") || target.starts_with("http://")) => {
+            Err(ApiError::bad("slack target must be an incoming webhook URL (https://hooks.slack.com/services/...)"))
+        }
+        "email" if !target.contains('@') => Err(ApiError::bad("email target must be one or more comma-separated email addresses")),
+        "github_dispatch" | "github_issue" if crate::github::repo_slug(target).is_none() => Err(ApiError::bad("GitHub target must be owner/repo or https://github.com/owner/repo")),
+        _ => Ok(()),
+    }
+}
+
+fn validate_filters(f: &Option<Value>) -> QResult<()> {
+    match f {
+        Some(f) if !f.is_null() => crate::alerts::validate_filters(f).map_err(ApiError::bad),
+        _ => Ok(()),
+    }
 }
 
 pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QResult<Value> {
@@ -739,32 +765,38 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
         return Err(ApiError::bad(format!("channel must be one of {}", crate::alerts::CHANNELS.join(", "))));
     }
     let target = b.target.unwrap_or_default();
-    if channel == "webhook" && !(target.starts_with("https://") || target.starts_with("http://")) {
-        return Err(ApiError::bad("webhook target must be an http(s) URL"));
-    }
-    if channel == "slack" && !(target.starts_with("https://") || target.starts_with("http://")) {
-        return Err(ApiError::bad("slack target must be an incoming webhook URL (https://hooks.slack.com/services/...)"));
-    }
+    validate_target(&channel, &target)?;
+    validate_filters(&b.filters)?;
     if trigger == "digest" && !(0..=23).contains(&b.threshold.unwrap_or(8)) {
         return Err(ApiError::bad("for digests, threshold is the UTC hour to send at (0 to 23, default 8)"));
     }
-    if channel == "email" && !target.contains('@') {
-        return Err(ApiError::bad("email target must be one or more comma-separated email addresses"));
+    if channel.starts_with("github_") && b.secret.as_deref().unwrap_or("").is_empty() {
+        return Err(ApiError::bad("GitHub channels need `secret`: a GitHub token that can write to the repository (contents for dispatch, issues for issues)"));
     }
     let id = new_id();
-    sqlx::query("INSERT INTO alert_rules (id, project_id, name, trigger, channel, target, secret, threshold, enabled, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)")
-        .bind(&id)
-        .bind(project_id)
-        .bind(b.name.unwrap_or_else(|| format!("{trigger} via {channel}")))
-        .bind(&trigger)
-        .bind(&channel)
-        .bind(&target)
-        .bind(b.secret.unwrap_or_default())
-        .bind(b.threshold.unwrap_or(match trigger.as_str() { "spike" => 50, "digest" => 8, _ => 0 }))
-        .bind(b.enabled.unwrap_or(true) as i64)
-        .bind(now_ms())
-        .execute(&s.db)
-        .await?;
+    sqlx::query(
+        "INSERT INTO alert_rules (id, project_id, name, trigger, channel, target, secret, threshold, enabled, created_at, filters, max_per_hour) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+    )
+    .bind(&id)
+    .bind(project_id)
+    .bind(b.name.unwrap_or_else(|| format!("{trigger} via {channel}")))
+    .bind(&trigger)
+    .bind(&channel)
+    .bind(&target)
+    .bind(b.secret.unwrap_or_default())
+    .bind(b.threshold.unwrap_or(match trigger.as_str() {
+        "spike" => 50,
+        "digest" => 8,
+        "threshold" => 100,
+        _ => 0,
+    }))
+    .bind(b.enabled.unwrap_or(true) as i64)
+    .bind(now_ms())
+    .bind(b.filters.filter(|f| !f.is_null()).map(|f| f.to_string()).unwrap_or_default())
+    .bind(b.max_per_hour.unwrap_or(if channel.starts_with("github_") { 10 } else { 0 }).max(0))
+    .execute(&s.db)
+    .await?;
     crate::auth::audit(s, &p.label(), "create_alert_rule", &id, &trigger).await;
     let row = sqlx::query(&format!("SELECT {} FROM alert_rules WHERE id = $1", crate::alerts::RULE_COLS)).bind(&id).fetch_one(&s.db).await?;
     Ok(json!(crate::alerts::rule_from_row(&row)))
@@ -791,42 +823,99 @@ async fn rule_for_write(s: &AppState, p: &Principal, id: &str) -> QResult<crate:
     Ok(rule)
 }
 
+pub async fn update_rule_inner(s: &AppState, p: &Principal, id: &str, b: RuleBody) -> QResult<Value> {
+    let rule = rule_for_write(s, p, id).await?;
+    if let Some(t) = &b.target {
+        validate_target(&rule.channel, t)?;
+    }
+    validate_filters(&b.filters)?;
+    sqlx::query(
+        "UPDATE alert_rules SET name = COALESCE($1, name), target = COALESCE($2, target), secret = COALESCE($3, secret), threshold = COALESCE($4, threshold), \
+         enabled = COALESCE($5, enabled), filters = COALESCE($6, filters), max_per_hour = COALESCE($7, max_per_hour) WHERE id = $8",
+    )
+    .bind(b.name)
+    .bind(b.target)
+    .bind(b.secret)
+    .bind(b.threshold)
+    .bind(b.enabled.map(|e| e as i64))
+    .bind(b.filters.map(|f| if f.is_null() { String::new() } else { f.to_string() }))
+    .bind(b.max_per_hour.map(|m| m.max(0)))
+    .bind(id)
+    .execute(&s.db)
+    .await?;
+    let row = sqlx::query(&format!("SELECT {} FROM alert_rules WHERE id = $1", crate::alerts::RULE_COLS)).bind(id).fetch_one(&s.db).await?;
+    Ok(json!(crate::alerts::rule_from_row(&row)))
+}
+
 async fn update_rule(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Json(b): Json<RuleBody>) -> J {
-    rule_for_write(&s, &p, &id).await?;
-    sqlx::query("UPDATE alert_rules SET name = COALESCE($1, name), target = COALESCE($2, target), secret = COALESCE($3, secret), threshold = COALESCE($4, threshold), enabled = COALESCE($5, enabled) WHERE id = $6")
-        .bind(b.name)
-        .bind(b.target)
-        .bind(b.secret)
-        .bind(b.threshold)
-        .bind(b.enabled.map(|e| e as i64))
-        .bind(&id)
-        .execute(&s.db)
-        .await?;
-    let row = sqlx::query(&format!("SELECT {} FROM alert_rules WHERE id = $1", crate::alerts::RULE_COLS)).bind(&id).fetch_one(&s.db).await?;
-    Ok(Json(json!(crate::alerts::rule_from_row(&row))))
+    Ok(Json(update_rule_inner(&s, &p, &id, b).await?))
+}
+
+pub async fn delete_rule_inner(s: &AppState, p: &Principal, id: &str) -> QResult<Value> {
+    rule_for_write(s, p, id).await?;
+    sqlx::query("DELETE FROM alert_rules WHERE id = $1").bind(id).execute(&s.db).await?;
+    crate::auth::audit(s, &p.label(), "delete_alert_rule", id, "").await;
+    Ok(json!({"deleted": id}))
 }
 
 async fn delete_rule(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {
-    rule_for_write(&s, &p, &id).await?;
-    sqlx::query("DELETE FROM alert_rules WHERE id = $1").bind(&id).execute(&s.db).await?;
-    Ok(Json(json!({"deleted": id})))
+    Ok(Json(delete_rule_inner(&s, &p, &id).await?))
+}
+
+pub async fn test_rule_inner(s: &AppState, p: &Principal, id: &str) -> QResult<Value> {
+    rule_for_write(s, p, id).await?;
+    Ok(match crate::alerts::test_rule(s, id).await {
+        Ok(detail) => json!({"ok": true, "detail": detail}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    })
 }
 
 async fn test_rule(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {
-    rule_for_write(&s, &p, &id).await?;
-    match crate::alerts::test_rule(&s, &id).await {
-        Ok(detail) => Ok(Json(json!({"ok": true, "detail": detail}))),
-        Err(e) => Ok(Json(json!({"ok": false, "error": e.to_string()}))),
-    }
+    Ok(Json(test_rule_inner(&s, &p, &id).await?))
 }
 
-async fn rule_deliveries(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {
-    rule_for_write(&s, &p, &id).await?;
-    let rows = sqlx::query("SELECT issue_id, trigger, status, detail, created_at FROM alert_deliveries WHERE rule_id = $1 ORDER BY created_at DESC LIMIT 100")
-        .bind(&id)
-        .fetch_all(&s.db)
-        .await?;
-    Ok(Json(json!({"deliveries": rows.iter().map(|r| json!({"issue_id": r.s("issue_id"), "trigger": r.s("trigger"), "status": r.s("status"), "detail": r.s("detail"), "created_at": iso_time(r.i("created_at"))})).collect::<Vec<_>>()})))
+pub async fn deliveries_inner(s: &AppState, p: &Principal, id: &str, include_payload: bool, limit: Option<i64>) -> QResult<Value> {
+    rule_for_write(s, p, id).await?;
+    let rows = sqlx::query(
+        "SELECT id, issue_id, trigger, status, detail, created_at, attempts, next_attempt_at, payload FROM alert_deliveries WHERE rule_id = $1 ORDER BY created_at DESC LIMIT $2",
+    )
+    .bind(id)
+    .bind(limit.unwrap_or(50).clamp(1, 500))
+    .fetch_all(&s.db)
+    .await?;
+    let deliveries: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let mut v = json!({
+                "id": r.s("id"), "issue_id": r.s("issue_id"), "trigger": r.s("trigger"), "status": r.s("status"), "detail": r.s("detail"),
+                "created_at": iso_time(r.i("created_at")), "attempts": r.i("attempts"), "next_attempt_at": r.oi("next_attempt_at").map(iso_time),
+            });
+            if include_payload {
+                v["payload"] = serde_json::from_str(&r.s("payload")).unwrap_or(Value::Null);
+            }
+            v
+        })
+        .collect();
+    Ok(json!({"deliveries": deliveries}))
+}
+
+#[derive(Deserialize)]
+struct DeliveriesQuery {
+    payload: Option<bool>,
+    limit: Option<i64>,
+}
+
+async fn rule_deliveries(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Query(q): Query<DeliveriesQuery>) -> J {
+    Ok(Json(deliveries_inner(&s, &p, &id, q.payload.unwrap_or(false), q.limit).await?))
+}
+
+pub async fn redeliver_inner(s: &AppState, p: &Principal, id: &str, delivery: &str) -> QResult<Value> {
+    rule_for_write(s, p, id).await?;
+    crate::alerts::redeliver(s, id, delivery).await.map_err(|e| ApiError::bad(e.to_string()))
+}
+
+async fn redeliver(State(s): State<AppState>, p: Principal, Path((id, delivery)): Path<(String, String)>) -> J {
+    Ok(Json(redeliver_inner(&s, &p, &id, &delivery).await?))
 }
 
 // ---------------------------------------------------------------------------

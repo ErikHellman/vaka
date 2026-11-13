@@ -209,11 +209,12 @@ The [CLI](cli.md) wraps these; prefer `vaka upload ...` in build scripts.
 
 | Method & path | Description |
 | --- | --- |
-| `GET /alert-rules` | Rules, plus the valid triggers and channels |
-| `POST /alert-rules` | See [alerts](alerts.md) |
-| `PATCH /alert-rules/{id}` / `DELETE /alert-rules/{id}` | Update or delete |
+| `GET /alert-rules` | Rules, plus the valid triggers, channels and filters |
+| `POST /alert-rules` | `{project?, name?, trigger, channel, target, secret?, threshold?, filters?, max_per_hour?}`; see [alerts](alerts.md) |
+| `PATCH /alert-rules/{id}` / `DELETE /alert-rules/{id}` | Update (`name`, `target`, `secret`, `threshold`, `enabled`, `filters`, `max_per_hour`) or delete |
 | `POST /alert-rules/{id}/test` | Send a test notification |
-| `GET /alert-rules/{id}/deliveries` | Recent deliveries and their status |
+| `GET /alert-rules/{id}/deliveries` | Recent deliveries: status, attempts, next retry; `payload=true`, `limit` |
+| `POST /alert-rules/{id}/deliveries/{delivery}/redeliver` | Send a stored payload again |
 
 ## Tokens and users (admins)
 

@@ -4,13 +4,25 @@
 use crate::db::RowExt;
 use crate::state::{AppState, ProjectInfo};
 use crate::util::{new_id, now_ms};
-use serde_json::json;
+use serde_json::{json, Value};
 use sha2::Sha256;
 use std::time::Duration;
 
-pub const TRIGGERS: &[&str] = &["new_issue", "regression", "spike", "digest"];
-pub const CHANNELS: &[&str] = &["webhook", "slack", "email"];
+pub const TRIGGERS: &[&str] = &[
+    "new_issue",
+    "regression",
+    "spike",
+    "threshold",
+    "issue_resolved",
+    "issue_assigned",
+    "issue_commented",
+    "release_created",
+    "digest",
+];
+pub const CHANNELS: &[&str] = &["webhook", "slack", "email", "github_dispatch", "github_issue"];
 const SPIKE_COOLDOWN_MS: i64 = 6 * 3_600_000;
+/// Retry schedule after a failed delivery (attempt 1 is the first try).
+const BACKOFF_MS: &[i64] = &[60_000, 5 * 60_000, 30 * 60_000, 2 * 3_600_000, 6 * 3_600_000];
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Rule {
@@ -22,6 +34,10 @@ pub struct Rule {
     pub target: String,
     pub threshold: i64,
     pub enabled: bool,
+    /// {environment, min_level, release, owner, unhandled_only, tags: {k: v}, mention}
+    pub filters: Value,
+    /// 0 = unlimited.
+    pub max_per_hour: i64,
 }
 
 pub fn rule_from_row(r: &sqlx::any::AnyRow) -> Rule {
@@ -34,10 +50,87 @@ pub fn rule_from_row(r: &sqlx::any::AnyRow) -> Rule {
         target: r.s("target"),
         threshold: r.i("threshold"),
         enabled: r.i("enabled") != 0,
+        filters: serde_json::from_str(&r.s("filters")).unwrap_or_else(|_| json!({})),
+        max_per_hour: r.i("max_per_hour"),
     }
 }
 
-pub const RULE_COLS: &str = "id, project_id, name, trigger, channel, target, secret, threshold, enabled";
+pub const RULE_COLS: &str = "id, project_id, name, trigger, channel, target, secret, threshold, enabled, filters, max_per_hour";
+
+pub const FILTER_KEYS: &[&str] = &["environment", "min_level", "release", "owner", "unhandled_only", "tags", "mention"];
+
+/// Check rule filters; returns a description of the problem for invalid filters.
+pub fn validate_filters(f: &Value) -> Result<(), String> {
+    let Some(o) = f.as_object() else { return Err("filters must be an object".into()) };
+    for (k, v) in o {
+        if !FILTER_KEYS.contains(&k.as_str()) {
+            return Err(format!("unknown filter `{k}`; use {}", FILTER_KEYS.join(", ")));
+        }
+        match k.as_str() {
+            "unhandled_only" if !v.is_boolean() => return Err("unhandled_only must be true or false".into()),
+            "tags" if !v.as_object().map(|t| t.values().all(|x| x.is_string())).unwrap_or(false) => return Err("tags must be an object of strings".into()),
+            "min_level" if !matches!(v.as_str(), Some("debug" | "info" | "warning" | "error" | "fatal")) => return Err("min_level must be debug, info, warning, error or fatal".into()),
+            "unhandled_only" | "tags" | "min_level" => {}
+            _ if !v.is_string() => return Err(format!("{k} must be a string")),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn level_rank(l: &str) -> i32 {
+    match l {
+        "debug" => 0,
+        "info" => 1,
+        "warning" | "warn" => 2,
+        "error" => 3,
+        "fatal" | "critical" => 4,
+        _ => 3,
+    }
+}
+
+/// Does an issue (and, when known, the event that triggered the alert) pass a rule's filters?
+/// Event-level filters (environment, unhandled_only, tags) pass when there is no event.
+pub fn filters_match(filters: &Value, issue: &Value, event: Option<&Value>) -> bool {
+    let Some(f) = filters.as_object() else { return true };
+    if let Some(min) = f.get("min_level").and_then(|v| v.as_str()) {
+        let lvl = event.and_then(|e| e["level"].as_str()).or_else(|| issue["level"].as_str()).unwrap_or("error");
+        if level_rank(lvl) < level_rank(min) {
+            return false;
+        }
+    }
+    if let Some(r) = f.get("release").and_then(|v| v.as_str()).filter(|r| !r.is_empty()) {
+        let rel = event.and_then(|e| e["release"].as_str()).or_else(|| issue["last_release"].as_str()).unwrap_or("");
+        if !crate::ownership::glob(r, rel) {
+            return false;
+        }
+    }
+    if let Some(o) = f.get("owner").and_then(|v| v.as_str()).filter(|o| !o.is_empty()) {
+        let owners: Vec<&str> = issue["owners"].as_array().into_iter().flatten().filter_map(|x| x.as_str()).collect();
+        if !owners.iter().any(|x| x.eq_ignore_ascii_case(o)) && !issue["assignee"].as_str().map(|a| a.eq_ignore_ascii_case(o)).unwrap_or(false) {
+            return false;
+        }
+    }
+    if let Some(ev) = event {
+        if let Some(env) = f.get("environment").and_then(|v| v.as_str()).filter(|e| !e.is_empty()) {
+            if ev["environment"].as_str().map(|e| !crate::ownership::glob(env, e)).unwrap_or(false) {
+                return false;
+            }
+        }
+        if f.get("unhandled_only").and_then(|v| v.as_bool()) == Some(true) && ev["handled"].as_bool() == Some(true) {
+            return false;
+        }
+        if let Some(tags) = f.get("tags").and_then(|v| v.as_object()) {
+            for (k, v) in tags {
+                let want = v.as_str().unwrap_or("");
+                if !ev["tags"][k].as_str().map(|x| crate::ownership::glob(want, x)).unwrap_or(false) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
 
 async fn rules_for(state: &AppState, project_id: &str, trigger: &str) -> anyhow::Result<Vec<(Rule, String)>> {
     let rows = sqlx::query(&format!(
@@ -50,29 +143,63 @@ async fn rules_for(state: &AppState, project_id: &str, trigger: &str) -> anyhow:
     Ok(rows.iter().map(|r| (rule_from_row(r), r.s("secret"))).collect())
 }
 
-/// Fire-and-forget notification for a new or regressed issue.
-pub fn notify_issue(state: &AppState, project: &ProjectInfo, issue_id: &str, trigger: &str) {
+/// Fire-and-forget notification for an issue event. `event` describes the error event or the
+/// action that caused it ({environment, level, release, handled, tags} or {actor, ...}).
+pub fn notify_issue(state: &AppState, project: &ProjectInfo, issue_id: &str, trigger: &str, event: Option<Value>) {
     let state = state.clone();
     let project = project.clone();
     let issue_id = issue_id.to_string();
     let trigger = trigger.to_string();
     tokio::spawn(async move {
-        // Give the event a moment to reach ClickHouse so links show data.
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        if let Err(e) = dispatch(&state, &project, &issue_id, &trigger, None).await {
+        // Give the event a moment to reach ClickHouse so links and fix context show data.
+        if trigger == "new_issue" || trigger == "regression" {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        if let Err(e) = dispatch(&state, &project, &issue_id, &trigger, None, event).await {
             tracing::warn!("alert dispatch failed: {e:#}");
         }
     });
 }
 
-async fn dispatch(state: &AppState, project: &ProjectInfo, issue_id: &str, trigger: &str, extra: Option<serde_json::Value>) -> anyhow::Result<()> {
+/// Like `notify_issue` for a project id (looks the project up).
+pub fn notify_issue_by_project(state: &AppState, project_id: &str, issue_id: &str, trigger: &str, event: Option<Value>) {
+    let state2 = state.clone();
+    let project_id = project_id.to_string();
+    let issue_id = issue_id.to_string();
+    let trigger = trigger.to_string();
+    tokio::spawn(async move {
+        if let Ok(Some(p)) = crate::projects::find(&state2, &project_id).await {
+            notify_issue(&state2, &p, &issue_id, &trigger, event);
+        }
+    });
+}
+
+fn wants_fix_context(channel: &str) -> bool {
+    matches!(channel, "webhook" | "github_dispatch" | "github_issue")
+}
+
+async fn system_fix_context(state: &AppState, issue_id: &str) -> Option<Value> {
+    match crate::fixctx::fix_context(state, &crate::auth::Principal::system(), issue_id).await {
+        Ok(v) => Some(v),
+        Err(e) => {
+            tracing::warn!("fix context for alert failed: {}", e.1);
+            None
+        }
+    }
+}
+
+async fn dispatch(state: &AppState, project: &ProjectInfo, issue_id: &str, trigger: &str, extra: Option<Value>, event: Option<Value>) -> anyhow::Result<()> {
     let rules = rules_for(state, &project.id, trigger).await?;
     if rules.is_empty() {
         return Ok(());
     }
     let issue = crate::query::get_issue_row(state, issue_id).await?;
     let Some(issue) = issue else { return Ok(()) };
+    let mut fix: Option<Option<Value>> = None;
     for (rule, secret) in rules {
+        if !filters_match(&rule.filters, &issue, event.as_ref()) {
+            continue;
+        }
         if trigger == "spike" {
             if let Some(extra) = &extra {
                 let count = extra["last_hour"].as_i64().unwrap_or(0);
@@ -84,37 +211,61 @@ async fn dispatch(state: &AppState, project: &ProjectInfo, issue_id: &str, trigg
                 continue;
             }
         }
-        let payload = json!({
+        let mut payload = json!({
             "trigger": trigger,
             "project": {"id": project.id, "slug": project.slug, "name": project.name},
             "issue": issue,
             "url": format!("{}/ui/projects/{}/issues/{}", state.config.public_url, project.slug, issue_id),
             "api_url": format!("{}/api/v1/issues/{}", state.config.public_url, issue_id),
             "details": extra,
+            "event": event,
             "sent_at": crate::util::iso_time(now_ms()),
         });
-        let result = match rule.channel.as_str() {
-            "webhook" => send_webhook(state, &rule.target, &secret, &payload).await,
-            "slack" => send_slack(state, &rule.target, &slack_issue_message(trigger, &payload)).await,
-            "email" => send_email(state, &rule.target, trigger, &payload).await,
-            other => Err(anyhow::anyhow!("unknown channel {other}")),
-        };
-        let (status, detail) = match &result {
-            Ok(d) => ("ok", d.clone()),
-            Err(e) => ("failed", e.to_string()),
-        };
-        sqlx::query("INSERT INTO alert_deliveries (id, rule_id, issue_id, trigger, status, detail, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)")
-            .bind(new_id())
-            .bind(&rule.id)
-            .bind(issue_id)
-            .bind(trigger)
-            .bind(status)
-            .bind(crate::util::truncate(&detail, 1000))
-            .bind(now_ms())
-            .execute(&state.db)
-            .await?;
+        if wants_fix_context(&rule.channel) {
+            if fix.is_none() {
+                fix = Some(system_fix_context(state, issue_id).await);
+            }
+            payload["fix_context"] = fix.clone().flatten().unwrap_or(Value::Null);
+        }
+        deliver_new(state, &rule, &secret, trigger, issue_id, payload).await?;
     }
     Ok(())
+}
+
+/// Notify `release_created` rules about a release seen for the first time.
+pub fn notify_release(state: &AppState, project: &ProjectInfo, release: &str) {
+    let state = state.clone();
+    let project = project.clone();
+    let release = release.to_string();
+    tokio::spawn(async move {
+        let r: anyhow::Result<()> = async {
+            let rules = rules_for(&state, &project.id, "release_created").await?;
+            for (rule, secret) in rules {
+                if let Some(g) = rule.filters["release"].as_str().filter(|g| !g.is_empty()) {
+                    if !crate::ownership::glob(g, &release) {
+                        continue;
+                    }
+                }
+                let payload = json!({
+                    "trigger": "release_created",
+                    "project": {"id": project.id, "slug": project.slug, "name": project.name},
+                    "release": {"version": release},
+                    "api_url": format!("{}/api/v1/projects/{}/releases/health?release={}", state.config.public_url, project.slug, url_encode(&release)),
+                    "sent_at": crate::util::iso_time(now_ms()),
+                });
+                deliver_new(&state, &rule, &secret, "release_created", "", payload).await?;
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(e) = r {
+            tracing::warn!("release notification failed: {e:#}");
+        }
+    });
+}
+
+fn url_encode(s: &str) -> String {
+    url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
 
 async fn recently_delivered(state: &AppState, rule_id: &str, issue_id: &str) -> anyhow::Result<bool> {
@@ -125,6 +276,192 @@ async fn recently_delivered(state: &AppState, rule_id: &str, issue_id: &str) -> 
         .fetch_one(&state.db)
         .await?;
     Ok(row.i("n") > 0)
+}
+
+/// Record a delivery and attempt it now; failures are retried by the delivery worker.
+pub async fn deliver_new(state: &AppState, rule: &Rule, secret: &str, trigger: &str, issue_id: &str, payload: Value) -> anyhow::Result<String> {
+    let id = new_id();
+    let now = now_ms();
+    if rule.max_per_hour > 0 {
+        let sent = sqlx::query("SELECT COUNT(*) AS n FROM alert_deliveries WHERE rule_id = $1 AND created_at > $2 AND status != 'rate_limited'")
+            .bind(&rule.id)
+            .bind(now - 3_600_000)
+            .fetch_one(&state.db)
+            .await?
+            .i("n");
+        if sent >= rule.max_per_hour {
+            insert_delivery(state, &id, rule, issue_id, trigger, "rate_limited", &format!("max_per_hour {} reached", rule.max_per_hour), &payload, 0, None).await?;
+            return Ok("rate limited".into());
+        }
+    }
+    let result = send(state, rule, secret, trigger, issue_id, &payload, &id).await;
+    let (status, detail, next) = match &result {
+        Ok(d) => ("ok", d.clone(), None),
+        Err(e) if retryable(&rule.channel, e) => ("retrying", e.to_string(), Some(now + BACKOFF_MS[0])),
+        Err(e) => ("failed", e.to_string(), None),
+    };
+    insert_delivery(state, &id, rule, issue_id, trigger, status, &detail, &payload, 1, next).await?;
+    result
+}
+
+fn retryable(channel: &str, e: &anyhow::Error) -> bool {
+    let msg = e.to_string();
+    !(channel == "email" && msg.contains("VAKA_RESEND_API_KEY")) && !msg.contains("needs a GitHub token")
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn insert_delivery(state: &AppState, id: &str, rule: &Rule, issue_id: &str, trigger: &str, status: &str, detail: &str, payload: &Value, attempts: i64, next: Option<i64>) -> anyhow::Result<()> {
+    let mut body = serde_json::to_string(payload)?;
+    if body.len() > 256 * 1024 {
+        let mut slim = payload.clone();
+        slim["fix_context"] = Value::Null;
+        body = serde_json::to_string(&slim)?;
+    }
+    sqlx::query(
+        "INSERT INTO alert_deliveries (id, rule_id, issue_id, trigger, status, detail, created_at, payload, attempts, next_attempt_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+    )
+    .bind(id)
+    .bind(&rule.id)
+    .bind(issue_id)
+    .bind(trigger)
+    .bind(status)
+    .bind(crate::util::truncate(detail, 1000))
+    .bind(now_ms())
+    .bind(body)
+    .bind(attempts)
+    .bind(next)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
+/// Send one payload through a rule's channel.
+async fn send(state: &AppState, rule: &Rule, secret: &str, trigger: &str, issue_id: &str, payload: &Value, delivery_id: &str) -> anyhow::Result<String> {
+    match (rule.channel.as_str(), trigger) {
+        ("webhook", _) => send_webhook(state, &rule.target, secret, trigger, delivery_id, payload).await,
+        ("slack", "digest") => send_slack(state, &rule.target, &slack_digest_message(payload, &state.config.public_url)).await,
+        ("slack", "release_created") => send_slack(state, &rule.target, &slack_release_message(payload)).await,
+        ("slack", _) => send_slack(state, &rule.target, &slack_issue_message(trigger, payload)).await,
+        ("email", "digest") => send_digest_email(state, &rule.target, payload).await,
+        ("email", _) => send_email(state, &rule.target, trigger, payload).await,
+        ("github_dispatch", _) => crate::github::dispatch(state, &rule.target, secret, trigger, payload).await,
+        ("github_issue", _) => crate::github::issue(state, &rule.target, secret, trigger, issue_id, payload, &rule.filters).await,
+        (other, _) => Err(anyhow::anyhow!("unknown channel {other}")),
+    }
+}
+
+/// Every 30 seconds retry failed deliveries whose backoff has passed; every minute check
+/// `threshold` rules.
+pub fn spawn_delivery_worker(state: AppState) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(30));
+        let mut n: u64 = 0;
+        loop {
+            tick.tick().await;
+            n += 1;
+            if let Err(e) = retry_due(&state).await {
+                tracing::warn!("delivery retries failed: {e:#}");
+            }
+            if n % 2 == 0 {
+                if let Err(e) = check_thresholds(&state).await {
+                    tracing::warn!("threshold alerts failed: {e:#}");
+                }
+            }
+        }
+    });
+}
+
+async fn retry_due(state: &AppState) -> anyhow::Result<()> {
+    let rows = sqlx::query("SELECT id, rule_id, issue_id, trigger, payload, attempts FROM alert_deliveries WHERE status = 'retrying' AND next_attempt_at <= $1 ORDER BY next_attempt_at LIMIT 50")
+        .bind(now_ms())
+        .fetch_all(&state.db)
+        .await?;
+    for r in rows {
+        let id = r.s("id");
+        let Some(rule_row) = sqlx::query(&format!("SELECT {RULE_COLS} FROM alert_rules WHERE id = $1")).bind(r.s("rule_id")).fetch_optional(&state.db).await? else {
+            sqlx::query("UPDATE alert_deliveries SET status = 'failed', detail = 'rule deleted', next_attempt_at = NULL WHERE id = $1").bind(&id).execute(&state.db).await?;
+            continue;
+        };
+        let rule = rule_from_row(&rule_row);
+        let payload: Value = serde_json::from_str(&r.s("payload")).unwrap_or(Value::Null);
+        let attempts = r.i("attempts") + 1;
+        let result = send(state, &rule, &rule_row.s("secret"), &r.s("trigger"), &r.s("issue_id"), &payload, &id).await;
+        let (status, detail, next) = match &result {
+            Ok(d) => ("ok", d.clone(), None),
+            Err(e) if (attempts as usize) <= BACKOFF_MS.len() && retryable(&rule.channel, e) => ("retrying", e.to_string(), Some(now_ms() + BACKOFF_MS[attempts as usize - 1])),
+            Err(e) => ("failed", e.to_string(), None),
+        };
+        sqlx::query("UPDATE alert_deliveries SET status = $1, detail = $2, attempts = $3, next_attempt_at = $4 WHERE id = $5")
+            .bind(status)
+            .bind(crate::util::truncate(&format!("attempt {attempts}: {detail}"), 1000))
+            .bind(attempts)
+            .bind(next)
+            .bind(&id)
+            .execute(&state.db)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Send a stored delivery's payload again now (new delivery row).
+pub async fn redeliver(state: &AppState, rule_id: &str, delivery_id: &str) -> anyhow::Result<Value> {
+    let row = sqlx::query("SELECT issue_id, trigger, payload FROM alert_deliveries WHERE id = $1 AND rule_id = $2")
+        .bind(delivery_id)
+        .bind(rule_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("delivery not found"))?;
+    let rule_row = sqlx::query(&format!("SELECT {RULE_COLS} FROM alert_rules WHERE id = $1")).bind(rule_id).fetch_one(&state.db).await?;
+    let rule = rule_from_row(&rule_row);
+    let payload: Value = serde_json::from_str(&row.s("payload")).map_err(|_| anyhow::anyhow!("this delivery has no stored payload"))?;
+    let r = deliver_new(state, &rule, &rule_row.s("secret"), &row.s("trigger"), &row.s("issue_id"), payload).await;
+    Ok(match r {
+        Ok(d) => json!({"ok": true, "detail": d}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    })
+}
+
+/// `threshold` rules fire once per issue when it reaches `threshold` events.
+async fn check_thresholds(state: &AppState) -> anyhow::Result<()> {
+    let rules = sqlx::query(&format!("SELECT {RULE_COLS} FROM alert_rules WHERE enabled = 1 AND trigger = 'threshold'")).fetch_all(&state.db).await?;
+    for row in rules {
+        let rule = rule_from_row(&row);
+        let issues = sqlx::query(
+            "SELECT i.id, i.project_id FROM issues i WHERE i.times_seen >= $1 AND i.last_seen > $2 AND i.status = 'open' \
+             AND ($3 = '' OR i.project_id = $3) \
+             AND NOT EXISTS (SELECT 1 FROM alert_deliveries d WHERE d.rule_id = $4 AND d.issue_id = i.id) LIMIT 20",
+        )
+        .bind(rule.threshold.max(1))
+        .bind(now_ms() - 86_400_000)
+        .bind(rule.project_id.clone().unwrap_or_default())
+        .bind(&rule.id)
+        .fetch_all(&state.db)
+        .await?;
+        for i in issues {
+            let Some(project) = crate::projects::find(state, &i.s("project_id")).await? else { continue };
+            let Some(issue) = crate::query::get_issue_row(state, &i.s("id")).await? else { continue };
+            if !filters_match(&rule.filters, &issue, None) {
+                // Record a skip so the issue is not checked again.
+                insert_delivery(state, &new_id(), &rule, &i.s("id"), "threshold", "skipped", "filters did not match", &Value::Null, 0, None).await?;
+                continue;
+            }
+            let mut payload = json!({
+                "trigger": "threshold",
+                "project": {"id": project.id, "slug": project.slug, "name": project.name},
+                "issue": issue,
+                "url": format!("{}/ui/projects/{}/issues/{}", state.config.public_url, project.slug, i.s("id")),
+                "api_url": format!("{}/api/v1/issues/{}", state.config.public_url, i.s("id")),
+                "details": {"threshold": rule.threshold},
+                "sent_at": crate::util::iso_time(now_ms()),
+            });
+            if wants_fix_context(&rule.channel) {
+                payload["fix_context"] = system_fix_context(state, &i.s("id")).await.unwrap_or(Value::Null);
+            }
+            let _ = deliver_new(state, &rule, &row.s("secret"), "threshold", &i.s("id"), payload).await;
+        }
+    }
+    Ok(())
 }
 
 pub fn sign(secret: &str, body: &[u8]) -> String {
@@ -153,13 +490,17 @@ pub(crate) mod hmac_lite {
     }
 }
 
-async fn send_webhook(state: &AppState, url: &str, secret: &str, payload: &serde_json::Value) -> anyhow::Result<String> {
+async fn send_webhook(state: &AppState, url: &str, secret: &str, trigger: &str, delivery_id: &str, payload: &Value) -> anyhow::Result<String> {
     let body = serde_json::to_vec(payload)?;
+    let ts = (now_ms() / 1000).to_string();
     let mut req = state
         .http
         .post(url)
         .header("content-type", "application/json")
         .header("user-agent", "Vaka-Webhook/1")
+        .header("x-vaka-event", trigger)
+        .header("x-vaka-delivery", delivery_id)
+        .header("x-vaka-timestamp", &ts)
         .timeout(Duration::from_secs(10));
     if !secret.is_empty() {
         req = req.header("x-vaka-signature", format!("sha256={}", sign(secret, &body)));
@@ -181,6 +522,10 @@ async fn send_email(state: &AppState, to: &str, trigger: &str, payload: &serde_j
         "new_issue" => "New issue",
         "regression" => "Regression",
         "spike" => "Spike",
+        "threshold" => "Threshold reached",
+        "issue_resolved" => "Resolved",
+        "issue_assigned" => "Assigned",
+        "issue_commented" => "New comment",
         _ => "Alert",
     };
     let subject = format!("[{}] {what}: {}", payload["project"]["name"].as_str().unwrap_or(""), issue["title"].as_str().unwrap_or(""));
@@ -240,6 +585,10 @@ pub fn slack_issue_message(trigger: &str, payload: &serde_json::Value) -> serde_
         "new_issue" => ":new: New issue",
         "regression" => ":leftwards_arrow_with_hook: Regression",
         "spike" => ":chart_with_upwards_trend: Spike",
+        "threshold" => ":rotating_light: Threshold reached",
+        "issue_resolved" => ":white_check_mark: Resolved",
+        "issue_assigned" => ":bust_in_silhouette: Assigned",
+        "issue_commented" => ":speech_balloon: New comment",
         "test" => ":white_check_mark: Test alert",
         _ => "Alert",
     };
@@ -264,6 +613,12 @@ pub fn slack_issue_message(trigger: &str, payload: &serde_json::Value) -> serde_
         "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": lines.join("\n")}}],
         "unfurl_links": false,
     })
+}
+
+fn slack_release_message(payload: &Value) -> Value {
+    let project = slack_escape(payload["project"]["name"].as_str().unwrap_or(""));
+    let release = slack_escape(payload["release"]["version"].as_str().unwrap_or(""));
+    json!({"text": format!("New release {release} in {project}"), "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": format!(":rocket: *New release* `{release}` in {project}")}}], "unfurl_links": false})
 }
 
 async fn send_slack(state: &AppState, url: &str, message: &serde_json::Value) -> anyhow::Result<String> {
@@ -308,7 +663,7 @@ async fn run_digests(state: &AppState, now: i64) -> anyhow::Result<()> {
         if now < due {
             continue;
         }
-        let last = sqlx::query("SELECT MAX(created_at) AS t FROM alert_deliveries WHERE rule_id = $1 AND status = 'ok'")
+        let last = sqlx::query("SELECT MAX(created_at) AS t FROM alert_deliveries WHERE rule_id = $1 AND status IN ('ok', 'retrying')")
             .bind(&rule.id)
             .fetch_one(&state.db)
             .await?
@@ -342,25 +697,7 @@ pub async fn send_digest(state: &AppState, rule: &Rule, secret: &str, now: i64) 
         "projects": items,
         "sent_at": crate::util::iso_time(now),
     });
-    let result = match rule.channel.as_str() {
-        "webhook" => send_webhook(state, &rule.target, secret, &payload).await,
-        "slack" => send_slack(state, &rule.target, &slack_digest_message(&payload, &state.config.public_url)).await,
-        "email" => send_digest_email(state, &rule.target, &payload).await,
-        other => Err(anyhow::anyhow!("unknown channel {other}")),
-    };
-    let (status, detail) = match &result {
-        Ok(d) => ("ok", d.clone()),
-        Err(e) => ("failed", e.to_string()),
-    };
-    sqlx::query("INSERT INTO alert_deliveries (id, rule_id, issue_id, trigger, status, detail, created_at) VALUES ($1, $2, '', 'digest', $3, $4, $5)")
-        .bind(new_id())
-        .bind(&rule.id)
-        .bind(status)
-        .bind(crate::util::truncate(&detail, 1000))
-        .bind(now_ms())
-        .execute(&state.db)
-        .await?;
-    result
+    deliver_new(state, rule, secret, "digest", "", payload).await
 }
 
 fn n(v: &serde_json::Value) -> i64 {
@@ -568,7 +905,7 @@ async fn detect_spikes(state: &AppState) -> anyhow::Result<()> {
         let project_id = r["project_id"].as_str().unwrap_or("");
         let issue_id = r["issue_id"].as_str().unwrap_or("");
         if let Some(project) = crate::projects::find(state, project_id).await? {
-            dispatch(state, &project, issue_id, "spike", Some(json!({"last_hour": r["last_hour"], "hourly_avg_prev_24h": r["hourly_avg"]}))).await?;
+            dispatch(state, &project, issue_id, "spike", Some(json!({"last_hour": r["last_hour"], "hourly_avg_prev_24h": r["hourly_avg"]})), None).await?;
         }
     }
     Ok(())
@@ -592,11 +929,7 @@ pub async fn test_rule(state: &AppState, rule_id: &str) -> anyhow::Result<String
         "url": state.config.public_url,
         "sent_at": crate::util::iso_time(now_ms()),
     });
-    match rule.channel.as_str() {
-        "webhook" => send_webhook(state, &rule.target, &row.s("secret"), &payload).await,
-        "slack" => send_slack(state, &rule.target, &slack_issue_message("test", &payload)).await,
-        _ => send_email(state, &rule.target, "test", &payload).await,
-    }
+    send(state, &rule, &row.s("secret"), "test", "", &payload, &format!("test-{}", new_id())).await
 }
 
 #[allow(dead_code)]

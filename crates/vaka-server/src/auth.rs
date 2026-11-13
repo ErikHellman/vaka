@@ -57,6 +57,11 @@ pub enum Principal {
 }
 
 impl Principal {
+    /// Vaka itself (background jobs that reuse the query layer).
+    pub fn system() -> Principal {
+        Principal::User { id: "system".into(), email: "vaka".into(), name: "Vaka".into(), role: Role::Owner }
+    }
+
     pub fn label(&self) -> String {
         match self {
             Principal::User { email, .. } => email.clone(),

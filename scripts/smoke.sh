@@ -148,8 +148,15 @@ import http.server, sys
 class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers["content-length"] or 0))
-        open(sys.argv[1], "ab").write(self.path.encode() + b" " + body + b"\n")
-        self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+        event = (self.headers.get("x-vaka-event") or "-").encode()
+        open(sys.argv[1], "ab").write(self.path.encode() + b" " + event + b" " + body + b"\n")
+        if self.path.startswith("/fail"):
+            self.send_response(500); self.end_headers(); self.wfile.write(b"boom"); return
+        self.send_response(200); self.end_headers()
+        if self.path.startswith("/gh/") and self.path.endswith("/issues"):
+            self.wfile.write(b'{"html_url": "https://github.com/acme/shop/issues/1", "number": 1}')
+        else:
+            self.wfile.write(b"ok")
     def log_message(self, *a): pass
 http.server.HTTPServer(("127.0.0.1", int(sys.argv[2])), H).serve_forever()
 ' "$HOOKS" "$HOOK_PORT" & HOOK_PID=$!
@@ -165,11 +172,42 @@ for i in $(seq 1 10); do grep -q '^/slack ' "$HOOKS" && break; sleep 0.5; done
 grep '^/slack ' "$HOOKS" | grep -q 'New issue' || fail "slack alert: $(cat "$HOOKS")"
 grep '^/slack ' "$HOOKS" | grep -q "owners $EMAIL" || fail "slack owners: $(cat "$HOOKS")"
 
+# Webhooks and agent triggers
+rule() { curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d "$1" | j 'd["id"]'; }
+rule "{\"project\":\"$SLUG\",\"trigger\":\"new_issue\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/hook\",\"secret\":\"s3cret\",\"filters\":{\"min_level\":\"error\",\"environment\":\"production\"}}" >/dev/null || fail "webhook rule"
+rule "{\"project\":\"$SLUG\",\"trigger\":\"new_issue\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/filtered\",\"filters\":{\"environment\":\"staging\"}}" >/dev/null || fail "filtered rule"
+rule "{\"project\":\"$SLUG\",\"trigger\":\"new_issue\",\"channel\":\"github_dispatch\",\"target\":\"acme/shop\",\"secret\":\"ghp_test\"}" >/dev/null || fail "dispatch rule"
+rule "{\"project\":\"$SLUG\",\"trigger\":\"new_issue\",\"channel\":\"github_issue\",\"target\":\"https://github.com/acme/shop\",\"secret\":\"ghp_test\",\"filters\":{\"mention\":\"@agent please fix\"}}" >/dev/null || fail "github issue rule"
+FAILRULE=$(rule "{\"project\":\"$SLUG\",\"trigger\":\"issue_commented\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/fail\"}") || fail "failing rule"
+rule "{\"project\":\"$SLUG\",\"trigger\":\"release_created\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/release\"}" >/dev/null || fail "release rule"
+curl -s "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d '{"trigger":"new_issue","channel":"webhook","target":"http://x","filters":{"bogus":1}}' | grep -q 'unknown filter' || fail "filter validation"
+send '{"items":[{"type":"error","release":"2.0.0","environment":"production","exception":{"type":"HookError","value":"for hooks","stacktrace":[{"function":"total","abs_path":"webpack:///./src/checkout/total.ts","filename":"src/checkout/total.ts","lineno":9,"in_app":true}]}}]}' >/dev/null
+for i in $(seq 1 20); do grep -q '^/gh/repos/acme/shop/issues ' "$HOOKS" && grep -q '^/hook ' "$HOOKS" && break; sleep 0.5; done
+grep '^/hook new_issue ' "$HOOKS" | grep 'HookError' | grep -q '"commit_trailer":"Fixes ' || fail "webhook fix context: $(grep '^/hook' "$HOOKS" | head -c 600)"
+grep -q '^/filtered ' "$HOOKS" && fail "environment filter ignored"
+grep '^/gh/repos/acme/shop/dispatches ' "$HOOKS" | grep -q '"event_type":"vaka.new_issue"' || fail "repository_dispatch: $(grep '^/gh' "$HOOKS" | head -c 600)"
+grep '^/gh/repos/acme/shop/issues ' "$HOOKS" | grep 'HookError' | grep -q '@agent please fix' || fail "github issue body"
+HOOKI=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/issues?since=1h&query=HookError" | j 'd["issues"][0]["short_id"]')
+for i in $(seq 1 10); do curl -sf "${A[@]}" "$VAKA/api/v1/issues/$HOOKI/links" | grep -q 'issues/1' && break; sleep 0.5; done
+curl -sf "${A[@]}" "$VAKA/api/v1/issues/$HOOKI/links" | grep -q 'https://github.com/acme/shop/issues/1' || fail "github issue link"
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/issues/$HOOKI/comments" -d '{"body":"looking"}' >/dev/null || fail comment
+for i in $(seq 1 10); do curl -sf "${A[@]}" "$VAKA/api/v1/alert-rules/$FAILRULE/deliveries" | grep -q retrying && break; sleep 0.5; done
+DEL=$(curl -sf "${A[@]}" "$VAKA/api/v1/alert-rules/$FAILRULE/deliveries?payload=true")
+[ "$(echo "$DEL" | j '(d["deliveries"][0]["status"], d["deliveries"][0]["attempts"], d["deliveries"][0]["payload"]["event"]["comment"])')" = "('retrying', 1, 'looking')" ] || fail "retrying delivery: $DEL"
+DID=$(echo "$DEL" | j 'd["deliveries"][0]["id"]')
+curl -sf "${A[@]}" -X PATCH "$VAKA/api/v1/alert-rules/$FAILRULE" -d "{\"target\":\"http://127.0.0.1:$HOOK_PORT/fixed\"}" >/dev/null || fail "update rule"
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules/$FAILRULE/deliveries/$DID/redeliver" | j 'd["ok"]' | grep -q True || fail "redeliver"
+grep '^/fixed issue_commented ' "$HOOKS" | grep -q looking || fail "redelivered payload"
+curl -sf "${A[@]}" -X PUT "$VAKA/api/v1/projects/$SLUG/releases/9.9.9/commits" -d '{"commits":[{"sha":"aaa1111","message":"x"}]}' >/dev/null
+for i in $(seq 1 10); do grep -q '^/release ' "$HOOKS" && break; sleep 0.5; done
+grep '^/release release_created ' "$HOOKS" | grep -q '"version":"9.9.9"' || fail "release_created: $(grep '^/release' "$HOOKS")"
+
 # MCP
 M=(-H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream')
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' | grep -q '"vaka"' || fail mcp-init
 TOOLS=$(curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | j 'len(d["result"]["tools"])')
 echo "mcp tools: $TOOLS"
+curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"list_alert_rules","arguments":{}}}' | j 'd["result"]["structuredContent"]["channels"]' | grep -q github_dispatch || fail mcp-alert-rules
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"get_fix_context\",\"arguments\":{\"issue\":\"$OWNED\"}}}" | j 'd["result"]["structuredContent"]["suggested"]["branch"]' | grep -q "^vaka/" || fail mcp-fix-context
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"resolve_issue\",\"arguments\":{\"issue\":\"$SHORT\",\"resolved_in_release\":\"1.0.1\"}}}" | j 'd["result"]["structuredContent"]["status"]' | grep -q resolved || fail mcp-resolve
 # Regression
