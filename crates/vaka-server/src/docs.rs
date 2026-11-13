@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 
-pub const INSTALL_PLATFORMS: &[&str] = &["javascript", "android", "ios", "rust", "go", "http"];
+pub const INSTALL_PLATFORMS: &[&str] = &["javascript", "android", "ios", "rust", "go", "node", "http"];
 
 macro_rules! doc {
     ($name:literal) => {
@@ -36,6 +36,7 @@ pub const DOCS: &[(&str, &str)] = &[
     doc!("sdk-ios.md"),
     doc!("sdk-rust.md"),
     doc!("sdk-go.md"),
+    doc!("sdk-node.md"),
     doc!("sdk-http.md"),
 ];
 
@@ -45,6 +46,7 @@ const INSTALL: &[(&str, &str)] = &[
     ("ios", include_str!("../../../docs/install/ios.md")),
     ("rust", include_str!("../../../docs/install/rust.md")),
     ("go", include_str!("../../../docs/install/go.md")),
+    ("node", include_str!("../../../docs/install/node.md")),
     ("http", include_str!("../../../docs/install/http.md")),
 ];
 
@@ -57,6 +59,7 @@ pub fn install_markdown(platform: &str, endpoint: &str, key: &str, project: &str
         "ios" | "swift" => "ios",
         "rust" => "rust",
         "go" | "golang" => "go",
+        "node" | "nodejs" | "node.js" | "express" | "fastify" => "node",
         _ => "http",
     };
     INSTALL

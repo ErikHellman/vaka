@@ -41,7 +41,7 @@ curl -s -X POST $VAKA_URL/api/v1/projects -H "Authorization: Bearer $VAKA_TOKEN"
 The response has the project's `ingest_key` (`vk_...`) and an `install_instructions_url` that
 returns Markdown with the key and endpoint filled in. Follow it, or see the SDK pages:
 [JavaScript](sdk-javascript.md), [Android](sdk-android.md), [iOS](sdk-ios.md), [Rust](sdk-rust.md),
-[HTTP](sdk-http.md).
+[Node.js](sdk-node.md), [HTTP](sdk-http.md).
 
 ## 5. Check that data arrives
 

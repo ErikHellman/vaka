@@ -31,7 +31,7 @@ an agent "what broke in yesterday's release and why?" and let it fix the bug.
 - [Self-hosting](self-hosting.md): Docker Compose, configuration, storage, backups and upgrades.
   [Deploy on Fly.io](deploy-fly.md) with one command.
 - Install an SDK: [JavaScript](sdk-javascript.md), [Android](sdk-android.md), [iOS](sdk-ios.md),
-  [Rust](sdk-rust.md), [OpenTelemetry](opentelemetry.md) for any backend, or [any language over HTTP](sdk-http.md).
+  [Rust](sdk-rust.md), [Node.js](sdk-node.md), [OpenTelemetry](opentelemetry.md) for any backend, or [any language over HTTP](sdk-http.md).
 - Connect an agent: [MCP](mcp.md). Machine-readable index: [/llms.txt]({{ENDPOINT}}/llms.txt).
 
 ## Reference
