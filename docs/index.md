@@ -28,7 +28,8 @@ an agent "what broke in yesterday's release and why?" and let it fix the bug.
 ## Start here
 
 - [Quickstart](quickstart.md): run Vaka and send a first event in five minutes.
-- [Self-hosting](self-hosting.md): configuration, storage, backups and upgrades.
+- [Self-hosting](self-hosting.md): Docker Compose, configuration, storage, backups and upgrades.
+  [Deploy on Fly.io](deploy-fly.md) with one command.
 - Install an SDK: [JavaScript](sdk-javascript.md), [Android](sdk-android.md), [iOS](sdk-ios.md),
   [Rust](sdk-rust.md), [OpenTelemetry](opentelemetry.md) for any backend, or [any language over HTTP](sdk-http.md).
 - Connect an agent: [MCP](mcp.md). Machine-readable index: [/llms.txt]({{ENDPOINT}}/llms.txt).

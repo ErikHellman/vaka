@@ -27,7 +27,8 @@ fix PRs. There is no dashboard: the web UI only covers setup and administration.
 - **Agent-first**: MCP server at `/mcp` (about 75 tools), REST API at `/api/v1`, `llms.txt` and
   install guides written for coding agents.
 - **Self-hosted**: one Rust binary plus ClickHouse; metadata in SQLite or Postgres; debug files on
-  disk or in S3-compatible storage. Docker Compose and Fly.io configs included.
+  disk or in S3-compatible storage. Docker Compose (with optional
+  Caddy HTTPS and Postgres) and a Fly.io deploy script included, all driven by env files.
 
 ## Quick start
 
@@ -51,8 +52,9 @@ Or, for any client that takes a JSON config:
 ```
 
 Documentation lives in [`docs/`](docs/index.md), is published at https://vaka.hellsoft.se, and
-is served by every instance at `/docs/` and `/llms.txt`. Deploying for real (Postgres, S3, email
-login, Fly.io): see [self-hosting](docs/self-hosting.md).
+is served by every instance at `/docs/` and `/llms.txt`. Deploying for real (HTTPS, Postgres, S3,
+email login): see [self-hosting](docs/self-hosting.md), or [deploy on Fly.io](docs/deploy-fly.md)
+with `deploy/fly/fly.sh launch`.
 
 ## SDKs
 

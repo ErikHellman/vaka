@@ -1,19 +1,20 @@
-# Fly.io config for the Vaka server (app "vaka").
-# ClickHouse runs as a separate private app, see deploy/fly/clickhouse/fly.toml.
-# Deploy: fly deploy   (see docs/self-hosting.md#flyio)
-app = "vaka"
-primary_region = "arn"
+# Fly.io config template for the Vaka server.
+# Do not edit the generated fly.toml: change deploy/fly/fly.env and run
+#   deploy/fly/fly.sh render   (or deploy / launch, which render first).
+# Placeholders are filled in by deploy/fly/fly.sh from deploy/fly/fly.env.
+app = "${VAKA_FLY_APP}"
+primary_region = "${VAKA_FLY_REGION}"
 
 [build]
   dockerfile = "Dockerfile"
 
 [env]
-  VAKA_PUBLIC_URL = "https://vaka.fly.dev"
+  VAKA_PUBLIC_URL = "${VAKA_PUBLIC_URL}"
   VAKA_DATA_DIR = "/data"
   VAKA_LISTEN = "0.0.0.0:8080"
-  VAKA_CLICKHOUSE_URL = "http://vaka-clickhouse.internal:8123"
+  VAKA_CLICKHOUSE_URL = "http://${VAKA_FLY_CLICKHOUSE_APP}.internal:8123"
   VAKA_CLICKHOUSE_USER = "vaka"
-  # Secrets: VAKA_CLICKHOUSE_PASSWORD, VAKA_ADMIN_EMAIL, VAKA_ADMIN_PASSWORD (fly secrets set ...)
+  # Secrets: VAKA_CLICKHOUSE_PASSWORD, VAKA_ADMIN_EMAIL, VAKA_ADMIN_PASSWORD (set by fly.sh launch)
 
 [mounts]
   source = "vaka_data"
@@ -40,5 +41,5 @@ primary_region = "arn"
     timeout = "5s"
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
+  size = "${VAKA_FLY_VM_SIZE}"
+  memory = "${VAKA_FLY_VM_MEMORY}"

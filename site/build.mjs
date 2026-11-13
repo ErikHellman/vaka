@@ -13,6 +13,7 @@ const nav = [
   ['Overview', 'index'],
   ['Quickstart', 'quickstart'],
   ['Self-hosting', 'self-hosting'],
+  ['Deploy on Fly.io', 'deploy-fly'],
   ['MCP server', 'mcp'],
   ['REST API', 'api'],
   ['CLI', 'cli'],
