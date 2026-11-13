@@ -62,6 +62,7 @@ login, Fly.io): see [self-hosting](docs/self-hosting.md).
 | Source map upload (Vite, Rollup, webpack) | [`sdks/js-bundler`](sdks/js-bundler) | [README](sdks/js-bundler/README.md) |
 | Android (Kotlin) | [`sdks/android`](sdks/android) | [SDK](docs/sdk-android.md) · [install](docs/install/android.md) |
 | iOS, macOS, tvOS (Swift) | [`sdks/ios`](sdks/ios) | [SDK](docs/sdk-ios.md) · [install](docs/install/ios.md) |
+| Node.js | [`sdks/node`](sdks/node) | [SDK](docs/sdk-node.md) · [install](docs/install/node.md) |
 | Rust | [`crates/vaka-sdk-rust`](crates/vaka-sdk-rust) | [SDK](docs/sdk-rust.md) · [install](docs/install/rust.md) |
 | Any OpenTelemetry backend | OTLP/HTTP | [OpenTelemetry](docs/opentelemetry.md) |
 | Anything else | [HTTP ingest API](docs/ingest.md) | [guide](docs/sdk-http.md) |
