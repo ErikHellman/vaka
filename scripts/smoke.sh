@@ -154,7 +154,7 @@ class H(http.server.BaseHTTPRequestHandler):
             self.send_response(500); self.end_headers(); self.wfile.write(b"boom"); return
         self.send_response(200); self.end_headers()
         if self.path.startswith("/gh/") and self.path.endswith("/issues"):
-            self.wfile.write(b'{"html_url": "https://github.com/acme/shop/issues/1", "number": 1}')
+            self.wfile.write(b"{\"html_url\": \"https://github.com/acme/shop/issues/1\", \"number\": 1}")
         else:
             self.wfile.write(b"ok")
     def log_message(self, *a): pass
