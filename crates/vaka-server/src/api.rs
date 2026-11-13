@@ -64,6 +64,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/projects/{p}/flags", get(list_flags).post(create_flag))
         .route("/api/v1/projects/{p}/flags/{key}", get(get_flag).patch(update_flag).delete(delete_flag))
         .route("/api/v1/projects/{p}/flags/{key}/health", get(flag_health))
+        .route("/api/v1/projects/{p}/anomalies", get(anomalies))
+        .route("/api/v1/projects/{p}/digest/preview", get(digest_preview))
         .route("/api/v1/projects/{p}/flags/{key}/results", get(flag_results))
         .route("/api/v1/projects/{p}/experiments", get(list_experiments).post(create_experiment))
         .route("/api/v1/projects/{p}/experiments/{name}/results", get(experiment_results))
@@ -597,6 +599,29 @@ async fn get_flag(State(s): State<AppState>, p: Principal, Path((project, key)):
     Ok(Json(crate::flags::get_flag(&s, &p, &project, &key).await?))
 }
 
+#[derive(Deserialize)]
+struct AnomalyQuery {
+    window: Option<String>,
+    frequency: Option<String>,
+    narrative: Option<bool>,
+}
+
+async fn anomalies(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<AnomalyQuery>) -> J {
+    Ok(Json(crate::anomalies::detect(&s, &p, &project, q.window.as_deref()).await?))
+}
+
+pub async fn digest_preview_inner(s: &AppState, p: &Principal, project: &str, frequency: Option<&str>, narrative: bool) -> QResult<Value> {
+    let proj = query::project_for(s, p, project).await?;
+    let sched = crate::alerts::Schedule::parse(&json!({"frequency": frequency.unwrap_or("daily")})).map_err(ApiError::bad)?;
+    let mut payload = crate::alerts::build_digest(s, Some(&proj.id), &sched, now_ms(), narrative).await?;
+    payload["text"] = json!(crate::alerts::digest_lines(&payload, false).join("\n"));
+    Ok(payload)
+}
+
+async fn digest_preview(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<AnomalyQuery>) -> J {
+    Ok(Json(digest_preview_inner(&s, &p, &project, q.frequency.as_deref(), q.narrative.unwrap_or(true)).await?))
+}
+
 async fn update_flag(State(s): State<AppState>, p: Principal, Path((project, key)): Path<(String, String)>, Json(f): Json<crate::flags::FlagIn>) -> J {
     Ok(Json(crate::flags::update_flag(&s, &p, &project, &key, f).await?))
 }
@@ -898,6 +923,20 @@ pub struct RuleBody {
     pub enabled: Option<bool>,
     pub filters: Option<Value>,
     pub max_per_hour: Option<i64>,
+    /// Digests: {frequency: daily|weekly, hour, weekday, timezone}.
+    pub schedule: Option<Value>,
+}
+
+fn schedule_str(trigger: &str, v: &Option<Value>) -> QResult<Option<String>> {
+    match v {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(String::new())),
+        Some(_) if trigger != "digest" => Err(ApiError::bad("schedule only applies to digest rules")),
+        Some(v) => {
+            let s = crate::alerts::Schedule::parse(v).map_err(ApiError::bad)?;
+            Ok(Some(serde_json::to_string(&s).map_err(anyhow::Error::from)?))
+        }
+    }
 }
 
 pub async fn list_rules_inner(s: &AppState, p: &Principal) -> QResult<Value> {
@@ -969,10 +1008,11 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
     if channel.starts_with("github_") && b.secret.as_deref().unwrap_or("").is_empty() {
         return Err(ApiError::bad("GitHub channels need `secret`: a GitHub token that can write to the repository (contents for dispatch, issues for issues)"));
     }
+    let schedule = schedule_str(&trigger, &b.schedule)?.unwrap_or_default();
     let id = new_id();
     sqlx::query(
-        "INSERT INTO alert_rules (id, project_id, name, trigger, channel, target, secret, threshold, enabled, created_at, filters, max_per_hour) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+        "INSERT INTO alert_rules (id, project_id, name, trigger, channel, target, secret, threshold, enabled, created_at, filters, max_per_hour, schedule) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
     )
     .bind(&id)
     .bind(project_id)
@@ -992,6 +1032,7 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
     .bind(now_ms())
     .bind(b.filters.filter(|f| !f.is_null()).map(|f| f.to_string()).unwrap_or_default())
     .bind(b.max_per_hour.unwrap_or(if channel.starts_with("github_") { 10 } else { 0 }).max(0))
+    .bind(schedule)
     .execute(&s.db)
     .await?;
     crate::auth::audit(s, &p.label(), "create_alert_rule", &id, &trigger).await;
@@ -1026,9 +1067,10 @@ pub async fn update_rule_inner(s: &AppState, p: &Principal, id: &str, b: RuleBod
         validate_target(&rule.channel, t)?;
     }
     validate_filters(&b.filters)?;
+    let schedule = schedule_str(&rule.trigger, &b.schedule)?;
     sqlx::query(
         "UPDATE alert_rules SET name = COALESCE($1, name), target = COALESCE($2, target), secret = COALESCE($3, secret), threshold = COALESCE($4, threshold), \
-         enabled = COALESCE($5, enabled), filters = COALESCE($6, filters), max_per_hour = COALESCE($7, max_per_hour) WHERE id = $8",
+         enabled = COALESCE($5, enabled), filters = COALESCE($6, filters), max_per_hour = COALESCE($7, max_per_hour), schedule = COALESCE($8, schedule) WHERE id = $9",
     )
     .bind(b.name)
     .bind(b.target)
@@ -1037,6 +1079,7 @@ pub async fn update_rule_inner(s: &AppState, p: &Principal, id: &str, b: RuleBod
     .bind(b.enabled.map(|e| e as i64))
     .bind(b.filters.map(|f| if f.is_null() { String::new() } else { f.to_string() }))
     .bind(b.max_per_hour.map(|m| m.max(0)))
+    .bind(schedule)
     .bind(id)
     .execute(&s.db)
     .await?;

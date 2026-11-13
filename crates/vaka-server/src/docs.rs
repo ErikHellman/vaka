@@ -27,6 +27,7 @@ pub const DOCS: &[(&str, &str)] = &[
     doc!("alerts.md"),
     doc!("performance.md"),
     doc!("flags.md"),
+    doc!("anomalies.md"),
     doc!("cli.md"),
     doc!("sdk-javascript.md"),
     doc!("sdk-android.md"),

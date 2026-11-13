@@ -1,6 +1,7 @@
 #![recursion_limit = "512"]
 mod admin;
 mod alerts;
+mod anomalies;
 mod api;
 mod auth;
 mod ch;

@@ -198,6 +198,13 @@ Funnel responses include `conversion_time` (median, p90 and a distribution of th
 first to the last step for people who finished). `breakdown=cohort:<name>` splits a funnel into
 people in and not in a cohort.
 
+### Anomalies and digests
+
+`GET /projects/{p}/anomalies?window=24h` compares the last window with the same window 1 to 4 weeks
+earlier and returns anomalies with sentences, evidence and a suggested next tool.
+`GET /projects/{p}/digest/preview?frequency=daily|weekly` builds a digest without sending it.
+Digest alert rules take `schedule: {frequency, hour, weekday, timezone}`. See [anomalies.md](anomalies.md).
+
 ### Feature flags and experiments
 
 See [flags.md](flags.md): `GET/POST /projects/{p}/flags`, `GET/PATCH/DELETE /projects/{p}/flags/{key}`,

@@ -17,7 +17,7 @@ tool `create_alert_rule`.
 | `issue_commented` | Someone comments on an issue (`event.actor` says who, so an agent can ignore its own comments) |
 | `release_created` | Vaka sees a release for the first time (first event or `set-commits`) |
 | `perf_regression` | The newest release with spans is slower than the previous one: a transaction's p95 grew by more than `threshold` percent (default 20) or a Web Vital got worse. Once per release, checked every 10 minutes. See [performance](performance.md) |
-| `digest` | Once a day at `threshold` o'clock UTC (default 8): per project, errors and new issues with the change from the day before, top issues, crash-free sessions, visitors and pageviews. Quiet projects are left out |
+| `digest` | Daily or weekly on a `schedule` in your time zone (default: daily at `threshold` o'clock UTC): per project, errors and new issues with the change from the previous period, top issues, crash-free sessions, traffic and [detected anomalies](anomalies.md), opened by a short narrative. Quiet projects are left out |
 
 A rule without `project` applies to all projects. A spike rule notifies at most once per issue
 every 6 hours.
@@ -66,7 +66,8 @@ curl -X POST {{ENDPOINT}}/api/v1/alert-rules -H "Authorization: Bearer $VAKA_TOK
   -d '{"trigger": "digest", "channel": "slack", "target": "https://hooks.slack.com/services/…", "threshold": 7}'
 ```
 
-Testing a digest rule sends today's digest right away.
+Testing a digest rule sends today's digest right away. For weekly digests or a local hour, set
+`schedule` (see [anomalies.md](anomalies.md#scheduled-digests)).
 
 For email, set `"channel": "email"` and `"target"` to one or more comma-separated addresses.
 Email needs `VAKA_RESEND_API_KEY` and `VAKA_EMAIL_FROM` on the server.
@@ -164,7 +165,7 @@ commits, links and suggested branch and commit trailer). Slack and email message
 
 A `release_created` webhook gets `{"trigger", "project", "release": {"version"}, "api_url", "sent_at"}`.
 
-A digest webhook gets `{"trigger": "digest", "period": {"since", "until"}, "projects": [{"project", "errors", "errors_prev", "new_issue_count", "new_issues", "top_issues", "sessions", "crash_free_sessions", "visitors", "visitors_prev", "pageviews", "pageviews_prev"}], "sent_at"}`.
+A digest webhook gets `{"trigger": "digest", "title", "schedule", "period": {"since", "until", "label"}, "narrative", "narrative_source", "projects": [{"project", "anomalies", "errors", "errors_prev", "new_issue_count", "new_issues", "top_issues", "sessions", "crash_free_sessions", "visitors", "visitors_prev", "pageviews", "pageviews_prev"}], "sent_at"}`.
 
 For `spike`, `details` is `{"last_hour": 140, "hourly_avg_prev_24h": 12.5}`; for `threshold`,
 `{"threshold": 100}`. Non-2xx responses and timeouts (10 s) are retried (see above).
