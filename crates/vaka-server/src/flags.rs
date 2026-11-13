@@ -209,7 +209,7 @@ fn validate(f: &FlagIn) -> QResult<()> {
                 return Err(ApiError::bad("variant keys must be unique, 1 to 64 characters, weights 0 to 10000"));
             }
         }
-        if vs.iter().all(|v| v.weight == 0) {
+        if !vs.is_empty() && vs.iter().all(|v| v.weight == 0) {
             return Err(ApiError::bad("at least one variant needs a weight above 0"));
         }
     }
