@@ -82,7 +82,7 @@ pub fn merge(events: &[Value], errors: &[Value], sessions: &[Value]) -> Vec<Valu
             Some("screen_view") => "screen_view",
             _ => "event",
         };
-        let props: Value = serde_json::from_str(e["props"].as_str().unwrap_or("{}")).unwrap_or(json!({}));
+        let props: Value = serde_json::from_str(e["props_json"].as_str().unwrap_or("{}")).unwrap_or(json!({}));
         let props = if props.as_object().map(|o| o.is_empty()).unwrap_or(true) { Value::Null } else { props };
         out.push(entry(ts, kind, e["label"].as_str().unwrap_or("").to_string(), json!({"url": e["url"].as_str().filter(|u| !u.is_empty()), "props": props})));
     }
@@ -119,7 +119,7 @@ pub fn merge(events: &[Value], errors: &[Value], sessions: &[Value]) -> Vec<Valu
     out
 }
 
-const EVENT_SQL: &str = "SELECT toUnixTimestamp64Milli(timestamp) AS ts, type, LABEL AS label, url, toJSONString(props) AS props FROM events \
+const EVENT_SQL: &str = "SELECT toUnixTimestamp64Milli(timestamp) AS ts, type, LABEL AS label, url, toJSONString(props) AS props_json FROM events \
     WHERE project_id = {p:String} AND session_id = {s:String} AND timestamp >= fromUnixTimestamp64Milli({from:Int64}) AND timestamp <= fromUnixTimestamp64Milli({to:Int64}) \
     ORDER BY timestamp LIMIT 2000";
 const ERROR_SQL: &str = "SELECT toUnixTimestamp64Milli(timestamp) AS ts, toString(event_id) AS event_id, issue_id, exception_type, exception_value, message, culprit, \
@@ -337,7 +337,7 @@ mod tests {
     fn merges_in_order() {
         let events = vec![
             json!({"ts": 1000, "type": "pageview", "label": "pageview /", "url": "https://x/", "props": "{}"}),
-            json!({"ts": 3000, "type": "custom", "label": "add_to_cart", "url": "", "props": "{\"sku\":\"a\"}"}),
+            json!({"ts": 3000, "type": "custom", "label": "add_to_cart", "url": "", "props_json": "{\"sku\":\"a\"}"}),
         ];
         let crumbs = json!([{"category": "ui.click", "message": "button#buy", "timestamp": 3.5}, {"category": "error", "message": "boom", "timestamp": 4.0}]).to_string();
         let errors = vec![
