@@ -29,11 +29,12 @@ const nav = [
   ['SDK: iOS', 'sdk-ios'],
   ['SDK: Rust', 'sdk-rust'],
   ['SDK: Go', 'sdk-go'],
+  ['SDK: Node.js', 'sdk-node'],
   ['SDK: .NET', 'sdk-dotnet'],
   ['SDK: HTTP', 'sdk-http'],
 ];
-const installs = ['javascript', 'android', 'ios', 'rust', 'go', 'dotnet', 'http'];
-const installLabel = { javascript: 'JavaScript', android: 'Android', ios: 'iOS', rust: 'Rust', go: 'Go', dotnet: '.NET', http: 'Other (HTTP)' };
+const installs = ['javascript', 'android', 'ios', 'rust', 'go', 'node', 'dotnet', 'http'];
+const installLabel = { javascript: 'JavaScript', android: 'Android', ios: 'iOS', rust: 'Rust', go: 'Go', node: 'Node.js', dotnet: '.NET', http: 'Other (HTTP)' };
 
 const fill = (s) =>
   s.replaceAll('{{ENDPOINT}}', ENDPOINT).replaceAll('{{KEY}}', 'vk_your_ingest_key').replaceAll('{{PROJECT}}', 'your-project');

@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
     <!-- Package version. The release workflow overrides it with -p:Version=X.Y.Z. -->
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

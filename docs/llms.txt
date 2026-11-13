@@ -14,7 +14,7 @@ Instance: {{ENDPOINT}}
    `POST {{ENDPOINT}}/api/v1/projects {"name": "...", "platform": "javascript|android|ios|rust|go|node|python|jvm|dotnet|other"}`.
    The response contains the ingest key (`vk_...`, safe to embed in apps).
 3. Get the install guide with the key filled in: MCP tool `get_install_instructions`, or
-   `GET {{ENDPOINT}}/api/v1/projects/{project}/install/{javascript|android|ios|rust|go|dotnet|http}`.
+   `GET {{ENDPOINT}}/api/v1/projects/{project}/install/{javascript|android|ios|rust|go|node|dotnet|http}`.
    Follow it step by step, including the debug file upload step in the build.
 4. Verify: send a test event and confirm it with `list_issues`.
 
@@ -23,6 +23,7 @@ Instance: {{ENDPOINT}}
 - [Install: iOS]({{ENDPOINT}}/docs/install/ios)
 - [Install: Rust]({{ENDPOINT}}/docs/install/rust)
 - [Install: Go]({{ENDPOINT}}/docs/install/go)
+- [Install: Node.js]({{ENDPOINT}}/docs/install/node)
 - [Install: .NET]({{ENDPOINT}}/docs/install/dotnet)
 - [Install: any other language over HTTP]({{ENDPOINT}}/docs/install/http)
 
@@ -85,5 +86,6 @@ filter to any analytics tool, or `breakdown: "cohort:<name>"` to a funnel.
 - [iOS]({{ENDPOINT}}/docs/sdk-ios.md)
 - [Rust]({{ENDPOINT}}/docs/sdk-rust.md)
 - [Go]({{ENDPOINT}}/docs/sdk-go.md)
+- [Node.js]({{ENDPOINT}}/docs/sdk-node.md)
 - [.NET]({{ENDPOINT}}/docs/sdk-dotnet.md)
 - [HTTP]({{ENDPOINT}}/docs/sdk-http.md)
