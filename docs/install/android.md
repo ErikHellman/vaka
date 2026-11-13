@@ -17,11 +17,11 @@ In the **app module's** `build.gradle.kts`:
 plugins {
     id("com.android.application")
     // ...existing plugins...
-    id("se.hellsoft.vaka") version "0.1.0"   // uploads the R8 mapping after each minified build
+    id("se.hellsoft.vaka") version "0.2.0"   // uploads the R8 mapping after each minified build
 }
 
 dependencies {
-    implementation("se.hellsoft.vaka:vaka-android:0.1.0")
+    implementation("se.hellsoft.vaka:vaka-android:0.2.0")
 }
 
 vaka {
@@ -37,7 +37,7 @@ instead and reference them with `alias(libs.plugins.vaka)` / `implementation(lib
 **Building from source instead** (if the artifacts cannot be resolved): clone
 `https://github.com/ErikHellman/vaka` next to the app, then in the app's `settings.gradle.kts` add
 `includeBuild("../vaka/sdks/android/vaka-gradle-plugin")` inside `pluginManagement { }` and
-`includeBuild("../vaka/sdks/android")` at the top level, and drop the `version "0.1.0"` from the
+`includeBuild("../vaka/sdks/android")` at the top level, and drop the `version "0.2.0"` from the
 plugin line. Gradle substitutes both automatically.
 
 ## 2. Initialise in the Application class
