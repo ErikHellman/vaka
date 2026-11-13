@@ -27,7 +27,7 @@ verification and signing key below can be reused for it.
 ### 2. Portal user token
 
 **Account → Generate User Token**. This gives a username and password pair (not your login). Keep
-both; they become the `MAVEN_CENTRAL_USERNAME` and `MAVEN_CENTRAL_PASSWORD` secrets.
+both; they become the `mavenCentralUsername` and `mavenCentralPassword` secrets below.
 
 ### 3. GPG signing key
 
@@ -50,14 +50,14 @@ In the repository: **Settings → Secrets and variables → Actions → New repo
 
 | Secret | Value |
 | --- | --- |
-| `MAVEN_CENTRAL_USERNAME` | user token username (step 2) |
-| `MAVEN_CENTRAL_PASSWORD` | user token password (step 2) |
-| `SIGNING_KEY` | the full contents of `signing-key.asc`, including the `BEGIN`/`END` lines |
-| `SIGNING_KEY_PASSWORD` | the key's passphrase |
+| `ORG_GRADLE_PROJECT_mavenCentralUsername` | user token username (step 2) |
+| `ORG_GRADLE_PROJECT_mavenCentralPassword` | user token password (step 2) |
+| `ORG_GRADLE_PROJECT_signingInMemoryKey` | the full contents of `signing-key.asc`, including the `BEGIN`/`END` lines |
+| `ORG_GRADLE_PROJECT_signingInMemoryKeyId` | optional: the short key id |
+| `ORG_GRADLE_PROJECT_signingInMemoryKeyPassword` | the key's passphrase |
 
-The workflow passes them to Gradle as `ORG_GRADLE_PROJECT_mavenCentralUsername`,
-`ORG_GRADLE_PROJECT_mavenCentralPassword`, `ORG_GRADLE_PROJECT_signingInMemoryKey` and
-`ORG_GRADLE_PROJECT_signingInMemoryKeyPassword`.
+These are the same names the [Android guide](android.md) uses, so one set serves both SDKs. The
+workflow passes them to Gradle as environment variables of the same names.
 
 ## Each release
 

@@ -1,0 +1,67 @@
+{
+  "name": "vaka-node",
+  "version": "0.2.0",
+  "description": "Vaka Node.js SDK: crash reporting, OpenTelemetry tracing and logs, feature flags",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ErikHellman/vaka",
+    "directory": "sdks/node"
+  },
+  "homepage": "https://vaka.hellsoft.se/sdk-node",
+  "keywords": [
+    "vaka",
+    "crash-reporting",
+    "error-tracking",
+    "opentelemetry",
+    "feature-flags",
+    "analytics"
+  ],
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    },
+    "./register": {
+      "types": "./dist/register.d.ts",
+      "import": "./dist/register.mjs",
+      "require": "./dist/register.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node build.mjs && tsc --emitDeclarationOnly",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.10.0",
+    "@opentelemetry/core": "^3.1.1",
+    "@opentelemetry/exporter-logs-otlp-proto": "^0.301.2",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.301.2",
+    "@opentelemetry/instrumentation": "^0.301.2",
+    "@opentelemetry/instrumentation-http": "^0.301.2",
+    "@opentelemetry/resources": "^3.1.1",
+    "@opentelemetry/sdk-logs": "^3.1.1",
+    "@opentelemetry/sdk-node": "^0.301.2",
+    "@opentelemetry/sdk-trace": "^3.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.24.2",
+    "express": "^4.22.3",
+    "fastify": "^5.12.8",
+    "typescript": "^5.9.3"
+  }
+}

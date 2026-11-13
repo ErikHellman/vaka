@@ -55,13 +55,15 @@ jobs:
       - name: Publish to Maven Central
         if: env.MODE != 'dry-run'
         env:
-          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
-          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
-          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
-          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          # Same secret names as the Android SDK (docs/releasing/android.md).
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.ORG_GRADLE_PROJECT_mavenCentralUsername }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.ORG_GRADLE_PROJECT_mavenCentralPassword }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.ORG_GRADLE_PROJECT_signingInMemoryKey }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.ORG_GRADLE_PROJECT_signingInMemoryKeyId }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.ORG_GRADLE_PROJECT_signingInMemoryKeyPassword }}
         run: |
           if [ -z "$ORG_GRADLE_PROJECT_mavenCentralUsername" ] || [ -z "$ORG_GRADLE_PROJECT_signingInMemoryKey" ]; then
-            echo "::error::MAVEN_CENTRAL_USERNAME/PASSWORD and SIGNING_KEY/SIGNING_KEY_PASSWORD secrets are required (docs/releasing/jvm.md)"
+            echo "::error::The ORG_GRADLE_PROJECT_mavenCentral* and ORG_GRADLE_PROJECT_signingInMemoryKey* secrets are required (docs/releasing/jvm.md)"
             exit 1
           fi
           if [ "$MODE" = release ]; then task=publishAndReleaseToMavenCentral; else task=publishToMavenCentral; fi

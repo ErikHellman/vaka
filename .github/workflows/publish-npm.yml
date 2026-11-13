@@ -1,0 +1,74 @@
+name: Publish npm packages
+
+# Manual: publishes vaka-browser, vaka-bundler-plugin and vaka-node from a release tag.
+# Uses npm trusted publishing (OIDC) when configured on npmjs.com, else the NPM_TOKEN secret.
+# See docs/releasing/npm.md.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag to publish from (e.g. v0.3.0)"
+        required: true
+      packages:
+        description: "Which packages"
+        type: choice
+        options: [all, vaka-browser, vaka-bundler-plugin, vaka-node]
+        default: all
+      dry_run:
+        description: "Pack and check only; don't publish"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: vaka-browser
+            dir: sdks/js
+          - name: vaka-bundler-plugin
+            dir: sdks/js-bundler
+          - name: vaka-node
+            dir: sdks/node
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v4
+        if: inputs.packages == 'all' || inputs.packages == matrix.name
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v4
+        if: inputs.packages == 'all' || inputs.packages == matrix.name
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Build and test
+        if: inputs.packages == 'all' || inputs.packages == matrix.name
+        run: |
+          if [ -f package-lock.json ]; then npm ci; fi
+          npm test
+      - name: Check version
+        if: inputs.packages == 'all' || inputs.packages == matrix.name
+        id: version
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "${REF#v}" != "$version" ]; then echo "::error::package.json has $version but the tag is $REF"; exit 1; fi
+          if npm view "${{ matrix.name }}@$version" version >/dev/null 2>&1; then
+            echo "${{ matrix.name }}@$version is already on npm; skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+          npm pack --dry-run
+      - name: Publish
+        if: (inputs.packages == 'all' || inputs.packages == matrix.name) && !inputs.dry_run && steps.version.outputs.skip != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
