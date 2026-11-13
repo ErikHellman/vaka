@@ -30,7 +30,7 @@ an agent "what broke in yesterday's release and why?" and let it fix the bug.
 - [Quickstart](quickstart.md): run Vaka and send a first event in five minutes.
 - [Self-hosting](self-hosting.md): configuration, storage, backups and upgrades.
 - Install an SDK: [JavaScript](sdk-javascript.md), [Android](sdk-android.md), [iOS](sdk-ios.md),
-  [Rust](sdk-rust.md), [OpenTelemetry](opentelemetry.md) for any backend, or [any language over HTTP](sdk-http.md).
+  [Rust](sdk-rust.md), [.NET](sdk-dotnet.md), [OpenTelemetry](opentelemetry.md) for any backend, or [any language over HTTP](sdk-http.md).
 - Connect an agent: [MCP](mcp.md). Machine-readable index: [/llms.txt]({{ENDPOINT}}/llms.txt).
 
 ## Reference

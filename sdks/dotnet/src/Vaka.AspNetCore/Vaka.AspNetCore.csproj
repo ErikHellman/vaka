@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <PackageId>Vaka.AspNetCore</PackageId>
+    <Description>One-line Vaka setup for ASP.NET Core and the generic host: unhandled request exceptions, ILogger breadcrumbs and errors, per-request scopes, and OpenTelemetry tracing and logs sent to Vaka.</Description>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../Vaka/Vaka.csproj" />
+    <ProjectReference Include="../Vaka.OpenTelemetry/Vaka.OpenTelemetry.csproj" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.2" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.20.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

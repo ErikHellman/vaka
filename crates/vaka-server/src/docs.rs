@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 
-pub const INSTALL_PLATFORMS: &[&str] = &["javascript", "android", "ios", "rust", "http"];
+pub const INSTALL_PLATFORMS: &[&str] = &["javascript", "android", "ios", "rust", "dotnet", "http"];
 
 macro_rules! doc {
     ($name:literal) => {
@@ -34,6 +34,7 @@ pub const DOCS: &[(&str, &str)] = &[
     doc!("sdk-android.md"),
     doc!("sdk-ios.md"),
     doc!("sdk-rust.md"),
+    doc!("sdk-dotnet.md"),
     doc!("sdk-http.md"),
 ];
 
@@ -42,6 +43,7 @@ const INSTALL: &[(&str, &str)] = &[
     ("android", include_str!("../../../docs/install/android.md")),
     ("ios", include_str!("../../../docs/install/ios.md")),
     ("rust", include_str!("../../../docs/install/rust.md")),
+    ("dotnet", include_str!("../../../docs/install/dotnet.md")),
     ("http", include_str!("../../../docs/install/http.md")),
 ];
 
@@ -53,6 +55,7 @@ pub fn install_markdown(platform: &str, endpoint: &str, key: &str, project: &str
         "android" | "kotlin" => "android",
         "ios" | "swift" => "ios",
         "rust" => "rust",
+        "dotnet" | ".net" | "csharp" | "c#" | "aspnetcore" | "fsharp" => "dotnet",
         _ => "http",
     };
     INSTALL

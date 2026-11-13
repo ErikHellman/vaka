@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/Vaka.Sample.Web/Vaka.Sample.Web.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Vaka.AspNetCore/Vaka.AspNetCore.csproj" />
+    <Project Path="src/Vaka.OpenTelemetry/Vaka.OpenTelemetry.csproj" />
+    <Project Path="src/Vaka/Vaka.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Vaka.Tests/Vaka.Tests.csproj" />
+  </Folder>
+</Solution>

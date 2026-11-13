@@ -122,3 +122,18 @@ jobs:
         run: ./gradlew :sample:assembleRelease
       - name: Gradle plugin
         run: ./gradlew -p vaka-gradle-plugin build
+
+  dotnet:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/dotnet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - run: dotnet test -c Release
+      - run: dotnet pack -c Release -o out
