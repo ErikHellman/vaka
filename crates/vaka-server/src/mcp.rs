@@ -339,6 +339,8 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
             query::update_issue(state, p, &req(&a, "issue")?, IssueUpdate { assignee: Some(s(&a, "assignee").unwrap_or_default()), ..Default::default() }).await?
         }
         "comment_issue" => query::comment_issue(state, p, &req(&a, "issue")?, &req(&a, "body")?).await?,
+        "get_session_timeline" => crate::timeline::session_timeline(state, p, &req(&a, "project")?, &req(&a, "session_id")?, i(&a, "limit")).await?,
+        "issue_precursors" => crate::timeline::precursors(state, p, &req(&a, "issue")?, i(&a, "minutes"), i(&a, "limit")).await?,
         "get_fix_context" => crate::fixctx::fix_context(state, p, &req(&a, "issue")?).await?,
         "link_issue" => {
             crate::fixctx::add_link(state, p, &req(&a, "issue")?, crate::fixctx::LinkIn { url: req(&a, "url")?, kind: s(&a, "kind"), title: s(&a, "title") }).await?
@@ -747,6 +749,24 @@ pub fn tools() -> Vec<Value> {
             vec![("issue", issue()), ("url", prop("string", "https URL of the PR, ticket or commit")), ("kind", prop("string", "pull_request, issue, commit or other")), ("title", prop("string", "Optional title"))],
             &["issue", "url"],
             false,
+            false,
+        ),
+        tool(
+            "get_session_timeline",
+            "Get session timeline",
+            "Everything recorded in one session, oldest first: session start, pageviews, screen views, custom events, breadcrumbs (clicks, navigation, HTTP, console, lifecycle), errors, crashes and how the session ended. Session ids come from events (get_issue latest_event.session_id, get_user_timeline).",
+            vec![("project", project()), ("session_id", prop("string", "Session id")), ("limit", prop("integer", "Max entries, newest kept (default 500)"))],
+            &["project", "session_id"],
+            true,
+            false,
+        ),
+        tool(
+            "issue_precursors",
+            "Issue precursors",
+            "What users most often did in the minutes before an issue across all affected sessions: pages, screens and events with their share of crash sessions and lift versus all sessions, plus the most common breadcrumbs. Use it to find the trigger of a crash that is hard to reproduce.",
+            vec![("issue", issue()), ("minutes", prop("integer", "Window before each crash (default 5, max 60)")), ("limit", prop("integer", "Max rows (default 15)"))],
+            &["issue"],
+            true,
             false,
         ),
         tool("get_code_mappings", "Get code mappings", "How stack-trace paths map to repository paths (used for source links on frames).", vec![("project", project())], &["project"], true, false),

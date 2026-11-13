@@ -38,6 +38,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/projects/{p}/ownership/apply", post(apply_ownership))
         .route("/api/v1/projects/{p}/code-mappings", get(get_code_mappings).put(put_code_mappings))
         .route("/api/v1/issues/{id}/fix-context", get(fix_context))
+        .route("/api/v1/issues/{id}/precursors", get(issue_precursors))
+        .route("/api/v1/projects/{p}/sessions/{session_id}/timeline", get(session_timeline))
         .route("/api/v1/issues/{id}/links", get(list_links).post(add_link))
         .route("/api/v1/issues/{id}/links/{link}", delete(delete_link))
         .route("/api/v1/projects/{p}/analytics/summary", get(analytics_summary))
@@ -125,6 +127,25 @@ struct MappingsBody {
 
 async fn put_code_mappings(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(b): Json<MappingsBody>) -> J {
     Ok(Json(crate::fixctx::set_code_mappings(&s, &p, &project, b.mappings).await?))
+}
+
+#[derive(Deserialize)]
+struct PrecursorQuery {
+    minutes: Option<i64>,
+    limit: Option<i64>,
+}
+
+async fn issue_precursors(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Query(q): Query<PrecursorQuery>) -> J {
+    Ok(Json(crate::timeline::precursors(&s, &p, &id, q.minutes, q.limit).await?))
+}
+
+#[derive(Deserialize)]
+struct LimitQuery {
+    limit: Option<i64>,
+}
+
+async fn session_timeline(State(s): State<AppState>, p: Principal, Path((project, sid)): Path<(String, String)>, Query(q): Query<LimitQuery>) -> J {
+    Ok(Json(crate::timeline::session_timeline(&s, &p, &project, &sid, q.limit).await?))
 }
 
 async fn fix_context(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {
@@ -529,10 +550,6 @@ async fn update_issue(State(s): State<AppState>, p: Principal, Path(id): Path<St
     Ok(Json(query::update_issue(&s, &p, &id, u).await?))
 }
 
-#[derive(Deserialize)]
-struct LimitQuery {
-    limit: Option<i64>,
-}
 
 async fn issue_events(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Query(q): Query<LimitQuery>) -> J {
     Ok(Json(query::list_issue_events(&s, &p, &id, q.limit).await?))

@@ -97,7 +97,11 @@ Rules:
 - **Frames are ordered crash site first**: `stacktrace[0]` is where the error was raised.
 - `exceptions` is the cause chain, outermost first. A single `exception` object is also accepted.
 - Mark library/framework frames `in_app: false`. Grouping uses the top in-app frames.
-- Breadcrumbs: send at most the last 100.
+- Breadcrumbs: send at most the last 100, each `{timestamp, category, type?, level, message, data?}`.
+  Use the categories `navigation` (`data: {from, to}`), `http` (`data: {method, url, status_code,
+  duration_ms}`), `ui.click`, `console` and `lifecycle` (app foreground/background, low memory);
+  common aliases (`fetch`, `xhr`, `tap`, `log`) are normalized. Send the same `session_id` on errors,
+  events and session items so Vaka can rebuild the session timeline before a crash.
 - Frame fields: `function`, `module` (JVM class / package), `filename`, `abs_path` (full URL or path;
   used to match JS source maps), `lineno`, `colno`, `in_app`, `instruction_addr` (native, hex string),
   `package` (native image path), `context_line`, `pre_context`, `post_context`.

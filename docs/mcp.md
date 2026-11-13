@@ -44,6 +44,8 @@ Read (everything a read token can call):
 | `list_issues` | Grouped errors with event and user counts in a window (`status`, `query`, `release`, `environment`, `since`, `sort`, `limit`) |
 | `get_issue` | Latest event with symbolicated stack trace (`frames[0]` is the crash site), source context, breadcrumbs, tags, breakdowns, `owners` and `suspect_commits` |
 | `get_fix_context` | Start here to fix a crash: in-app frames with repository source links, breadcrumbs, suspect commits, owners, linked PRs, suggested branch and `Fixes <ID>` trailer |
+| `get_session_timeline` | One session in order: pageviews, screens, events, breadcrumbs, errors, crashes |
+| `issue_precursors` | What users did in the minutes before an issue across sessions, with lift versus all sessions |
 | `get_code_mappings` | How stack paths map to repository paths |
 | `list_issue_events` | Recent individual events for an issue |
 | `get_event` | One event in full |

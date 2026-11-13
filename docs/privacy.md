@@ -6,6 +6,9 @@ personal data as possible. Defaults are strict; identification is opt-in.
 ## Web analytics
 
 - No cookies, no localStorage, no fingerprinting beyond what is described here.
+- The browser SDK keeps a random session id in `sessionStorage` (one tab, cleared when the tab
+  closes, rotated after 30 idle minutes) to group one visit's pageviews, events and errors. It is
+  never shared across tabs, sites or days. Turn it off with `sessions: false`.
 - Visitors are counted with `hash(daily salt + project + IP + User-Agent)`. The salt rotates
   every day and old salts are deleted, so the same person cannot be linked across days and the
   hash cannot be reversed.

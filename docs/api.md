@@ -42,9 +42,11 @@ Errors are `{"error": "explanation"}` with a 4xx/5xx status. `401` means a missi
 | Method & path | Description |
 | --- | --- |
 | `GET /projects/{p}/issues` | `status` (open\|resolved\|ignored\|all, default open), `query` (title/culprit text), `release`, `environment`, `since` (count window, default 24h), `sort` (last_seen\|first_seen\|times_seen\|events\|users), `limit` |
-| `GET /issues/{id}` | Issue with latest event (symbolicated frames, source context, breadcrumbs, tags), breakdowns by release, OS, device, browser, `owners` and `suspect_commits` |
+| `GET /issues/{id}` | Issue with latest event (symbolicated frames, source context, breadcrumbs, tags), breakdowns by release, OS, device, browser, `owners`, `suspect_commits`, `links` and `timeline_before_crash` (the last 30 session entries in the 10 minutes before the latest event) |
 | `PATCH /issues/{id}` | `{"status"?: "open"\|"resolved"\|"ignored", "resolved_in_release"?, "ignore_for"?: "7d", "assignee"?: "email" or ""}` |
 | `GET /issues/{id}/fix-context` | One compact bundle for fixing the issue: in-app frames with `source` links, last breadcrumbs, tags, suspect commits, owners, links, comments and `suggested` branch name, PR title and `Fixes <ID>` commit trailer |
+| `GET /issues/{id}/precursors` | What users most often did in the `minutes` (default 5) before this issue: pages, screens and events with `share_of_crash_sessions`, `share_of_all_sessions` and `lift`, plus the most common breadcrumbs |
+| `GET /projects/{p}/sessions/{session_id}/timeline` | Everything in one session, oldest first: `session_start`, `pageview`, `screen_view`, `event`, `breadcrumb`, `error`, `crash`, `session_end` (`limit`, default 500) |
 | `GET /issues/{id}/links` | Pull requests, tickets and commits linked to the issue |
 | `POST /issues/{id}/links` | `{"url", "kind"?: "pull_request"\|"issue"\|"commit"\|"other", "title"?}` (kind is guessed from the URL) |
 | `DELETE /issues/{id}/links/{link}` | Remove a link |

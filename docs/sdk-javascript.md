@@ -17,7 +17,8 @@ Agent-followable install guide: [`/docs/install/javascript`]({{ENDPOINT}}/docs/i
 | `autoPageviews` | `true` | Pageview on load and on SPA navigation |
 | `hashRouting` | `false` | Treat hash changes as navigation |
 | `captureErrors` | `true` | Uncaught errors and unhandled rejections |
-| `breadcrumbs` | `true` | Clicks, navigation, console, failed fetch |
+| `breadcrumbs` | `true` | Clicks, navigation, console warnings/errors, and fetch requests (`http` with method, URL, status and duration) |
+| `sessions` | `true` | A per-tab session id (in `sessionStorage`, rotated after 30 idle minutes) on every item, for session timelines. No cookies, nothing shared across tabs or sites |
 | `errorSampleRate` | `1` | Fraction of errors to send |
 | `ignoreLocalhost` | `false` | Send nothing from localhost |
 | `beforeSend` | | `(item) => item \| null` to edit or drop data |

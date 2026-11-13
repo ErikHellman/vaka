@@ -303,7 +303,7 @@ pub async fn retention(state: &AppState, p: &Principal, r: RetentionParams) -> Q
 }
 
 /// Label used for paths: `pageview /pricing`, `screen Checkout`, or the custom event name.
-const LABEL: &str = "multiIf(type = 'pageview', concat('pageview ', path), type = 'screen_view', concat('screen ', props['screen']), name)";
+pub const LABEL: &str = "multiIf(type = 'pageview', concat('pageview ', path), type = 'screen_view', concat('screen ', props['screen']), name)";
 
 #[derive(Debug, Default, Clone, Deserialize)]
 pub struct PathParams {
