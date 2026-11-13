@@ -60,6 +60,20 @@ Vaka.identify('user-123');                 // opt-in only; Vaka.identify(null) c
 
 Do not call `identify` with emails or names unless the app's privacy policy allows it.
 
+Performance tracing and feature flags are off by default. Turn them on in `init` (or with
+`data-traces-sample-rate="0.1"` and `data-flags="true"` on the script tag):
+
+```ts
+Vaka.init({
+  // ...key, endpoint, release as above
+  tracesSampleRate: 0.1,   // trace 10% of page loads: page load, fetch spans and Web Vitals
+  flags: true,             // load feature flags on init; values are attached to every item
+});
+if (Vaka.isEnabled('new_checkout')) { /* ... */ }
+```
+
+See [performance]({{ENDPOINT}}/docs/performance.md) and [feature flags]({{ENDPOINT}}/docs/flags.md).
+
 ## 4. Upload source maps (production builds)
 
 With Vite, Rollup or webpack, use the bundler plugin: it uploads the maps after each production

@@ -17,6 +17,10 @@ const nav = [
   ['REST API', 'api'],
   ['CLI', 'cli'],
   ['Alerts', 'alerts'],
+  ['Performance', 'performance'],
+  ['Feature flags', 'flags'],
+  ['Anomalies and digests', 'anomalies'],
+  ['OpenTelemetry', 'opentelemetry'],
   ['Privacy', 'privacy'],
   ['Ingest protocol', 'ingest'],
   ['SDK: JavaScript', 'sdk-javascript'],
@@ -38,7 +42,7 @@ const rewriteLinks = (html, depth) => {
     .replaceAll(`href="${ENDPOINT}/docs/install/`, `href="${up}install/`)
     .replaceAll(`href="${ENDPOINT}/docs/`, `href="${up}`)
     .replaceAll(`href="${ENDPOINT}/llms.txt"`, `href="${up}llms.txt"`)
-    .replace(/href="([a-z0-9/-]+)\.md(#[^"]*)?"/g, (_, p, h = '') => `href="${p}.html${h}"`)
+    .replace(/href="((?:\.\.\/)*[a-z0-9/-]+)\.md(#[^"]*)?"/g, (_, p, h = '') => `href="${p}.html${h}"`)
     .replace(/href="((?:\.\.\/)*install\/[a-z]+)"/g, (_, p) => `href="${p}.html"`)
     .replace(/href="((?:\.\.\/)*)index\.html"/g, (_, p) => `href="${p || './'}"`);
 };

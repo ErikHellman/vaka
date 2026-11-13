@@ -64,6 +64,17 @@ tracing_subscriber::registry()
     .init();
 ```
 
+For performance tracing, wrap request handlers and other work in spans (see
+[performance]({{ENDPOINT}}/docs/performance.md)):
+
+```rust
+let mut req = vaka_sdk::start_span("GET /users/:id", "http.server"); // or continue_span(traceparent, ..)
+{
+    let _q = req.child("SELECT users", "db"); // sent when dropped
+}
+req.finish();
+```
+
 ## 5. Symbols for release builds
 
 Backtraces are symbolicated in-process when the binary has symbols (the default for

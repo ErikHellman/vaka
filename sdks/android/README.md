@@ -1,6 +1,7 @@
 # Vaka Android SDK
 
-Crash reporting, release health and privacy-friendly analytics for Android apps.
+Crash reporting (JVM crashes, native NDK crashes and ANRs), release health and privacy-friendly
+analytics for Android apps.
 
 - `vaka-android/`: the library (`se.hellsoft.vaka:vaka-android`).
 - `vaka-gradle-plugin/`: Gradle plugin `se.hellsoft.vaka` that uploads R8 mapping files.
