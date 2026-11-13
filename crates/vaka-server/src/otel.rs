@@ -134,6 +134,12 @@ fn text(v: Option<&Value>) -> Option<String> {
     }
 }
 
+/// `vaka.error_captured: true` on a span or log record: a Vaka SDK already sent this error
+/// through the ingest API, so OTLP must not create a second one.
+fn captured_by_sdk(a: &BTreeMap<String, Value>) -> bool {
+    a.get("vaka.error_captured").is_some_and(|v| v.as_bool().unwrap_or(false) || v.as_str() == Some("true"))
+}
+
 fn first(a: &BTreeMap<String, Value>, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|k| text(a.get(*k)))
 }
@@ -257,8 +263,11 @@ pub fn trace_items(req: &Value) -> Vec<Value> {
                     "service": res.service, "user_id": user_id, "session_id": session_id, "attributes": span_attrs,
                     "http": {"method": method, "status_code": status_code},
                 }));
+                // A Vaka SDK that already reported the error itself (with breadcrumbs and
+                // richer frames) marks the span so the exception events don't duplicate it.
+                let sdk_captured = captured_by_sdk(&a);
                 for ev in arr(sp, &["events"]) {
-                    if field(ev, &["name"]).as_str() != Some("exception") {
+                    if sdk_captured || field(ev, &["name"]).as_str() != Some("exception") {
                         continue;
                     }
                     let ea = attrs(field(ev, &["attributes"]));
@@ -447,7 +456,7 @@ pub fn log_rows(project: &ProjectInfo, req: &Value, now: i64) -> (Vec<LogRow>, V
                 if !scope.is_empty() {
                     attributes.insert("otel.scope".into(), truncate(&scope, 256));
                 }
-                if matches!(label, "error" | "fatal") {
+                if matches!(label, "error" | "fatal") && !captured_by_sdk(&a) {
                     let platform = res.platform.clone().unwrap_or_default();
                     let mut e = error_item(&a, Some(ts), label, None, &res, &platform, &trace_id, &span_id, user_id.clone(), first(&a, &["session.id"]), "", Some(truncate(&body, 1000)));
                     if !scope.is_empty() {
@@ -677,6 +686,21 @@ mod tests {
         assert_eq!(errors[0]["message"], "job failed: timeout");
         assert_eq!(errors[0]["tags"]["logger"], "app.jobs");
         let _: crate::models::ErrorItem = serde_json::from_value(errors[0].clone()).unwrap();
+    }
+
+    #[test]
+    fn skips_errors_already_captured_by_sdk() {
+        let flag = json!({"key": "vaka.error_captured", "value": {"boolValue": true}});
+        let logs = json!({"resourceLogs": [{"scopeLogs": [{"logRecords": [
+            {"severityNumber": 17, "body": {"stringValue": "boom"}, "attributes": [flag]}]}]}]});
+        let (rows, errors) = log_rows(&proj(), &logs, 5);
+        assert_eq!((rows.len(), errors.len()), (1, 0));
+        let traces = json!({"resourceSpans": [{"scopeSpans": [{"spans": [{"traceId": "01010101010101010101010101010101",
+            "spanId": "0202020202020202", "name": "GET /", "kind": 2, "attributes": [flag],
+            "events": [{"name": "exception", "attributes": [{"key": "exception.type", "value": {"stringValue": "ValueError"}}]}]}]}]}]});
+        let items = trace_items(&traces);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["type"], "span");
     }
 
     #[test]

@@ -14,7 +14,7 @@ Instance: {{ENDPOINT}}
    `POST {{ENDPOINT}}/api/v1/projects {"name": "...", "platform": "javascript|android|ios|rust|go|node|python|jvm|dotnet|other"}`.
    The response contains the ingest key (`vk_...`, safe to embed in apps).
 3. Get the install guide with the key filled in: MCP tool `get_install_instructions`, or
-   `GET {{ENDPOINT}}/api/v1/projects/{project}/install/{javascript|android|ios|rust|go|jvm|node|http}`.
+   `GET {{ENDPOINT}}/api/v1/projects/{project}/install/{javascript|android|ios|rust|go|jvm|node|python|http}`.
    Follow it step by step, including the debug file upload step in the build.
 4. Verify: send a test event and confirm it with `list_issues`.
 
@@ -25,6 +25,7 @@ Instance: {{ENDPOINT}}
 - [Install: Go]({{ENDPOINT}}/docs/install/go)
 - [Install: JVM (Java, Kotlin, Scala)]({{ENDPOINT}}/docs/install/jvm)
 - [Install: Node.js]({{ENDPOINT}}/docs/install/node)
+- [Install: Python (Django, Flask, FastAPI, scripts)]({{ENDPOINT}}/docs/install/python)
 - [Install: any other language over HTTP]({{ENDPOINT}}/docs/install/http)
 
 ## Investigate and fix crashes
@@ -88,4 +89,5 @@ filter to any analytics tool, or `breakdown: "cohort:<name>"` to a funnel.
 - [Go]({{ENDPOINT}}/docs/sdk-go.md)
 - [JVM]({{ENDPOINT}}/docs/sdk-jvm.md)
 - [Node.js]({{ENDPOINT}}/docs/sdk-node.md)
+- [Python]({{ENDPOINT}}/docs/sdk-python.md)
 - [HTTP]({{ENDPOINT}}/docs/sdk-http.md)
