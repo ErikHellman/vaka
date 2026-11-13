@@ -112,22 +112,23 @@ jobs:
         working-directory: sdks/python
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      # setup-python has no 3.9 build for the current runner image; uv downloads one.
+      - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
+          activate-environment: true
       - name: Core tests without optional dependencies
         run: |
-          pip install -e . pytest
+          uv pip install -e . pytest
           pytest -q
       - name: All tests (OpenTelemetry, Django, Flask, FastAPI)
         run: |
-          pip install -e ".[otel]" flask django fastapi httpx
+          uv pip install -e ".[otel]" flask django fastapi httpx
           pytest -q
       - name: Build and check the package
         run: |
-          pip install build twine
-          python -m build
-          twine check --strict dist/*
+          uv build
+          uvx twine check --strict dist/*
 
   android:
     runs-on: ubuntu-latest
