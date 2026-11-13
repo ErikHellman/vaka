@@ -93,9 +93,17 @@ rule waits for its first scheduled time; `POST /alert-rules/{id}/test` sends one
 
 ### The narrative
 
-With `VAKA_ANTHROPIC_API_KEY` set on the server, Claude writes the opening paragraph from the
-digest data: it leads with the most severe change, connects related findings (a new release and a
-crash-rate drop) and sticks to the numbers in the digest. Only the digest summary is sent (totals,
-issue titles and anomaly sentences, no stack traces or user data). `VAKA_ANTHROPIC_MODEL` picks the
-model (default `claude-opus-5-5`). Without a key, or if the call fails, the narrative is built from
-the anomaly sentences instead. The payload says which in `narrative_source` (`claude` or `template`).
+Point Vaka at any OpenAI-compatible chat completions API (OpenAI, OpenRouter, Azure OpenAI, a
+LiteLLM proxy, Ollama, vLLM, ...) and an LLM writes the opening paragraph from the digest data: it
+leads with the most severe change, connects related findings (a new release and a crash-rate drop)
+and sticks to the numbers in the digest.
+
+| Variable | Example | |
+| --- | --- | --- |
+| `VAKA_LLM_BASE_URL` | `https://api.openai.com/v1` | Vaka calls `POST {base}/chat/completions` |
+| `VAKA_LLM_MODEL` | `gpt-4.1-mini` | Model name as the API expects it |
+| `VAKA_LLM_API_KEY` | `sk-…` | Sent as `Authorization: Bearer`; leave unset for local servers without auth |
+
+Only the digest summary is sent (totals, issue titles and anomaly sentences, no stack traces or
+user data). Without a base URL and model, or if the call fails, the narrative is built from the
+anomaly sentences instead. The payload says which in `narrative_source` (`llm` or `template`).

@@ -1187,7 +1187,7 @@ pub fn tools() -> Vec<Value> {
         tool(
             "preview_digest",
             "Preview digest",
-            "Build the digest a digest alert rule would send now, without sending it: totals, new and top issues, anomalies, the narrative (written by Claude when the server has VAKA_ANTHROPIC_API_KEY, otherwise from templates) and the plain-text rendering.",
+            "Build the digest a digest alert rule would send now, without sending it: totals, new and top issues, anomalies, the narrative (written by an LLM when the server has VAKA_LLM_BASE_URL and VAKA_LLM_MODEL, otherwise from templates) and the plain-text rendering.",
             vec![("project", project()), ("frequency", prop("string", "daily (24h, default) or weekly (7d)")), ("narrative", prop("boolean", "Write the narrative (default true)"))],
             &["project"],
             true,
