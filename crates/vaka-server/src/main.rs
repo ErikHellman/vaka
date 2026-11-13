@@ -7,6 +7,7 @@ mod ch;
 mod config;
 mod db;
 mod docs;
+mod fixctx;
 mod grouping;
 mod insights;
 mod ingest;

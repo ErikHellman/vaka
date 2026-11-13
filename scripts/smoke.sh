@@ -119,6 +119,28 @@ OI=$(curl -sf "${A[@]}" "$VAKA/api/v1/issues/$OWNED")
 echo "$OI" | j 'd["suspect_commits"][0]["url"]' | grep -q 'github.com/acme/shop/commit/deadbee' || fail "commit url"
 [ "$(echo "$OI" | j 'len(d["suspect_commits"])')" = "1" ] || fail "unrelated commit suspected"
 
+# Source links, fix context, issue links, fix-by-commit
+curl -sf "${A[@]}" -X PUT "$VAKA/api/v1/projects/$SLUG/code-mappings" -d '{"mappings":[{"stack_root":"src/","source_root":"web/src/","repository":"https://github.com/acme/shop","default_branch":"main"}]}' | j 'len(d["mappings"])' | grep -q 1 || fail "code mappings"
+OI=$(curl -sf "${A[@]}" "$VAKA/api/v1/issues/$OWNED")
+[ "$(echo "$OI" | j 'd["latest_event"]["exceptions"][0]["stacktrace"][0]["source"]["url"]')" = "https://github.com/acme/shop/blob/c0ffee1/web/src/checkout/total.ts#L4" ] || fail "source link: $(echo "$OI" | j 'd["latest_event"]["exceptions"][0]["stacktrace"][0]')"
+FIX=$(curl -sf "${A[@]}" "$VAKA/api/v1/issues/$OWNED/fix-context")
+[ "$(echo "$FIX" | j 'd["suggested"]["commit_trailer"]')" = "Fixes $OWNED" ] || fail "fix context: $FIX"
+[ "$(echo "$FIX" | j 'd["exceptions"][0]["in_app_frames"][0]["source"]["path"]')" = "web/src/checkout/total.ts" ] || fail "fix context frames: $FIX"
+[ "$(echo "$FIX" | j 'd["suspect_commits"][0]["sha"]')" = "deadbee" ] || fail "fix context suspects"
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/issues/$OWNED/links" -d '{"url":"https://github.com/acme/shop/pull/7","title":"Fix total"}' | j 'd["links"][0]["kind"]' | grep -q pull_request || fail "issue link"
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/ownership/apply" | j 'd["checked"]' >/dev/null || fail "ownership apply"
+FBC=$(curl -sf "${A[@]}" -X PUT "$VAKA/api/v1/projects/$SLUG/releases/2.0.1/commits" -d "{\"repository\":\"https://github.com/acme/shop\",\"commits\":[{\"sha\":\"f1x0000\",\"message\":\"Guard totals\\n\\nFixes $OWNED\",\"files\":[\"src/checkout/total.ts\"]}]}")
+[ "$(echo "$FBC" | j 'd["resolved_issues"]')" = "['$OWNED']" ] || fail "fix-by-commit: $FBC"
+OI=$(curl -sf "${A[@]}" "$VAKA/api/v1/issues/$OWNED")
+[ "$(echo "$OI" | j '(d["status"], d["resolved_in_release"], len(d["links"]))')" = "('resolved', '2.0.1', 2)" ] || fail "fix-by-commit issue: $(echo "$OI" | j '(d["status"], d["resolved_in_release"], d["links"])')"
+RANGE_ERR='{"type":"RangeError","value":"bad total","stacktrace":[{"function":"total","abs_path":"webpack:///./src/checkout/total.ts","filename":"src/checkout/total.ts","lineno":4,"in_app":true},{"function":"render","abs_path":"webpack:///./src/ui/app.ts","filename":"src/ui/app.ts","lineno":9,"in_app":true}]}'
+send "{\"items\":[{\"type\":\"error\",\"release\":\"2.0.0\",\"exception\":$RANGE_ERR}]}" >/dev/null
+sleep 2
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/issues/$OWNED" | j 'd["status"]')" = "resolved" ] || fail "event from an older release regressed the issue"
+send "{\"items\":[{\"type\":\"error\",\"release\":\"2.0.2\",\"exception\":$RANGE_ERR}]}" >/dev/null
+sleep 2
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/issues/$OWNED" | j 'd["status"]')" = "open" ] || fail "event from a newer release did not regress the issue"
+
 # Slack alerts and digests, delivered to a local receiver
 HOOKS=$(mktemp); HOOK_PORT=${HOOK_PORT:-18099}
 python3 -c '
@@ -148,6 +170,7 @@ M=(-H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -H 'acc
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' | grep -q '"vaka"' || fail mcp-init
 TOOLS=$(curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | j 'len(d["result"]["tools"])')
 echo "mcp tools: $TOOLS"
+curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"get_fix_context\",\"arguments\":{\"issue\":\"$OWNED\"}}}" | j 'd["result"]["structuredContent"]["suggested"]["branch"]' | grep -q "^vaka/" || fail mcp-fix-context
 curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"resolve_issue\",\"arguments\":{\"issue\":\"$SHORT\",\"resolved_in_release\":\"1.0.1\"}}}" | j 'd["result"]["structuredContent"]["status"]' | grep -q resolved || fail mcp-resolve
 # Regression
 send '{"items":[{"type":"error","release":"1.0.2","exception":{"type":"TypeError","value":"x is undefined","stacktrace":[{"function":"render","filename":"app.js","lineno":12,"in_app":true},{"function":"main","filename":"app.js","lineno":2}]}}]}'

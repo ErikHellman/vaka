@@ -71,6 +71,11 @@ enum Cmd {
         #[command(subcommand)]
         what: Ownership,
     },
+    /// Code mappings: how stack-trace paths map to repository paths (for source links)
+    CodeMappings {
+        #[command(subcommand)]
+        what: CodeMappings,
+    },
     /// Send a test error with an ingest key to verify an installation
     SendTestEvent {
         /// Ingest key (vk_...)
@@ -109,6 +114,28 @@ enum Ownership {
     Show,
     /// Replace the project's ownership rules with the contents of a file
     Set { file: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum CodeMappings {
+    /// Print the project's code mappings
+    Show,
+    /// Replace the code mappings with a JSON file: [{"stack_root", "source_root", "repository", "default_branch"}]
+    Set { file: PathBuf },
+    /// Replace the code mappings with a single mapping
+    SetOne {
+        /// Prefix of stack-trace paths, e.g. "build/src/" ("" matches every path)
+        #[arg(long, default_value = "")]
+        stack_root: String,
+        /// Repository path that replaces it, e.g. "packages/web/src/"
+        #[arg(long, default_value = "")]
+        source_root: String,
+        /// Repository web URL, e.g. https://github.com/acme/shop
+        #[arg(long)]
+        repository: String,
+        #[arg(long, default_value = "main")]
+        default_branch: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -304,6 +331,35 @@ fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
                 Ok(())
             }
         },
+        Cmd::CodeMappings { what } => {
+            let path = format!("/api/v1/projects/{}/code-mappings", ctx.project()?);
+            let v = match what {
+                CodeMappings::Show => ctx.get(&path)?,
+                CodeMappings::Set { file } => {
+                    let text = std::fs::read_to_string(&file).with_context(|| format!("cannot read {}", file.display()))?;
+                    let mappings: Value = serde_json::from_str(&text).context("the file must be a JSON array of mappings")?;
+                    ctx.send_json(reqwest::Method::PUT, &path, json!({"mappings": mappings}))?
+                }
+                CodeMappings::SetOne { stack_root, source_root, repository, default_branch } => ctx.send_json(
+                    reqwest::Method::PUT,
+                    &path,
+                    json!({"mappings": [{"stack_root": stack_root, "source_root": source_root, "repository": repository, "default_branch": default_branch}]}),
+                )?,
+            };
+            if ctx.json {
+                return print_json(&v);
+            }
+            for m in v["mappings"].as_array().into_iter().flatten() {
+                println!(
+                    "{:<30} -> {:<30} {} ({})",
+                    m["stack_root"].as_str().filter(|s| !s.is_empty()).unwrap_or("(any)"),
+                    m["source_root"].as_str().unwrap_or(""),
+                    m["repository"].as_str().unwrap_or(""),
+                    m["default_branch"].as_str().unwrap_or("")
+                );
+            }
+            Ok(())
+        }
         Cmd::SendTestEvent { key } => {
             let body = json!({"sdk": {"name": "vaka-cli", "version": env!("CARGO_PKG_VERSION")}, "items": [{
                 "type": "error", "level": "error", "platform": "other", "release": "vaka-cli-test",
@@ -416,16 +472,22 @@ fn releases(ctx: &Ctx, what: Releases) -> Result<()> {
                 bail!("no commits in {}", range.join(" "));
             }
             let repo_url = repo_url.or_else(|| git(&["remote", "get-url", "origin"]).ok().map(|u| web_url(u.trim())));
+            let tip = range.last().and_then(|r| r.split_once("..").map(|(_, b)| b.trim_start_matches('.').to_string())).filter(|t| !t.is_empty()).unwrap_or_else(|| "HEAD".into());
+            let head = git(&["rev-parse", &tip]).ok().map(|h| h.trim().to_string());
             let n = commits.len();
             let v = ctx.send_json(
                 reqwest::Method::PUT,
                 &format!("/api/v1/projects/{}/releases/{}/commits", ctx.project()?, encode(&release)),
-                json!({"repository": repo_url, "commits": commits}),
+                json!({"repository": repo_url, "head_commit": head, "commits": commits}),
             )?;
             if ctx.json {
                 return print_json(&v);
             }
             println!("{} commits recorded for release {release} ({n} read from {})", v["commits"], range.join(" "));
+            let resolved: Vec<&str> = v["resolved_issues"].as_array().into_iter().flatten().filter_map(|i| i.as_str()).collect();
+            if !resolved.is_empty() {
+                println!("resolved by commit messages: {}", resolved.join(", "));
+            }
             Ok(())
         }
         Releases::Commits { release } => {

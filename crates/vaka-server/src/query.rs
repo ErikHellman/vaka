@@ -106,7 +106,7 @@ pub async fn get_issue_row(state: &AppState, id: &str) -> anyhow::Result<Option<
     Ok(row.map(|r| issue_json(state, &r)))
 }
 
-async fn issue_for(state: &AppState, p: &Principal, id: &str) -> QResult<Value> {
+pub async fn issue_for(state: &AppState, p: &Principal, id: &str) -> QResult<Value> {
     let issue = get_issue_row(state, id).await?.ok_or_else(|| ApiError::not_found("issue"))?;
     if !p.can_read(issue["project_id"].as_str().unwrap_or("")) {
         return Err(ApiError::not_found("issue"));
@@ -285,6 +285,17 @@ pub async fn get_issue(state: &AppState, p: &Principal, id: &str) -> QResult<Val
     let mut latest_event = latest.first().map(|r| event_json(r, true)).unwrap_or(Value::Null);
     if !latest_event.is_null() {
         late_symbolicate(state, &project_id, &mut latest_event).await;
+        crate::fixctx::annotate_event(state, &project_id, &mut latest_event).await;
+        // Issues created before ownership rules existed get owners computed on read.
+        if issue["owners"].as_array().map(|o| o.is_empty()).unwrap_or(true) {
+            if let Ok(text) = crate::ownership::rules_for(state, &project_id).await {
+                let (rules, _) = crate::ownership::parse_rules(&text);
+                if let Some((owners, why)) = crate::ownership::owners_for(&rules, &latest_event["exceptions"], &latest_event["tags"]) {
+                    issue["owners"] = json!(owners);
+                    issue["owners_source"] = json!(format!("ownership rules (computed on read; {why})"));
+                }
+            }
+        }
     }
     let stats = state
         .ch
@@ -327,6 +338,7 @@ pub async fn get_issue(state: &AppState, p: &Principal, id: &str) -> QResult<Val
     issue["by_device"] = json!(devices);
     issue["daily_last_14d"] = json!(daily);
     issue["comments"] = json!(comments);
+    issue["links"] = json!(crate::fixctx::links_for(state, &issue_id).await?);
     let first_release = issue["first_release"].as_str().unwrap_or("").to_string();
     issue["suspect_commits"] = if latest_event.is_null() {
         json!([])
@@ -367,6 +379,7 @@ pub async fn get_event(state: &AppState, p: &Principal, project: &str, event_id:
         .await?;
     let mut ev = rows.first().map(|r| event_json(r, true)).ok_or_else(|| ApiError::not_found("event"))?;
     late_symbolicate(state, &project.id, &mut ev).await;
+    crate::fixctx::annotate_event(state, &project.id, &mut ev).await;
     Ok(ev)
 }
 

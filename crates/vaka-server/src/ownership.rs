@@ -134,7 +134,7 @@ pub fn clean_path(p: &str) -> String {
 }
 
 /// Candidate repository paths for a frame, most specific first.
-fn frame_paths(f: &Value) -> Vec<String> {
+pub fn frame_paths(f: &Value) -> Vec<String> {
     let mut out = Vec::new();
     for k in ["abs_path", "filename"] {
         if let Some(p) = f[k].as_str().filter(|p| !p.is_empty()) {
@@ -156,7 +156,7 @@ fn frame_paths(f: &Value) -> Vec<String> {
     out
 }
 
-fn in_app_frames(exceptions: &Value) -> Vec<Value> {
+pub fn in_app_frames(exceptions: &Value) -> Vec<Value> {
     let mut frames = Vec::new();
     for e in exceptions.as_array().into_iter().flatten() {
         let st = if e["stacktrace"].is_array() { &e["stacktrace"] } else { &e["frames"] };
@@ -261,6 +261,37 @@ pub async fn suspect_commits(state: &AppState, project_id: &str, first_release: 
     .bind(first_release)
     .fetch_all(&state.db)
     .await?;
+    let rows = if rows.is_empty() {
+        // No commits for the first release: use the newest earlier release that has commits.
+        let created = sqlx::query("SELECT created_at FROM releases WHERE project_id = $1 AND version = $2")
+            .bind(project_id)
+            .bind(first_release)
+            .fetch_optional(&state.db)
+            .await?
+            .map(|r| r.i("created_at"))
+            .unwrap_or(i64::MAX);
+        let prev = sqlx::query(
+            "SELECT r.version FROM releases r WHERE r.project_id = $1 AND r.created_at <= $2 AND r.version != $3 \
+             AND EXISTS (SELECT 1 FROM release_commits c WHERE c.project_id = r.project_id AND c.release = r.version) ORDER BY r.created_at DESC LIMIT 1",
+        )
+        .bind(project_id)
+        .bind(created)
+        .bind(first_release)
+        .fetch_optional(&state.db)
+        .await?;
+        let Some(prev) = prev else { return Ok(json!([])) };
+        sqlx::query(
+            "SELECT c.release, c.sha, c.message, c.author_name, c.author_email, c.committed_at, c.files, r.repository \
+             FROM release_commits c LEFT JOIN releases r ON r.project_id = c.project_id AND r.version = c.release \
+             WHERE c.project_id = $1 AND c.release = $2 ORDER BY c.position LIMIT 2000",
+        )
+        .bind(project_id)
+        .bind(prev.s("version"))
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        rows
+    };
     if rows.is_empty() {
         return Ok(json!([]));
     }
@@ -308,7 +339,16 @@ pub async fn suspect_commits(state: &AppState, project_id: &str, first_release: 
         }
     }
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    Ok(json!(scored.into_iter().take(3).map(|(_, v)| v).collect::<Vec<_>>()))
+    let mut out: Vec<Value> = scored.into_iter().take(3).map(|(_, v)| v).collect();
+    for c in &mut out {
+        let email = c["author_email"].as_str().unwrap_or("").to_lowercase();
+        if !email.is_empty() {
+            if let Some(u) = sqlx::query("SELECT email FROM users WHERE LOWER(email) = $1 AND disabled = 0").bind(&email).fetch_optional(&state.db).await? {
+                c["author_user"] = json!(u.s("email"));
+            }
+        }
+    }
+    Ok(json!(out))
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -331,11 +371,15 @@ pub struct CommitIn {
 pub struct SetCommits {
     #[serde(default)]
     pub repository: Option<String>,
+    /// The commit the release was built from (defaults to the first commit in the list, newest first).
+    #[serde(default)]
+    pub head_commit: Option<String>,
     pub commits: Vec<CommitIn>,
 }
 
 /// Replace the commits recorded for a release.
 pub async fn set_release_commits(state: &AppState, project_id: &str, release: &str, body: SetCommits) -> anyhow::Result<usize> {
+    let head = body.head_commit.clone().filter(|h| !h.trim().is_empty()).or_else(|| body.commits.first().map(|c| c.sha.clone())).unwrap_or_default();
     let now = now_ms();
     sqlx::query("INSERT INTO releases (project_id, version, created_at) VALUES ($1, $2, $3) ON CONFLICT (project_id, version) DO NOTHING")
         .bind(project_id)
@@ -347,6 +391,7 @@ pub async fn set_release_commits(state: &AppState, project_id: &str, release: &s
     if let Some(repo) = body.repository.as_deref() {
         sqlx::query("UPDATE releases SET repository = $1 WHERE project_id = $2 AND version = $3").bind(repo).bind(project_id).bind(release).execute(&mut *tx).await?;
     }
+    sqlx::query("UPDATE releases SET head_commit = $1 WHERE project_id = $2 AND version = $3").bind(head.trim()).bind(project_id).bind(release).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM release_commits WHERE project_id = $1 AND release = $2").bind(project_id).bind(release).execute(&mut *tx).await?;
     let mut n = 0;
     for (pos, c) in body.commits.iter().take(1000).enumerate() {
@@ -432,15 +477,50 @@ pub async fn set_ownership(state: &AppState, p: &Principal, project: &str, text:
         "note": "Rules apply to issues created from now on; existing issues keep their owners."}))
 }
 
+/// Re-apply ownership rules to open issues (all of them with `all`, else only those without owners).
+pub async fn apply_ownership(state: &AppState, p: &Principal, project: &str, all: bool) -> QResult<Value> {
+    let proj = project_for(state, p, project).await?;
+    if !p.can_write(&proj.id) {
+        return Err(ApiError::forbidden());
+    }
+    let (rules, _) = parse_rules(&rules_for(state, &proj.id).await?);
+    let rows = sqlx::query(&format!(
+        "SELECT id, owners FROM issues WHERE project_id = $1 AND status != 'resolved'{} ORDER BY last_seen DESC LIMIT 1000",
+        if all { "" } else { " AND owners = ''" }
+    ))
+    .bind(&proj.id)
+    .fetch_all(&state.db)
+    .await?;
+    let mut updated = 0;
+    for r in &rows {
+        let issue_id = r.s("id");
+        let ev = state
+            .ch
+            .query(
+                "SELECT exceptions, tags FROM errors WHERE project_id = {p:String} AND issue_id = {i:String} ORDER BY timestamp DESC LIMIT 1",
+                &[("p", proj.id.clone()), ("i", issue_id.clone())],
+            )
+            .await?;
+        let Some(ev) = ev.first() else { continue };
+        let exc: Value = ev["exceptions"].as_str().and_then(|s| serde_json::from_str(s).ok()).unwrap_or(Value::Null);
+        let owners = owners_for(&rules, &exc, &ev["tags"]).map(|(o, _)| o.join(" ")).unwrap_or_default();
+        if owners != r.s("owners") {
+            sqlx::query("UPDATE issues SET owners = $1 WHERE id = $2").bind(&owners).bind(&issue_id).execute(&state.db).await?;
+            updated += 1;
+        }
+    }
+    Ok(json!({"project": proj.slug, "checked": rows.len(), "updated": updated}))
+}
+
 pub async fn get_release_commits(state: &AppState, p: &Principal, project: &str, release: &str) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
-    let repo = sqlx::query("SELECT repository FROM releases WHERE project_id = $1 AND version = $2")
+    let rel = sqlx::query("SELECT repository, head_commit FROM releases WHERE project_id = $1 AND version = $2")
         .bind(&proj.id)
         .bind(release)
         .fetch_optional(&state.db)
         .await?
-        .ok_or_else(|| ApiError::not_found("release"))?
-        .s("repository");
+        .ok_or_else(|| ApiError::not_found("release"))?;
+    let repo = rel.s("repository");
     let rows = sqlx::query(
         "SELECT sha, message, author_name, author_email, committed_at, files FROM release_commits \
          WHERE project_id = $1 AND release = $2 ORDER BY position LIMIT 1000",
@@ -457,7 +537,7 @@ pub async fn get_release_commits(state: &AppState, p: &Principal, project: &str,
                 "committed_at": iso_time(r.i("committed_at")), "files": files.lines().filter(|l| !l.is_empty()).collect::<Vec<_>>()})
         })
         .collect();
-    Ok(json!({"project": proj.slug, "release": release, "repository": repo, "commits": commits}))
+    Ok(json!({"project": proj.slug, "release": release, "repository": repo, "head_commit": rel.s("head_commit"), "commits": commits}))
 }
 
 pub async fn put_release_commits(state: &AppState, p: &Principal, project: &str, release: &str, body: SetCommits) -> QResult<Value> {
@@ -468,8 +548,12 @@ pub async fn put_release_commits(state: &AppState, p: &Principal, project: &str,
     if release.trim().is_empty() || release.len() > 200 {
         return Err(ApiError::bad("invalid release"));
     }
+    let msgs: Vec<(String, String)> = body.commits.iter().take(1000).map(|c| (c.sha.trim().to_string(), c.message.clone())).collect();
     let n = set_release_commits(state, &proj.id, release, body).await?;
-    Ok(json!({"project": proj.slug, "release": release, "commits": n}))
+    let (repo, head) = crate::fixctx::release_repo(state, &proj.id, release).await?;
+    let commits: Vec<(String, String, String)> = msgs.into_iter().map(|(sha, m)| (sha, m, repo.clone())).collect();
+    let resolved = crate::fixctx::resolve_from_commits(state, &proj.id, &proj.slug, release, &commits).await?;
+    Ok(json!({"project": proj.slug, "release": release, "commits": n, "head_commit": head, "resolved_issues": resolved}))
 }
 
 #[cfg(test)]

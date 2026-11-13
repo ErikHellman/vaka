@@ -44,13 +44,18 @@ Errors are `{"error": "explanation"}` with a 4xx/5xx status. `401` means a missi
 | `GET /projects/{p}/issues` | `status` (open\|resolved\|ignored\|all, default open), `query` (title/culprit text), `release`, `environment`, `since` (count window, default 24h), `sort` (last_seen\|first_seen\|times_seen\|events\|users), `limit` |
 | `GET /issues/{id}` | Issue with latest event (symbolicated frames, source context, breadcrumbs, tags), breakdowns by release, OS, device, browser, `owners` and `suspect_commits` |
 | `PATCH /issues/{id}` | `{"status"?: "open"\|"resolved"\|"ignored", "resolved_in_release"?, "ignore_for"?: "7d", "assignee"?: "email" or ""}` |
+| `GET /issues/{id}/fix-context` | One compact bundle for fixing the issue: in-app frames with `source` links, last breadcrumbs, tags, suspect commits, owners, links, comments and `suggested` branch name, PR title and `Fixes <ID>` commit trailer |
+| `GET /issues/{id}/links` | Pull requests, tickets and commits linked to the issue |
+| `POST /issues/{id}/links` | `{"url", "kind"?: "pull_request"\|"issue"\|"commit"\|"other", "title"?}` (kind is guessed from the URL) |
+| `DELETE /issues/{id}/links/{link}` | Remove a link |
 | `GET /issues/{id}/events` | Recent events (`limit`) |
 | `POST /issues/{id}/comments` | `{"body": "markdown"}` |
 | `GET /projects/{p}/events` | Search error events: `query`, `level`, `release`, `environment`, `user_id`, `exception_type`, `since`, `until`, `limit` |
 | `GET /projects/{p}/events/{event_id}` | One event in full |
 
 A resolved issue that receives a new event is reopened and marked as a regression (and fires
-`regression` alerts). With `resolved_in_release`, only events from that release or newer count.
+`regression` alerts). With `resolved_in_release`, events from releases first seen before that
+release don't count (old clients still crashing are expected).
 
 ## Releases
 
@@ -61,7 +66,7 @@ A resolved issue that receives a new event is reopened and marked as a regressio
 | `GET /projects/{p}/releases/adoption` | Share of sessions and users per release over time: `since` (default 14d), `interval` (hour\|day), `environment`, `limit` (releases shown separately, default 5; the rest are `other`). Each release also gets `first_session`, `current_share_sessions` and `peak_share_sessions` |
 | `GET /projects/{p}/releases/compare?base=1.2.0&target=1.3.0` | Health side by side, new issues, gone issues, issues that increased |
 | `GET /projects/{p}/releases/{version}/commits` | Commits recorded for a release, with changed files |
-| `PUT /projects/{p}/releases/{version}/commits` | Replace them: `{"repository"?: "https://github.com/o/r", "commits": [{"sha", "message"?, "author_name"?, "author_email"?, "timestamp"?, "files"?: ["src/a.ts"]}]}` (at most 1000). `vaka releases set-commits` does this from `git log` |
+| `PUT /projects/{p}/releases/{version}/commits` | Replace them: `{"repository"?: "https://github.com/o/r", "head_commit"?: "sha", "commits": [{"sha", "message"?, "author_name"?, "author_email"?, "timestamp"?, "files"?: ["src/a.ts"]}]}` (at most 1000, newest first). `head_commit` defaults to the first commit. Commit messages with `Fixes WEB-12`, `Closes WEB-3, WEB-4` or `Resolves WEB-5` resolve those issues in this release (returned as `resolved_issues`). `vaka releases set-commits` does this from `git log` |
 | `GET /projects/{p}/explain-spike` | Why errors went up: `window` (default `1h`) vs `baseline` (default the 24h before), ranked by issue, release, OS, device, country, exception type |
 
 ### Suspect commits
@@ -69,7 +74,26 @@ A resolved issue that receives a new event is reopened and marked as a regressio
 When a release has commits recorded, `GET /issues/{id}` returns up to three `suspect_commits`:
 commits in the issue's first release that changed files appearing in its in-app stack frames,
 ranked toward the crash site. Each has `sha`, `message` (first line), `author`, `author_email`,
-`committed_at`, `url` (GitHub/GitLab), `score` and `reasons` (which file and frame matched).
+`committed_at`, `url` (GitHub/GitLab), `score`, `reasons` (which file and frame matched) and
+`author_user` when the author's email belongs to a Vaka user. If the first release has no commits,
+the newest earlier release with commits is used.
+
+### Source links and code mappings
+
+In-app frames in `GET /issues/{id}` and `GET /projects/{p}/events/{event_id}` get a `source`
+object: `{repository, path, line, ref, url, mapped}`. `ref` is the release's head commit (from
+set-commits), else the mapping's default branch. URLs use GitHub, GitLab or Bitbucket formats.
+
+Code mappings turn stack paths into repository paths. Without mappings the release repository
+and the (symbolicated) file name are used as a best guess (`mapped: false`).
+
+| Method & path | Description |
+| --- | --- |
+| `GET /projects/{p}/code-mappings` | The mappings |
+| `PUT /projects/{p}/code-mappings` | `{"mappings": [{"stack_root": "build/src/", "source_root": "packages/web/src/", "repository": "https://github.com/acme/shop", "default_branch": "main"}]}` |
+
+The longest matching `stack_root` wins; it matches at the start of the cleaned frame path or at
+any directory boundary, and `""` matches every path. `repository` defaults to the release's.
 
 ## Ownership
 
@@ -77,6 +101,7 @@ ranked toward the crash site. Each has `sha`, `message` (first line), `author`, 
 | --- | --- |
 | `GET /projects/{p}/ownership` | The rules text, parsed rules and any problems |
 | `PUT /projects/{p}/ownership` | `{"rules": "..."}` replaces them; invalid lines reject the whole update |
+| `POST /projects/{p}/ownership/apply` | Re-apply the rules to open issues without owners (`?all=true`: every open issue) |
 
 One rule per line, `<pattern> <owner>...`; the last matching line wins, `#` starts a comment.
 
@@ -92,7 +117,8 @@ Path and module rules are checked against in-app frames from the crash site outw
 frame that matches decides. Type and tag rules apply when no frame matched. A path pattern
 starting with `/` is anchored at the repository root; otherwise it can match at any directory
 (so `src/cart/**` matches `/home/ci/build/src/cart/a.ts`). New issues get `owners` set and are
-assigned to the first owner email that belongs to a Vaka user. Existing issues are not changed.
+assigned to the first owner email that belongs to a Vaka user. Existing issues without owners
+get them computed when read; `POST /projects/{p}/ownership/apply` stores them.
 
 ## Analytics
 

@@ -330,7 +330,7 @@ pub async fn upsert_issue(
     release: &str,
     ts: i64,
 ) -> anyhow::Result<(String, IssueChange)> {
-    let existing = sqlx::query("SELECT id, status, ignored_until FROM issues WHERE project_id = $1 AND fingerprint = $2")
+    let existing = sqlx::query("SELECT id, status, ignored_until, resolved_in_release FROM issues WHERE project_id = $1 AND fingerprint = $2")
         .bind(&project.id)
         .bind(fingerprint)
         .fetch_optional(&state.db)
@@ -364,7 +364,15 @@ pub async fn upsert_issue(
             let id = row.s("id");
             let status = row.s("status");
             let now = now_ms();
-            let regressed = status == "resolved";
+            let mut regressed = status == "resolved";
+            // An event from a release older than the one with the fix is not a regression.
+            if regressed {
+                if let Some(fixed) = row.os("resolved_in_release").filter(|r| !r.is_empty() && r != release) {
+                    if !release.is_empty() && release_is_older(state, &project.id, release, &fixed).await? {
+                        regressed = false;
+                    }
+                }
+            }
             let unignore = status == "ignored" && row.oi("ignored_until").map(|u| u > 0 && u < now).unwrap_or(false);
             let new_status = if regressed || unignore { "open".to_string() } else { status };
             sqlx::query(
@@ -380,4 +388,24 @@ pub async fn upsert_issue(
             Ok((id, if regressed { IssueChange::Regressed } else { IssueChange::Seen }))
         }
     }
+}
+
+/// Was `release` first seen before `than`? Unknown releases count as newer.
+async fn release_is_older(state: &AppState, project_id: &str, release: &str, than: &str) -> anyhow::Result<bool> {
+    let created = |v: String| {
+        let state = state.clone();
+        let project_id = project_id.to_string();
+        async move {
+            sqlx::query("SELECT created_at FROM releases WHERE project_id = $1 AND version = $2")
+                .bind(project_id)
+                .bind(v)
+                .fetch_optional(&state.db)
+                .await
+                .map(|r| r.map(|r| r.i("created_at")))
+        }
+    };
+    Ok(match (created(release.to_string()).await?, created(than.to_string()).await?) {
+        (Some(a), Some(b)) => a < b,
+        _ => false,
+    })
 }
