@@ -4,48 +4,64 @@ Vaka is one Rust binary (`vaka-server`) plus ClickHouse. Metadata (users, projec
 tokens, alert rules) lives in SQLite or Postgres. One instance comfortably serves 20 to 30 apps
 and websites on a 2 vCPU / 4 GB machine.
 
-## docker compose
+## Docker Compose
+
+The repository's `docker-compose.yml` runs the server (`ghcr.io/erikhellman/vaka`) and ClickHouse
+(`clickhouse/clickhouse-server:24.8` with a low-memory profile). Everything is configured in `.env`,
+so the compose file itself never needs editing:
 
 ```sh
-cp .env.example .env
-docker compose up -d                       # SQLite metadata (default)
-docker compose --profile postgres up -d    # with Postgres; also set VAKA_DB_URL
+git clone https://github.com/ErikHellman/vaka && cd vaka
+cp .env.example .env    # set VAKA_PUBLIC_URL, VAKA_ADMIN_EMAIL, VAKA_ADMIN_PASSWORD, CLICKHOUSE_PASSWORD
+docker compose up -d
 ```
 
-The compose file runs `ghcr.io/erikhellman/vaka:latest` and `clickhouse/clickhouse-server:24.8`
-with a low-memory ClickHouse profile. Data is kept in the `vaka-data`, `clickhouse-data` and
-`postgres-data` volumes.
+Optional services are turned on with `COMPOSE_PROFILES` in `.env`:
 
-Put a TLS-terminating reverse proxy (Caddy, nginx, Traefik, Cloudflare) in front of port 8080
-and set `VAKA_PUBLIC_URL` to the public HTTPS URL. Example Caddyfile:
+| Setting in `.env` | Effect |
+| --- | --- |
+| `COMPOSE_PROFILES=caddy` | Adds [Caddy](https://caddyserver.com) on ports 80 and 443 with an automatic Let's Encrypt certificate for `VAKA_DOMAIN` |
+| `COMPOSE_PROFILES=postgres` | Adds Postgres for metadata; also set `VAKA_DB_URL=postgres://vaka:<POSTGRES_PASSWORD>@postgres:5432/vaka` |
+| `VAKA_VERSION=0.2.0` | Pins the server image (default `latest`); `VAKA_IMAGE` changes the image itself |
+| `VAKA_PORT=127.0.0.1:8080` | Host port for plain HTTP; bind it to localhost when a proxy sits in front |
+| `CLICKHOUSE_VERSION`, `POSTGRES_PASSWORD` | ClickHouse image tag and Postgres password |
 
+A production server on a single VM with HTTPS, Postgres and a pinned version:
+
+```sh
+# .env
+VAKA_PUBLIC_URL=https://vaka.example.com
+VAKA_ADMIN_EMAIL=you@example.com
+VAKA_ADMIN_PASSWORD=...
+CLICKHOUSE_PASSWORD=...            # openssl rand -hex 24
+COMPOSE_PROFILES=caddy,postgres
+VAKA_DOMAIN=vaka.example.com
+VAKA_PORT=127.0.0.1:8080
+VAKA_VERSION=0.2.0
+POSTGRES_PASSWORD=...
+VAKA_DB_URL=postgres://vaka:...@postgres:5432/vaka
 ```
-vaka.example.com {
-    reverse_proxy localhost:8080
-}
-```
+
+Point the domain's DNS at the host, open ports 80 and 443, and run `docker compose up -d`. Data is
+kept in the `vaka-data`, `clickhouse-data`, `postgres-data` and `caddy-data` volumes.
+
+To use your own reverse proxy (nginx, Traefik, Cloudflare Tunnel) instead of Caddy, leave the
+profile off and proxy to port 8080. `deploy/docker/Caddyfile` shows the minimal config.
+
+Running ClickHouse somewhere that can't mount config files (Render, Railway, Kubernetes)? Build
+`deploy/clickhouse/Dockerfile`, which bakes the low-memory profile into the image.
 
 ## Fly.io
 
-The repository ships a ready Fly.io setup: `fly.toml` for the server (app `vaka`) and
-`deploy/fly/clickhouse/` for a private ClickHouse app (`vaka-clickhouse`, no public ports,
-reached at `vaka-clickhouse.internal:8123`). Metadata stays in SQLite on a volume.
-Change the app names, region and `VAKA_PUBLIC_URL` in both files for your own deployment.
+`deploy/fly/fly.sh` creates and deploys a public server app and a private ClickHouse app from
+templates, so the only setting you need is your app name:
 
 ```sh
-fly apps create vaka && fly apps create vaka-clickhouse
-fly volumes create vaka_data -a vaka -r arn -s 3
-fly volumes create clickhouse_data -a vaka-clickhouse -r arn -s 10
-PW=$(openssl rand -hex 24)
-fly secrets set -a vaka-clickhouse --stage CLICKHOUSE_PASSWORD=$PW
-fly secrets set -a vaka --stage VAKA_CLICKHOUSE_PASSWORD=$PW \
-  VAKA_ADMIN_EMAIL=you@example.com VAKA_ADMIN_PASSWORD=...
-fly deploy -c deploy/fly/clickhouse/fly.toml --ha=false
-fly deploy --ha=false
+cp deploy/fly/fly.env.example deploy/fly/fly.env   # set VAKA_FLY_APP and VAKA_ADMIN_EMAIL
+deploy/fly/fly.sh launch
 ```
 
-Both apps run a single machine each (volumes are per machine); use `--ha=false` so Fly
-does not create a second one. Volume snapshots are taken daily by Fly.
+See [Deploy on Fly.io](deploy-fly.md) for all settings, custom domains and upgrades.
 
 ## Configuration
 
@@ -122,8 +138,9 @@ VAKA_CLICKHOUSE_URL=http://localhost:8123 ./target/release/vaka-server
 
 ## Upgrades
 
-Pull the new image and restart: `docker compose pull && docker compose up -d`. Migrations run
-automatically. Read the release notes for anything that needs manual steps.
+Pull the new image and restart: `docker compose pull && docker compose up -d` (bump
+`VAKA_VERSION` in `.env` first if you pinned one). On Fly.io, run `deploy/fly/fly.sh deploy server`.
+Migrations run automatically. Read the release notes for anything that needs manual steps.
 
 ## Health and monitoring
 

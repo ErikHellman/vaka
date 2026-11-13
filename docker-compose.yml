@@ -1,15 +1,17 @@
 # Vaka: crash reporting and analytics for the agentic era.
 #
-#   cp .env.example .env   # set VAKA_ADMIN_EMAIL, VAKA_ADMIN_PASSWORD, VAKA_PUBLIC_URL
+#   cp .env.example .env   # set VAKA_PUBLIC_URL, VAKA_ADMIN_EMAIL, VAKA_ADMIN_PASSWORD
 #   docker compose up -d
 #
-# Metadata is stored in SQLite by default. To use Postgres instead:
-#   docker compose --profile postgres up -d
-#   and set VAKA_DB_URL=postgres://vaka:vaka@postgres:5432/vaka in .env
+# Everything is configured in .env (see .env.example and docs/self-hosting.md):
+#   - COMPOSE_PROFILES=caddy      adds Caddy with automatic HTTPS for VAKA_DOMAIN
+#   - COMPOSE_PROFILES=postgres   adds Postgres for metadata (also set VAKA_DB_URL)
+#   - VAKA_VERSION=0.2.0          pins the server image (default: latest)
+#   - VAKA_PORT=127.0.0.1:8080    keeps the plain HTTP port off the network behind a proxy
 
 services:
   vaka:
-    image: ghcr.io/erikhellman/vaka:latest
+    image: ${VAKA_IMAGE:-ghcr.io/erikhellman/vaka}:${VAKA_VERSION:-latest}
     build: .
     restart: unless-stopped
     ports:
@@ -24,9 +26,12 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+        required: false
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8
+    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-24.8}
     restart: unless-stopped
     environment:
       CLICKHOUSE_USER: vaka
@@ -49,12 +54,36 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: vaka
-      POSTGRES_PASSWORD: vaka
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vaka}
       POSTGRES_DB: vaka
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "vaka"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  caddy:
+    image: caddy:2
+    profiles: ["caddy"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      VAKA_DOMAIN: ${VAKA_DOMAIN:-localhost}
+    volumes:
+      - ./deploy/docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - vaka
 
 volumes:
   vaka-data:
   clickhouse-data:
   postgres-data:
+  caddy-data:
+  caddy-config:

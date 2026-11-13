@@ -27,7 +27,8 @@ fix PRs. There is no dashboard: the web UI only covers setup and administration.
 - **Agent-first**: MCP server at `/mcp` (about 75 tools), REST API at `/api/v1`, `llms.txt` and
   install guides written for coding agents.
 - **Self-hosted**: one Rust binary plus ClickHouse; metadata in SQLite or Postgres; debug files on
-  disk or in S3-compatible storage. Docker Compose and Fly.io configs included.
+  disk or in S3-compatible storage. Docker Compose (with optional
+  Caddy HTTPS and Postgres) and a Fly.io deploy script included, all driven by env files.
 
 ## Quick start
 
@@ -51,8 +52,9 @@ Or, for any client that takes a JSON config:
 ```
 
 Documentation lives in [`docs/`](docs/index.md), is published at https://vaka.hellsoft.se, and
-is served by every instance at `/docs/` and `/llms.txt`. Deploying for real (Postgres, S3, email
-login, Fly.io): see [self-hosting](docs/self-hosting.md).
+is served by every instance at `/docs/` and `/llms.txt`. Deploying for real (HTTPS, Postgres, S3,
+email login): see [self-hosting](docs/self-hosting.md), or [deploy on Fly.io](docs/deploy-fly.md)
+with `deploy/fly/fly.sh launch`.
 
 ## SDKs
 
@@ -62,6 +64,7 @@ login, Fly.io): see [self-hosting](docs/self-hosting.md).
 | Source map upload (Vite, Rollup, webpack) | [`sdks/js-bundler`](sdks/js-bundler) | [README](sdks/js-bundler/README.md) |
 | Android (Kotlin) | [`sdks/android`](sdks/android) | [SDK](docs/sdk-android.md) · [install](docs/install/android.md) |
 | iOS, macOS, tvOS (Swift) | [`sdks/ios`](sdks/ios) | [SDK](docs/sdk-ios.md) · [install](docs/install/ios.md) |
+| Node.js | [`sdks/node`](sdks/node) | [SDK](docs/sdk-node.md) · [install](docs/install/node.md) · [release](docs/releasing/npm.md) |
 | Rust | [`crates/vaka-sdk-rust`](crates/vaka-sdk-rust) | [SDK](docs/sdk-rust.md) · [install](docs/install/rust.md) |
 | Go | [`sdks/go`](sdks/go) | [SDK](docs/sdk-go.md) · [install](docs/install/go.md) · [release](docs/releasing/go.md) |
 | Python (Django, Flask, FastAPI) | [`sdks/python`](sdks/python) | [SDK](docs/sdk-python.md) · [install](docs/install/python.md) · [release](docs/releasing/python.md) |
