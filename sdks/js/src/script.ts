@@ -1,5 +1,6 @@
 // Script-tag entry point:
 // <script defer src="https://vaka.example.com/sdk/vaka.js" data-key="vk_..." data-release="1.2.3"></script>
+// Optional: data-traces-sample-rate="0.1" for page load, fetch and Web Vitals spans.
 import * as Vaka from './index';
 
 declare global {
@@ -21,6 +22,7 @@ if (script && script.dataset.key) {
     hashRouting: d.hash === 'true',
     captureErrors: d.errors !== 'false',
     ignoreLocalhost: d.ignoreLocalhost === 'true',
+    tracesSampleRate: d.tracesSampleRate ? Number(d.tracesSampleRate) : undefined,
     debug: d.debug === 'true',
   });
 }

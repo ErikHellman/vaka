@@ -152,10 +152,11 @@ async fn single_kind(
         "errors" => "error",
         "sessions" => "session",
         "events" => "event",
+        "spans" => "span",
         other => {
             return Err(IngestError(
                 StatusCode::NOT_FOUND,
-                format!("unknown ingest endpoint `{other}`: use errors, sessions, events or batch"),
+                format!("unknown ingest endpoint `{other}`: use errors, sessions, events, spans or batch"),
             ))
         }
     };
@@ -221,7 +222,7 @@ async fn accept(
             Err(e) => {
                 rejected.push(Rejected {
                     index,
-                    error: format!("invalid item: {e} (each item needs \"type\": \"error\" | \"session\" | \"event\")"),
+                    error: format!("invalid item: {e} (each item needs \"type\": \"error\" | \"session\" | \"event\" | \"span\")"),
                 });
                 continue;
             }
@@ -262,6 +263,13 @@ async fn accept(
                     }
                 }
             }
+            Item::Span(sp) => match crate::perf::span_row(project, &sp, now_ms()) {
+                Ok(row) => Work::Span(Box::new(row)),
+                Err(error) => {
+                    rejected.push(Rejected { index, error });
+                    continue;
+                }
+            },
         };
         if let Err(tokio::sync::mpsc::error::TrySendError::Full(work)) = state.work_tx.try_send(work) {
             // Lost a race for the last slots: wait briefly rather than failing half a batch.

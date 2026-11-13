@@ -46,6 +46,14 @@ Read (everything a read token can call):
 | `get_fix_context` | Start here to fix a crash: in-app frames with repository source links, breadcrumbs, suspect commits, owners, linked PRs, suggested branch and `Fixes <ID>` trailer |
 | `get_session_timeline` | One session in order: pageviews, screens, events, breadcrumbs, errors, crashes |
 | `issue_precursors` | What users did in the minutes before an issue across sessions, with lift versus all sessions |
+| `performance_summary` | Latency percentiles, throughput and error rate per transaction |
+| `slow_endpoints` | Slowest HTTP server endpoints by p95 |
+| `app_startup` | Cold and warm app start times by release |
+| `web_vitals` | LCP, INP, CLS, FCP, TTFB p75 with ratings, overall and by page |
+| `list_slow_traces` | Slowest individual traces |
+| `get_trace` | One trace as a span tree with self time and errors |
+| `span_breakdown` | Where a transaction's time goes, by child span |
+| `compare_release_performance` | p95 and Web Vitals regressions between two releases |
 | `get_code_mappings` | How stack paths map to repository paths |
 | `list_issue_events` | Recent individual events for an issue |
 | `get_event` | One event in full |

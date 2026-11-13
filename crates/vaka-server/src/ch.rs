@@ -224,4 +224,35 @@ CREATE TABLE IF NOT EXISTS events (
 PARTITION BY toYYYYMM(timestamp)
 ORDER BY (project_id, type, timestamp)
 TTL toDateTime(timestamp) + toIntervalDay(retention_days);
+
+ALTER TABLE errors ADD COLUMN IF NOT EXISTS trace_id String DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS spans (
+    project_id LowCardinality(String),
+    trace_id String,
+    span_id String,
+    parent_span_id String,
+    name String,
+    op LowCardinality(String),
+    kind LowCardinality(String),
+    status LowCardinality(String),
+    transaction String,
+    is_root UInt8,
+    start DateTime64(3, 'UTC'),
+    duration_ms Float64,
+    release String,
+    environment LowCardinality(String),
+    platform LowCardinality(String),
+    service LowCardinality(String),
+    session_id String,
+    user_id String,
+    http_method LowCardinality(String),
+    http_status UInt16,
+    attributes Map(String, String),
+    measurements Map(String, Float64),
+    retention_days UInt16
+) ENGINE = MergeTree
+PARTITION BY toYYYYMM(start)
+ORDER BY (project_id, is_root, transaction, start)
+TTL toDateTime(start) + toIntervalDay(retention_days);
 "#;

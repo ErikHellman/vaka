@@ -18,6 +18,8 @@ mod otp;
 mod ownership;
 mod models;
 mod openapi;
+mod otel;
+mod perf;
 mod processor;
 mod product;
 mod projects;

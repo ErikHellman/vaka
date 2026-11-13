@@ -22,6 +22,34 @@ pub enum Work {
     },
     Session(SessionRow),
     Event(Box<EventRow>),
+    Span(Box<SpanRow>),
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct SpanRow {
+    pub project_id: String,
+    pub trace_id: String,
+    pub span_id: String,
+    pub parent_span_id: String,
+    pub name: String,
+    pub op: String,
+    pub kind: String,
+    pub status: String,
+    pub transaction: String,
+    pub is_root: u8,
+    pub start: String,
+    pub duration_ms: f64,
+    pub release: String,
+    pub environment: String,
+    pub platform: String,
+    pub service: String,
+    pub session_id: String,
+    pub user_id: String,
+    pub http_method: String,
+    pub http_status: u16,
+    pub attributes: BTreeMap<String, String>,
+    pub measurements: BTreeMap<String, f64>,
+    pub retention_days: u16,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -112,6 +140,7 @@ pub struct ErrorRow {
     pub sdk_name: String,
     pub sdk_version: String,
     pub symbolicated: u8,
+    pub trace_id: String,
     pub retention_days: u16,
 }
 
@@ -128,18 +157,19 @@ pub fn spawn(state: AppState, mut rx: mpsc::Receiver<Work>) {
         let mut errors: Vec<ErrorRow> = Vec::new();
         let mut sessions: Vec<SessionRow> = Vec::new();
         let mut events: Vec<EventRow> = Vec::new();
+        let mut spans: Vec<SpanRow> = Vec::new();
         let mut tick = tokio::time::interval(Duration::from_millis(1000));
         // Flush in the background (at most 2 inserts in flight) so processing never waits on ClickHouse.
         let inflight = std::sync::Arc::new(tokio::sync::Semaphore::new(2));
-        let spawn_flush = |state: &AppState, e: &mut Vec<ErrorRow>, s: &mut Vec<SessionRow>, v: &mut Vec<EventRow>, sem: std::sync::Arc<tokio::sync::Semaphore>| {
-            let (state, mut e, mut s, mut v) = (state.clone(), std::mem::take(e), std::mem::take(s), std::mem::take(v));
+        let spawn_flush = |state: &AppState, e: &mut Vec<ErrorRow>, s: &mut Vec<SessionRow>, v: &mut Vec<EventRow>, sp: &mut Vec<SpanRow>, sem: std::sync::Arc<tokio::sync::Semaphore>| {
+            let (state, mut e, mut s, mut v, mut sp) = (state.clone(), std::mem::take(e), std::mem::take(s), std::mem::take(v), std::mem::take(sp));
             async move {
-                if e.is_empty() && s.is_empty() && v.is_empty() {
+                if e.is_empty() && s.is_empty() && v.is_empty() && sp.is_empty() {
                     return;
                 }
                 let permit = sem.acquire_owned().await.expect("semaphore closed");
                 tokio::spawn(async move {
-                    flush(&state, &mut e, &mut s, &mut v).await;
+                    flush(&state, &mut e, &mut s, &mut v, &mut sp).await;
                     drop(permit);
                 });
             }
@@ -157,20 +187,21 @@ pub fn spawn(state: AppState, mut rx: mpsc::Receiver<Work>) {
                         }
                         Work::Session(s) => sessions.push(s),
                         Work::Event(e) => events.push(*e),
+                        Work::Span(sp) => spans.push(*sp),
                     }
-                    if errors.len() + sessions.len() + events.len() >= 5000 {
-                        spawn_flush(&state, &mut errors, &mut sessions, &mut events, inflight.clone()).await;
+                    if errors.len() + sessions.len() + events.len() + spans.len() >= 5000 {
+                        spawn_flush(&state, &mut errors, &mut sessions, &mut events, &mut spans, inflight.clone()).await;
                     }
                 }
-                _ = tick.tick() => spawn_flush(&state, &mut errors, &mut sessions, &mut events, inflight.clone()).await,
+                _ = tick.tick() => spawn_flush(&state, &mut errors, &mut sessions, &mut events, &mut spans, inflight.clone()).await,
             }
         }
-        flush(&state, &mut errors, &mut sessions, &mut events).await;
+        flush(&state, &mut errors, &mut sessions, &mut events, &mut spans).await;
         let _ = inflight.acquire_many(2).await;
     });
 }
 
-async fn flush(state: &AppState, errors: &mut Vec<ErrorRow>, sessions: &mut Vec<SessionRow>, events: &mut Vec<EventRow>) {
+async fn flush(state: &AppState, errors: &mut Vec<ErrorRow>, sessions: &mut Vec<SessionRow>, events: &mut Vec<EventRow>, spans: &mut Vec<SpanRow>) {
     for attempt in 0..3 {
         let mut ok = true;
         if !errors.is_empty() {
@@ -191,6 +222,12 @@ async fn flush(state: &AppState, errors: &mut Vec<ErrorRow>, sessions: &mut Vec<
                 Err(e) => { ok = false; tracing::warn!(attempt, "insert events: {e:#}") }
             }
         }
+        if !spans.is_empty() {
+            match state.ch.insert("spans", spans).await {
+                Ok(()) => spans.clear(),
+                Err(e) => { ok = false; tracing::warn!(attempt, "insert spans: {e:#}") }
+            }
+        }
         if ok {
             return;
         }
@@ -205,6 +242,7 @@ async fn flush(state: &AppState, errors: &mut Vec<ErrorRow>, sessions: &mut Vec<
     if errors.len() > 50_000 { errors.clear() }
     if sessions.len() > 50_000 { sessions.clear() }
     if events.len() > 50_000 { events.clear() }
+    if spans.len() > 50_000 { spans.clear() }
 }
 
 pub fn exceptions_of(item: &ErrorItem) -> Vec<ExceptionData> {
@@ -282,6 +320,12 @@ async fn process_error(
         .as_object()
         .map(|o| o.iter().map(|(k, v)| (truncate(k, 64), truncate(&crate::models::value_to_string(v), 256))).collect())
         .unwrap_or_default();
+    let trace_id = item
+        .trace_id
+        .clone()
+        .or_else(|| contexts["trace"]["trace_id"].as_str().map(String::from))
+        .map(|t| truncate(&t.to_lowercase(), 64))
+        .unwrap_or_default();
     let browser = if user_agent.is_empty() { String::new() } else {
         woothee::parser::Parser::new().parse(&user_agent).map(|r| r.name.to_string()).filter(|n| n != "UNKNOWN").unwrap_or_default()
     };
@@ -321,6 +365,7 @@ async fn process_error(
         sdk_name: sdk.name,
         sdk_version: sdk.version,
         symbolicated: symbolicated as u8,
+        trace_id,
         retention_days: project.retention_days as u16,
     })
 }

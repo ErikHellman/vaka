@@ -164,6 +164,24 @@ fn i(args: &Value, k: &str) -> Option<i64> {
     args.get(k).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
 }
 
+fn f(args: &Value, k: &str) -> Option<f64> {
+    args.get(k).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+}
+
+fn perf_args(a: &Value) -> Result<crate::perf::PerfParams, ToolError> {
+    Ok(crate::perf::PerfParams {
+        project: req(a, "project")?,
+        since: s(a, "since"),
+        until: s(a, "until"),
+        environment: s(a, "environment"),
+        release: s(a, "release"),
+        op: s(a, "op"),
+        transaction: s(a, "transaction"),
+        limit: i(a, "limit"),
+        sort: s(a, "sort"),
+    })
+}
+
 fn analytics_args(args: &Value) -> Result<AnalyticsParams, ToolError> {
     let filters = args
         .get("filters")
@@ -339,6 +357,16 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
             query::update_issue(state, p, &req(&a, "issue")?, IssueUpdate { assignee: Some(s(&a, "assignee").unwrap_or_default()), ..Default::default() }).await?
         }
         "comment_issue" => query::comment_issue(state, p, &req(&a, "issue")?, &req(&a, "body")?).await?,
+        "performance_summary" => crate::perf::summary(state, p, perf_args(&a)?).await?,
+        "slow_endpoints" => crate::perf::slow_endpoints(state, p, perf_args(&a)?, i(&a, "min_count")).await?,
+        "app_startup" => crate::perf::app_startup(state, p, perf_args(&a)?).await?,
+        "web_vitals" => crate::perf::web_vitals(state, p, perf_args(&a)?, a.get("by_page").and_then(|v| v.as_bool())).await?,
+        "list_slow_traces" => crate::perf::slow_traces(state, p, perf_args(&a)?, f(&a, "min_ms")).await?,
+        "get_trace" => crate::perf::get_trace(state, p, &req(&a, "project")?, &req(&a, "trace_id")?).await?,
+        "span_breakdown" => crate::perf::span_breakdown(state, p, perf_args(&a)?).await?,
+        "compare_release_performance" => {
+            crate::perf::compare_releases(state, p, &req(&a, "project")?, &req(&a, "base")?, &req(&a, "target")?, i(&a, "min_count"), f(&a, "threshold")).await?
+        }
         "get_session_timeline" => crate::timeline::session_timeline(state, p, &req(&a, "project")?, &req(&a, "session_id")?, i(&a, "limit")).await?,
         "issue_precursors" => crate::timeline::precursors(state, p, &req(&a, "issue")?, i(&a, "minutes"), i(&a, "limit")).await?,
         "get_fix_context" => crate::fixctx::fix_context(state, p, &req(&a, "issue")?).await?,
@@ -412,6 +440,20 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
 
 fn prop(ty: &str, desc: &str) -> Value {
     json!({"type": ty, "description": desc})
+}
+
+fn perf_props(extra: &[(&'static str, Value)]) -> Vec<(&'static str, Value)> {
+    let mut v = vec![
+        ("project", prop("string", "Project slug or id (see list_projects)")),
+        ("since", prop("string", "Start: ISO time or relative like 24h, 7d (default 24h)")),
+        ("until", prop("string", "End (default now)")),
+        ("environment", prop("string", "Environment")),
+        ("release", prop("string", "Release")),
+        ("transaction", prop("string", "Transaction name (page path, screen, `GET /api/users/:id`)")),
+        ("limit", prop("integer", "Max rows")),
+    ];
+    v.extend(extra.iter().cloned());
+    v
 }
 
 fn tool(name: &str, title: &str, desc: &str, props: Vec<(&str, Value)>, required: &[&str], read_only: bool, destructive: bool) -> Value {
@@ -752,6 +794,84 @@ pub fn tools() -> Vec<Value> {
             false,
         ),
         tool(
+            "performance_summary",
+            "Performance summary",
+            "Latency per transaction (root span: page load, screen, HTTP endpoint, job): count, per-minute throughput, p50/p75/p95/p99, error rate, plus the overall numbers. Start here for 'is the app slow'.",
+            perf_props(&[("op", prop("string", "Only this op, e.g. http.server, pageload, navigation, app.start.cold; a trailing * matches a prefix")), ("sort", prop("string", "p95 (default), p50, p99, count, errors or total"))]),
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "slow_endpoints",
+            "Slow endpoints",
+            "Slowest HTTP server endpoints (op http.server*) by p95, with total time spent and 5xx counts. Paths are grouped (/users/:id).",
+            perf_props(&[("min_count", prop("integer", "Minimum requests per endpoint (default 5)"))]),
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "app_startup",
+            "App startup",
+            "Cold and warm app start durations (op app.start.cold / app.start.warm) per release: p50/p95/p99 and counts.",
+            perf_props(&[]),
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "web_vitals",
+            "Web Vitals",
+            "Core Web Vitals (LCP, INP, CLS) plus FCP and TTFB: p75, rating (good / needs-improvement / poor by web.dev thresholds) and the share of good and poor page views, overall and for the busiest pages. `transaction` filters to one page path.",
+            perf_props(&[("by_page", prop("boolean", "Include per-page numbers (default true)"))]),
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "list_slow_traces",
+            "List slow traces",
+            "Slowest individual traces (root spans) matching the filters, newest data first in the window. Open one with get_trace.",
+            perf_props(&[("op", prop("string", "Only this op (trailing * for prefix)")), ("min_ms", prop("number", "Minimum duration in ms"))]),
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "get_trace",
+            "Get trace",
+            "One trace as a depth-first span tree with offsets, durations and self time, plus errors (and logs) that carry the trace id. The span with the largest self_time_ms is usually the bottleneck.",
+            vec![("project", project()), ("trace_id", prop("string", "Trace id"))],
+            &["project", "trace_id"],
+            true,
+            false,
+        ),
+        tool(
+            "span_breakdown",
+            "Span breakdown",
+            "Where a transaction's time goes: its child spans (db, http.client, render, ...) grouped by op and name across the latest 1000 traces, with count per transaction, total, p95 and share of transaction time.",
+            perf_props(&[]),
+            &["project", "transaction"],
+            true,
+            false,
+        ),
+        tool(
+            "compare_release_performance",
+            "Compare release performance",
+            "Performance regressions between two releases: transactions whose p95 grew by more than `threshold` with enough samples, improvements, and Web Vitals p75 changes. Use after a deploy or when release_health looks fine but users complain.",
+            vec![
+                ("project", project()),
+                ("base", prop("string", "Older release")),
+                ("target", prop("string", "Newer release")),
+                ("min_count", prop("integer", "Minimum samples per release (default 20)")),
+                ("threshold", prop("number", "Relative p95 increase that counts as a regression (default 0.2 = 20%)")),
+            ],
+            &["project", "base", "target"],
+            true,
+            false,
+        ),
+        tool(
             "get_session_timeline",
             "Get session timeline",
             "Everything recorded in one session, oldest first: session start, pageviews, screen views, custom events, breadcrumbs (clicks, navigation, HTTP, console, lifecycle), errors, crashes and how the session ended. Session ids come from events (get_issue latest_event.session_id, get_user_timeline).",
@@ -802,14 +922,14 @@ pub fn tools() -> Vec<Value> {
         tool(
             "create_alert_rule",
             "Create alert rule",
-            "Notify or wake an agent when something happens. Triggers: new_issue, regression, spike, threshold (issue reaches N events), issue_resolved, issue_assigned, issue_commented, release_created, digest. Channels: webhook (signed JSON with the full fix context), slack, email, github_dispatch (repository_dispatch `vaka.<trigger>` to start a GitHub Actions workflow, e.g. a coding agent), github_issue (opens one GitHub issue per Vaka issue; later alerts comment). Failed deliveries are retried with backoff. Needs a write token.",
+            "Notify or wake an agent when something happens. Triggers: new_issue, regression, spike, threshold (issue reaches N events), issue_resolved, issue_assigned, issue_commented, release_created, perf_regression (newest release slower than the previous one; threshold = p95 increase in percent, default 20), digest. Channels: webhook (signed JSON with the full fix context), slack, email, github_dispatch (repository_dispatch `vaka.<trigger>` to start a GitHub Actions workflow, e.g. a coding agent), github_issue (opens one GitHub issue per Vaka issue; later alerts comment). Failed deliveries are retried with backoff. Needs a write token.",
             vec![
                 ("project", prop("string", "Project slug; omit for all projects")),
-                ("trigger", prop("string", "new_issue, regression, spike, threshold, issue_resolved, issue_assigned, issue_commented, release_created or digest")),
+                ("trigger", prop("string", "new_issue, regression, spike, threshold, issue_resolved, issue_assigned, issue_commented, release_created, perf_regression or digest")),
                 ("channel", prop("string", "webhook, slack, email, github_dispatch or github_issue")),
                 ("target", prop("string", "Webhook URL, Slack incoming webhook URL, comma-separated emails, or owner/repo for GitHub channels")),
                 ("secret", prop("string", "Webhook signing secret (HMAC-SHA256 in X-Vaka-Signature), or the GitHub token for GitHub channels")),
-                ("threshold", prop("integer", "Spike: minimum events in the last hour (default 50). Threshold: events (default 100). Digest: UTC hour (default 8)")),
+                ("threshold", prop("integer", "Spike: minimum events in the last hour (default 50). Threshold: events (default 100). Digest: UTC hour (default 8). perf_regression: p95 increase in percent (default 20)")),
                 ("filters", json!({"type": "object", "description": "Optional: {environment, min_level (debug|info|warning|error|fatal), release (glob), owner (email), unhandled_only (bool), tags: {key: glob}, mention (github_issue: first line of the issue body, e.g. an agent mention)}"})),
                 ("max_per_hour", prop("integer", "Rate limit per rule (default 10 for GitHub channels, otherwise unlimited)")),
                 ("name", prop("string", "Optional name")),

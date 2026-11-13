@@ -59,6 +59,21 @@ A resolved issue that receives a new event is reopened and marked as a regressio
 `regression` alerts). With `resolved_in_release`, events from releases first seen before that
 release don't count (old clients still crashing are expected).
 
+## Performance
+
+See [performance.md](performance.md) for spans and the query parameters.
+
+| Method & path | Description |
+| --- | --- |
+| `GET /projects/{p}/performance/summary` | Per transaction: `count`, `per_minute`, `p50_ms`..`p99_ms`, `error_rate` (`op`, `sort`: p95\|p50\|p99\|count\|errors\|total) |
+| `GET /projects/{p}/performance/endpoints` | Slowest `http.server*` endpoints by p95 (`min_count`, default 5) |
+| `GET /projects/{p}/performance/app-start` | Cold/warm app start by release |
+| `GET /projects/{p}/performance/web-vitals` | Web Vitals p75, rating and good/poor shares (`transaction` = page, `by_page`) |
+| `GET /projects/{p}/performance/traces` | Slowest traces (`min_ms`, `op`, `transaction`) |
+| `GET /projects/{p}/performance/breakdown` | Child spans of `transaction` by op and name, with share of time |
+| `GET /projects/{p}/performance/compare` | `base`, `target`, `min_count`, `threshold`: regressions, improvements and Web Vitals changes |
+| `GET /projects/{p}/traces/{trace_id}` | Span tree with `offset_ms`, `duration_ms`, `self_time_ms`, and errors in the trace |
+
 ## Releases
 
 | Method & path | Description |

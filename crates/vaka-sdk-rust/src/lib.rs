@@ -473,6 +473,153 @@ pub fn capture_message(message: &str, level: Level) {
     send(error_item(c, level, true, vec![exc], Some(message.to_string())));
 }
 
+/// A timed operation for performance tracing. Finishes (and is sent) when dropped or when
+/// [`Span::finish`] is called.
+///
+/// ```no_run
+/// let mut req = vaka_sdk::start_span("GET /users/:id", "http.server");
+/// {
+///     let _db = req.child("SELECT users", "db");
+///     // ... query ...
+/// }
+/// req.set_attribute("http.status_code", "200");
+/// ```
+pub struct Span {
+    trace_id: String,
+    span_id: String,
+    parent_span_id: Option<String>,
+    transaction: String,
+    name: String,
+    op: String,
+    status: &'static str,
+    start_ms: i64,
+    started: Instant,
+    attributes: Map<String, Value>,
+    measurements: Map<String, Value>,
+    remote_parent: bool,
+    done: bool,
+}
+
+fn hex_id(len: usize) -> String {
+    uuid::Uuid::new_v4().simple().to_string()[..len].to_string()
+}
+
+/// Start a root span (a transaction) in a new trace. Use `op` such as `http.server`, `job`,
+/// `function` or `app.start.cold`.
+pub fn start_span(name: &str, op: &str) -> Span {
+    Span::new(hex_id(32), None, name.to_string(), name, op)
+}
+
+/// Continue a trace from a W3C `traceparent` header (`00-<trace id>-<parent span id>-01`).
+/// Falls back to a new trace if the header is malformed.
+pub fn continue_span(traceparent: &str, name: &str, op: &str) -> Span {
+    let parts: Vec<&str> = traceparent.trim().split('-').collect();
+    if parts.len() >= 3 && parts[1].len() == 32 && parts[2].len() == 16 {
+        let mut s = Span::new(parts[1].to_lowercase(), Some(parts[2].to_lowercase()), name.to_string(), name, op);
+        // The incoming parent lives in another service: this span is this service's transaction.
+        s.remote_parent = true;
+        return s;
+    }
+    start_span(name, op)
+}
+
+impl Span {
+    fn new(trace_id: String, parent: Option<String>, transaction: String, name: &str, op: &str) -> Span {
+        Span {
+            trace_id,
+            span_id: hex_id(16),
+            parent_span_id: parent,
+            transaction,
+            name: name.to_string(),
+            op: op.to_string(),
+            status: "ok",
+            start_ms: now_ms(),
+            started: Instant::now(),
+            attributes: Map::new(),
+            measurements: Map::new(),
+            remote_parent: false,
+            done: false,
+        }
+    }
+
+    /// Start a child span in the same trace.
+    pub fn child(&self, name: &str, op: &str) -> Span {
+        Span::new(self.trace_id.clone(), Some(self.span_id.clone()), self.transaction.clone(), name, op)
+    }
+
+    pub fn trace_id(&self) -> &str {
+        &self.trace_id
+    }
+
+    pub fn span_id(&self) -> &str {
+        &self.span_id
+    }
+
+    /// The W3C `traceparent` header value to pass this trace on to another service.
+    pub fn traceparent(&self) -> String {
+        format!("00-{}-{}-01", self.trace_id, self.span_id)
+    }
+
+    pub fn set_attribute(&mut self, key: &str, value: &str) {
+        self.attributes.insert(key.to_string(), json!(value));
+    }
+
+    pub fn set_measurement(&mut self, key: &str, value: f64) {
+        self.measurements.insert(key.to_string(), json!(value));
+    }
+
+    /// Mark the span as failed.
+    pub fn set_error(&mut self) {
+        self.status = "error";
+    }
+
+    /// Finish and send the span now.
+    pub fn finish(mut self) {
+        self.send_once();
+    }
+
+    fn send_once(&mut self) {
+        if self.done {
+            return;
+        }
+        self.done = true;
+        let Some(c) = client() else { return };
+        let mut m = common(c);
+        m.insert("type".into(), json!("span"));
+        m.insert("platform".into(), json!("rust"));
+        m.insert("trace_id".into(), json!(self.trace_id));
+        m.insert("span_id".into(), json!(self.span_id));
+        if let Some(p) = &self.parent_span_id {
+            m.insert("parent_span_id".into(), json!(p));
+        }
+        if self.remote_parent {
+            m.insert("is_transaction".into(), json!(true));
+        }
+        m.insert("name".into(), json!(self.name));
+        m.insert("op".into(), json!(self.op));
+        m.insert("status".into(), json!(self.status));
+        m.insert("transaction".into(), json!(self.transaction));
+        m.insert("start_timestamp".into(), json!(self.start_ms));
+        m.insert("duration_ms".into(), json!(self.started.elapsed().as_secs_f64() * 1000.0));
+        if !self.attributes.is_empty() {
+            m.insert("attributes".into(), Value::Object(std::mem::take(&mut self.attributes)));
+        }
+        if !self.measurements.is_empty() {
+            m.insert("measurements".into(), Value::Object(std::mem::take(&mut self.measurements)));
+        }
+        if let Some(sid) = session_id() {
+            m.insert("session_id".into(), json!(sid));
+        }
+        send(Value::Object(m));
+    }
+}
+
+impl Drop for Span {
+    fn drop(&mut self) {
+        self.send_once();
+    }
+}
+
 fn install_panic_hook() {
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -512,6 +659,21 @@ fn end_session_value(status: &str) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spans_nest_and_continue() {
+        let root = start_span("GET /a", "http.server");
+        let child = root.child("SELECT", "db");
+        assert_eq!(child.trace_id(), root.trace_id());
+        assert_eq!(child.parent_span_id.as_deref(), Some(root.span_id()));
+        assert_eq!(root.trace_id().len(), 32);
+        assert_eq!(root.span_id().len(), 16);
+        let tp = root.traceparent();
+        let cont = continue_span(&tp, "job", "job");
+        assert_eq!(cont.trace_id(), root.trace_id());
+        assert_eq!(cont.parent_span_id.as_deref(), Some(root.span_id()));
+        assert_eq!(continue_span("garbage", "x", "y").parent_span_id, None);
+    }
 
     #[test]
     fn levels() {

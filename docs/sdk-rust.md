@@ -36,6 +36,18 @@ vaka_sdk::identify(Some("user-123"));       // opt-in
 vaka_sdk::flush(Duration::from_secs(2));
 ```
 
+Performance spans (see [performance](performance.md)):
+
+```rust
+let mut req = vaka_sdk::start_span("GET /users/:id", "http.server"); // or continue_span(traceparent, ..)
+{
+    let _q = req.child("SELECT users", "db"); // sent when dropped
+}
+req.set_attribute("route", "users");
+outgoing.header("traceparent", req.traceparent());
+req.finish();                                  // or drop it
+```
+
 With feature `tracing`, `vaka_sdk::tracing_layer::VakaLayer` turns `tracing` events into
 breadcrumbs, and `error!` events into Vaka errors.
 
