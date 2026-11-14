@@ -26,7 +26,7 @@ fix PRs. There is no dashboard: the web UI only covers setup and administration.
   results with uplift, confidence interval and p-value.
 - **User feedback**: a web feedback widget and crash prompt with screenshots, sentiment and topics
   tagging, linked to crashes and readable by agents.
-- **Alerts, webhooks and agent triggers**: webhook, Slack, email, GitHub `repository_dispatch` or a
+- **Alerts, webhooks and agent triggers**: webhook, Slack, email, SMS (46elks, Twilio, Sinch), GitHub `repository_dispatch` or a
   GitHub issue on new issues, regressions, spikes, thresholds and more, with a delivery log.
 - **Anomaly detection and digests**: daily or weekly digests in any time zone, with an optional
   narrative written by any OpenAI-compatible LLM.

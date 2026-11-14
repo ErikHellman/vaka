@@ -30,6 +30,7 @@ pub const DOCS: &[(&str, &str)] = &[
     doc!("flags.md"),
     doc!("anomalies.md"),
     doc!("feedback.md"),
+    doc!("monitoring.md"),
     doc!("opentelemetry.md"),
     doc!("cli.md"),
     doc!("sdk-javascript.md"),

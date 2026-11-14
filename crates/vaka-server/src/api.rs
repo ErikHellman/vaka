@@ -92,6 +92,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/issues/{id}", get(get_issue).patch(update_issue))
         .route("/api/v1/issues/{id}/events", get(issue_events))
         .route("/api/v1/issues/{id}/comments", post(comment_issue))
+        .route("/api/v1/projects/{p}/monitors", get(list_monitors).post(create_monitor))
+        .route("/api/v1/projects/{p}/monitors/{slug}", get(get_monitor).patch(update_monitor).delete(delete_monitor))
+        .route("/api/v1/projects/{p}/monitors/{slug}/checks", get(monitor_checks))
+        .route("/api/v1/projects/{p}/incidents", get(list_incidents))
+        .route("/api/v1/incidents/{id}", get(get_incident).patch(update_incident))
         .route("/api/v1/alert-rules", get(list_rules).post(create_rule))
         .route("/api/v1/alert-rules/{id}", patch(update_rule).delete(delete_rule))
         .route("/api/v1/alert-rules/{id}/test", post(test_rule))
@@ -625,6 +630,42 @@ async fn create_goal(State(s): State<AppState>, p: Principal, Path(project): Pat
     Ok((StatusCode::CREATED, Json(crate::product::create_goal(&s, &p, &project, g).await?)))
 }
 
+async fn list_monitors(State(s): State<AppState>, p: Principal, Path(project): Path<String>) -> J {
+    Ok(Json(crate::monitors::list(&s, &p, &project).await?))
+}
+
+async fn create_monitor(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(m): Json<crate::monitors::MonitorIn>) -> Result<(StatusCode, Json<Value>), ApiError> {
+    Ok((StatusCode::CREATED, Json(crate::monitors::create(&s, &p, &project, m).await?)))
+}
+
+async fn get_monitor(State(s): State<AppState>, p: Principal, Path((project, slug)): Path<(String, String)>) -> J {
+    Ok(Json(crate::monitors::get(&s, &p, &project, &slug).await?))
+}
+
+async fn update_monitor(State(s): State<AppState>, p: Principal, Path((project, slug)): Path<(String, String)>, Json(m): Json<crate::monitors::MonitorIn>) -> J {
+    Ok(Json(crate::monitors::update(&s, &p, &project, &slug, m).await?))
+}
+
+async fn delete_monitor(State(s): State<AppState>, p: Principal, Path((project, slug)): Path<(String, String)>) -> J {
+    Ok(Json(crate::monitors::delete(&s, &p, &project, &slug).await?))
+}
+
+async fn monitor_checks(State(s): State<AppState>, p: Principal, Path((project, slug)): Path<(String, String)>, Query(q): Query<crate::monitors::ChecksQuery>) -> J {
+    Ok(Json(crate::monitors::checks(&s, &p, &project, &slug, q).await?))
+}
+
+async fn list_incidents(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<crate::monitors::IncidentQuery>) -> J {
+    Ok(Json(crate::monitors::list_incidents(&s, &p, &project, q).await?))
+}
+
+async fn get_incident(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {
+    Ok(Json(crate::monitors::get_incident(&s, &p, &id).await?))
+}
+
+async fn update_incident(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Json(u): Json<crate::monitors::IncidentUpdate>) -> J {
+    Ok(Json(crate::monitors::update_incident(&s, &p, &id, u).await?))
+}
+
 async fn list_flags(State(s): State<AppState>, p: Principal, Path(project): Path<String>) -> J {
     Ok(Json(crate::flags::list_flags(&s, &p, &project).await?))
 }
@@ -1084,6 +1125,7 @@ fn validate_target(s: &AppState, channel: &str, target: &str) -> QResult<()> {
         "email" if !target.contains('@') => Err(ApiError::bad(
             "email target must be one or more comma-separated email addresses",
         )),
+        "sms" => crate::sms::parse_numbers(target).map(|_| ()).map_err(ApiError::bad),
         "github_dispatch" | "github_issue" if crate::github::repo_slug(target).is_none() => Err(
             ApiError::bad("GitHub target must be owner/repo or https://github.com/owner/repo"),
         ),
@@ -1138,6 +1180,9 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
     if trigger == "digest" && !(0..=23).contains(&b.threshold.unwrap_or(8)) {
         return Err(ApiError::bad("for digests, threshold is the UTC hour to send at (0 to 23, default 8)"));
     }
+    if channel == "github_issue" && matches!(trigger.as_str(), "monitor_down" | "monitor_up") {
+        return Err(ApiError::bad("github_issue works with issue triggers; use github_dispatch or a webhook for monitor alerts"));
+    }
     if channel == "github_issue" && matches!(trigger.as_str(), "digest" | "release_created" | "perf_regression") {
         return Err(ApiError::bad("github_issue works with issue triggers; use github_dispatch or a webhook for digests, releases and performance regressions"));
     }
@@ -1171,7 +1216,7 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
     .bind(now_ms())
     .bind(b.filters.filter(|f| !f.is_null()).map(|f| f.to_string()).unwrap_or_default())
     // Alerts can be triggered by anyone with the public ingest key, so every channel gets a cap.
-    .bind(b.max_per_hour.unwrap_or(if channel.starts_with("github_") { 10 } else { 60 }).max(0))
+    .bind(b.max_per_hour.unwrap_or(if channel.starts_with("github_") || channel == "sms" { 10 } else { 60 }).max(0))
     .bind(schedule)
     .execute(&s.db)
     .await?;

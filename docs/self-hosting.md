@@ -91,6 +91,12 @@ All settings are environment variables.
 | `VAKA_CH_MAX_EXECUTION_SECS` / `VAKA_CH_MAX_MEMORY_MB` | `60` / `4096` | Budget for each ClickHouse read (dashboards, API, MCP). Reads also run with `readonly=2` |
 | `VAKA_ALLOW_PRIVATE_ALERT_TARGETS` | `false` | Allow webhook and Slack alert targets on private, loopback or internal addresses. Off, Vaka refuses them and never follows redirects |
 | `VAKA_SECRET_KEY` | | Encrypts stored alert secrets (webhook signing secrets, GitHub tokens) at rest. Existing plaintext secrets are encrypted on start. Keep it stable: changing it breaks those rules until their secrets are set again |
+| `VAKA_SMS_PROVIDER` | `46elks` | SMS alert provider: `46elks`, `twilio` or `sinch` ([alerts.md](alerts.md#sms)) |
+| `VAKA_46ELKS_USERNAME`, `VAKA_46ELKS_PASSWORD` | | 46elks API credentials |
+| `VAKA_TWILIO_ACCOUNT_SID`, `VAKA_TWILIO_AUTH_TOKEN` | | Twilio credentials |
+| `VAKA_SINCH_SERVICE_PLAN_ID`, `VAKA_SINCH_API_TOKEN`, `VAKA_SINCH_REGION` | `us` | Sinch credentials and region |
+| `VAKA_SMS_FROM` | `Vaka` | SMS sender (a number, or up to 11 letters where the provider allows it) |
+| `VAKA_SMS_MAX_PER_DAY` | `100` | SMS deliveries allowed per 24 hours across the server (0 = unlimited) |
 | `VAKA_EMAIL_FROM` | `Vaka <vaka@localhost>` | Sender for emails |
 | `VAKA_PASSWORD_LOGIN` | `true` | Set to `false` to allow only email-code login (needs `VAKA_RESEND_API_KEY`) |
 | `VAKA_GEOIP_DB` | | Optional MaxMind/DB-IP country `.mmdb` file |

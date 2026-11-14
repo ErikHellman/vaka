@@ -231,6 +231,16 @@ for i in $(seq 1 10); do grep -q '^/slack ' "$HOOKS" && break; sleep 0.5; done
 grep '^/slack ' "$HOOKS" | grep -q 'New issue' || fail "slack alert: $(cat "$HOOKS")"
 grep '^/slack ' "$HOOKS" | grep -q "owners $EMAIL" || fail "slack owners: $(cat "$HOOKS")"
 
+# SMS alerts (CI points VAKA_SMS_API_URL at the receiver and sets SMS_PATH)
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d '{"trigger":"new_issue","channel":"sms","target":"0701234567"}' >/dev/null && fail "sms accepted a non-E.164 number"
+SMS=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d "{\"project\":\"$SLUG\",\"trigger\":\"new_issue\",\"channel\":\"sms\",\"target\":\"+46 70 123 45 67\"}") || fail "sms rule"
+[ "$(echo "$SMS" | j 'd["max_per_hour"]')" = "10" ] || fail "sms default max_per_hour: $SMS"
+if [ -n "${SMS_PATH:-}" ]; then
+  curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules/$(echo "$SMS" | j 'd["id"]')/test" >/dev/null || fail "sms test"
+  grep "^$SMS_PATH " "$HOOKS" | grep -q 'Vaka+Test+alert' || fail "sms delivery: $(grep -v '^/digest' "$HOOKS" | tail -c 600)"
+  grep "^$SMS_PATH " "$HOOKS" | grep -q '%2B46701234567' || fail "sms number"
+fi
+
 # Anomaly detection and digests (own project): three quiet weeks, then a burst today
 APROJ=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects" -d "{\"name\":\"$SLUG-anomaly\",\"platform\":\"javascript\"}")
 AKEY=$(echo "$APROJ" | j 'd["ingest_key"]'); ASLUG=$(echo "$APROJ" | j 'd["slug"]')
@@ -487,6 +497,49 @@ FB3=$(curl -sf -X POST "$VAKA/ingest/v1/feedback" -H "x-vaka-key: $KEY" -H 'x-fo
 [ "$(echo "$FB3" | j 'd["issue_id"] is not None')" = "True" ] || fail "feedback issue link: $FB3"
 FB4=$(curl -sf -X POST "$VAKA/ingest/v1/feedback" -H "x-vaka-key: $KEY" -H 'x-forwarded-for: 198.51.100.7' -H 'content-type: application/json' -d '{"message":"Unknown issue","issue":"NOPE-999"}') || fail "feedback with unknown issue"
 [ "$(echo "$FB4" | j 'd["issue_id"]')" = "None" ] || fail "feedback unknown issue linked: $FB4"
+# Heartbeat monitors: check-ins, run timeout -> down alert, recovery -> up alert
+MON=$(curl -s "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/monitors" -d '{"slug":"bad","config":{"schedule":{"cron":"0 3 * *"}}}')
+echo "$MON" | grep -q '5 fields' || fail "monitor cron validation: $MON"
+rule "{\"project\":\"$SLUG\",\"trigger\":\"monitor_down\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/mon\",\"filters\":{\"monitors\":[\"backup\"]}}" >/dev/null || fail "monitor_down rule"
+rule "{\"project\":\"$SLUG\",\"trigger\":\"monitor_up\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/mon\"}" >/dev/null || fail "monitor_up rule"
+rule "{\"project\":\"$SLUG\",\"trigger\":\"monitor_down\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/monother\",\"filters\":{\"monitors\":\"other\"}}" >/dev/null || fail "filtered monitor rule"
+curl -s "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d "{\"project\":\"$SLUG\",\"trigger\":\"monitor_down\",\"channel\":\"github_issue\",\"target\":\"acme/shop\",\"secret\":\"x\"}" | grep -q 'monitor alerts' || fail "github_issue monitor rule rejected"
+MON=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/monitors" -d '{"name":"Backup","slug":"backup","environment":"production","config":{"schedule":{"cron":"0 3 * * *","timezone":"Europe/Stockholm"},"grace_s":300,"max_runtime_s":1}}') || fail "create monitor"
+[ "$(echo "$MON" | j 'd["monitor"]["state"]')" = "unknown" ] || fail "new monitor state: $MON"
+echo "$MON" | j 'd["monitor"]["check_in_url"]' | grep -q '/ingest/v1/monitors/backup/check-ins' || fail "check-in url"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$VAKA/ingest/v1/monitors/nope/check-ins" -H "x-vaka-key: $KEY" -d '{"status":"ok"}')" = "404" ] || fail "unknown monitor check-in"
+CI=$(curl -sf -X POST "$VAKA/ingest/v1/monitors/backup/check-ins" -H "x-vaka-key: $KEY" -H 'content-type: application/json' -d '{"status":"ok","duration_ms":1234,"release":"1.0.0"}') || fail "ok check-in"
+[ "$(echo "$CI" | j 'd["state"]')" = "up" ] || fail "monitor up after ok: $CI"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$VAKA/ingest/v1/monitors/backup/check-ins" -H "x-vaka-key: $KEY" -d '{"status":"ok"}')" = "429" ] || fail "check-in rate limit"
+# A run that starts and never finishes times out after max_runtime_s (1 s) and takes the monitor down.
+curl -sf -X POST "$VAKA/ingest/v1/monitors/backup/check-ins" -H "x-vaka-key: $KEY" -H 'content-type: application/json' -d '{"status":"in_progress","check_in_id":"run-1"}' >/dev/null || fail "in_progress check-in"
+for i in $(seq 1 20); do grep -q '^/mon monitor_down ' "$HOOKS" && break; sleep 1; done
+grep '^/mon monitor_down ' "$HOOKS" | grep -q '"slug":"backup"' || fail "monitor_down alert: $(grep '^/mon' "$HOOKS")"
+grep '^/mon monitor_down ' "$HOOKS" | grep -q 'did not finish within 1s' || fail "monitor_down error text"
+grep -q '^/monother ' "$HOOKS" && fail "monitor filter ignored"
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/monitors/backup" | j 'd["monitor"]["state"]')" = "down" ] || fail "monitor down state"
+# Short GET form for crontab lines recovers it.
+curl -sf "$VAKA/ingest/v1/monitors/backup/ok?key=$KEY&duration_ms=900" >/dev/null || fail "short check-in"
+for i in $(seq 1 10); do grep -q '^/mon monitor_up ' "$HOOKS" && break; sleep 0.5; done
+grep '^/mon monitor_up ' "$HOOKS" | grep -q '"downtime_ms"' || fail "monitor_up alert: $(grep '^/mon' "$HOOKS")"
+INC=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/incidents")
+[ "$(echo "$INC" | j '[(i["monitor"]["slug"], i["open"]) for i in d["incidents"]]')" = "[('backup', False)]" ] || fail "incidents: $INC"
+INCID=$(echo "$INC" | j 'd["incidents"][0]["id"]')
+[ "$(curl -sf "${A[@]}" -X PATCH "$VAKA/api/v1/incidents/$INCID" -d '{"acknowledged":true}' | j 'd["incident"]["acknowledged_by"] is not None')" = "True" ] || fail "ack incident"
+sleep 1.5
+CHECKS=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/monitors/backup/checks?since=1h")
+[ "$(echo "$CHECKS" | j 'sorted(c["result"] for c in d["checks"])')" = "['in_progress', 'ok', 'ok', 'timeout']" ] || fail "monitor checks: $CHECKS"
+ML=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/monitors")
+[ "$(echo "$ML" | j 'd["monitors"][0]["stats"]["uptime_24h"]')" = "66.67" ] || fail "uptime: $ML"
+# Check-ins can create a monitor (SDK helpers define schedules in code); pausing silences it.
+CI=$(curl -sf -X POST "$VAKA/ingest/v1/monitors/sync-job/check-ins" -H "x-vaka-key: $KEY" -H 'content-type: application/json' -d '{"status":"ok","monitor":{"schedule":{"every":"10m"},"grace_s":60}}') || fail "upsert check-in"
+[ "$(echo "$CI" | j 'd["state"]')" = "up" ] || fail "upserted monitor: $CI"
+[ "$(curl -sf "${A[@]}" -X PATCH "$VAKA/api/v1/projects/$SLUG/monitors/sync-job" -d '{"paused_until":"2h"}' | j 'd["monitor"]["state"]')" = "paused" ] || fail "pause monitor"
+sleep 1.1
+[ "$(curl -sf "$VAKA/ingest/v1/monitors/sync-job/ok?key=$KEY" | j 'd["state"]')" = "paused" ] || fail "paused check-in"
+[ "$(curl -sf "${A[@]}" -X PATCH "$VAKA/api/v1/projects/$SLUG/monitors/sync-job" -d '{"paused_until":null}' | j 'd["monitor"]["state"]')" = "unknown" ] || fail "resume monitor"
+curl -sf "${A[@]}" -X DELETE "$VAKA/api/v1/projects/$SLUG/monitors/sync-job" >/dev/null || fail "delete monitor"
+echo "monitors ok"
 # GDPR
 GD=$(curl -sf "${A[@]}" -X DELETE "$VAKA/api/v1/projects/$SLUG/users/u1")
 echo "$GD" | j 'd["errors"]' | grep -q 1 || fail "gdpr: $GD"

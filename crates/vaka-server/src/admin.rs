@@ -1076,13 +1076,7 @@ async fn alerts_page(
     axum::extract::Query(q): Q,
 ) -> Response {
     let user = require_user!(s, headers);
-    let rows = sqlx::query(&format!(
-        "SELECT {} FROM alert_rules ORDER BY created_at",
-        crate::alerts::RULE_COLS
-    ))
-    .fetch_all(&s.db)
-    .await
-    .unwrap_or_default();
+    let rows = sqlx::query(&format!("SELECT {} FROM alert_rules ORDER BY created_at", crate::alerts::RULE_COLS)).fetch_all(&s.db).await.unwrap_or_default();
     let rules: Vec<_> = rows
         .iter()
         .map(crate::alerts::rule_from_row)
@@ -1094,48 +1088,40 @@ async fn alerts_page(
         })
         .collect();
     let projects = crate::projects::list(&s).await.unwrap_or_default();
-    let name_of = |id: &Option<String>| {
-        id.as_ref()
-            .and_then(|i| projects.iter().find(|p| &p.id == i).map(|p| p.name.clone()))
-            .unwrap_or_else(|| "All projects".into())
-    };
-    page(
-        "Alerts",
-        Some(&user),
-        flash_of(&q).as_deref(),
-        html! {
-            h1 { "Alert rules" }
-            p.muted { "Webhooks receive JSON (signed with HMAC-SHA256 in " code { "X-Vaka-Signature" } " when a secret is set). Email is sent through Resend." @if s.config.resend_api_key.is_none() { " Email is not configured: set VAKA_RESEND_API_KEY." } }
-            div.card { table {
-                tr { th { "Name" } th { "Project" } th { "Trigger" } th { "Channel" } th { "Target" } th {} }
-                @for r in &rules {
-                    tr {
-                        td { (r.name) @if !r.enabled { " " span.badge { "disabled" } } }
-                        td { (name_of(&r.project_id)) }
-                        td { (r.trigger) @if r.trigger == "spike" { span.muted { " ≥" (r.threshold) "/h" } } }
-                        td { (r.channel) }
-                        td { code { (r.target) } }
-                        td { @if crate::api::can_write_rule(&user, r) {
-                            form.inline method="post" { input type="hidden" name="id" value=(r.id); button.ghost type="submit" name="action" value="test" { "Test" } }
-                            " "
-                            form.inline method="post" { input type="hidden" name="id" value=(r.id); button.danger type="submit" name="action" value="delete" { "Delete" } }
-                        } }
-                    }
+    let name_of = |id: &Option<String>| id.as_ref().and_then(|i| projects.iter().find(|p| &p.id == i).map(|p| p.name.clone())).unwrap_or_else(|| "All projects".into());
+    page("Alerts", Some(&user), flash_of(&q).as_deref(), html! {
+        h1 { "Alert rules" }
+        p.muted { "Webhooks receive JSON (signed with HMAC-SHA256 in " code { "X-Vaka-Signature" } " when a secret is set). Email is sent through Resend." @if s.config.resend_api_key.is_none() { " Email is not configured: set VAKA_RESEND_API_KEY." }
+            " SMS goes to E.164 numbers (+46701234567) through " (s.config.sms.provider) "." @if let Some(why) = s.config.sms.missing() { " SMS is not configured: " (why.trim_start_matches("SMS alerts need ")) "." } }
+        div.card { table {
+            tr { th { "Name" } th { "Project" } th { "Trigger" } th { "Channel" } th { "Target" } th {} }
+            @for r in &rules {
+                tr {
+                    td { (r.name) @if !r.enabled { " " span.badge { "disabled" } } }
+                    td { (name_of(&r.project_id)) }
+                    td { (r.trigger) @if r.trigger == "spike" { span.muted { " ≥" (r.threshold) "/h" } } }
+                    td { (r.channel) }
+                    td { code { (r.target) } }
+                    td { @if crate::api::can_write_rule(&user, r) {
+                        form.inline method="post" { input type="hidden" name="id" value=(r.id); button.ghost type="submit" name="action" value="test" { "Test" } }
+                        " "
+                        form.inline method="post" { input type="hidden" name="id" value=(r.id); button.danger type="submit" name="action" value="delete" { "Delete" } }
+                    } }
                 }
-            } }
-            h2 { "New rule" }
-            div.card { form.row method="post" {
-                input type="hidden" name="action" value="create";
-                select name="project" { option value="" { "All projects" } @for p in &projects { option value=(p.slug) { (p.name) } } }
-                select name="trigger" { @for t in crate::alerts::TRIGGERS { option value=(t) { (t) } } }
-                select name="channel" { @for c in crate::alerts::CHANNELS { option value=(c) { (c) } } }
-                input name="target" placeholder="https://… or email" required style="width:240px";
-                input name="secret" placeholder="Webhook secret (optional)";
-                input type="number" name="threshold" placeholder="Spike: events/hour" min="1";
-                button type="submit" { "Create" }
-            } }
-        },
-    )
+            }
+        } }
+        h2 { "New rule" }
+        div.card { form.row method="post" {
+            input type="hidden" name="action" value="create";
+            select name="project" { option value="" { "All projects" } @for p in &projects { option value=(p.slug) { (p.name) } } }
+            select name="trigger" { @for t in crate::alerts::TRIGGERS { option value=(t) { (t) } } }
+            select name="channel" { @for c in crate::alerts::CHANNELS { option value=(c) { (c) } } }
+            input name="target" placeholder="https://…, email or +46…" required style="width:240px";
+            input name="secret" placeholder="Webhook secret (optional)";
+            input type="number" name="threshold" placeholder="Spike: events/hour" min="1";
+            button type="submit" { "Create" }
+        } }
+    })
 }
 
 #[derive(Deserialize)]
