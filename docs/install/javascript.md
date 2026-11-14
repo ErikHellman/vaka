@@ -19,7 +19,8 @@ Optional attributes: `data-environment="production"`, `data-hash="true"` (hash r
 `data-pageviews="false"`, `data-errors="false"`, `data-ignore-localhost="true"`, `data-debug="true"`.
 The global `window.Vaka` exposes the same API as the npm package.
 
-**Option B: npm package** (apps built with Vite, webpack, Next.js, etc.).
+**Option B: npm package** ([`@hellsoft/vaka-browser`](https://www.npmjs.com/package/@hellsoft/vaka-browser), for apps built
+with Vite, webpack, Next.js, etc.).
 
 ```sh
 npm install @hellsoft/vaka-browser
@@ -78,6 +79,7 @@ See [performance]({{ENDPOINT}}/docs/performance.md) and [feature flags]({{ENDPOI
 
 With Vite, Rollup or webpack, use the bundler plugin: it uploads the maps after each production
 build and defines `__VAKA_RELEASE__` for app code. It needs an API token with write access.
+The package is [`@hellsoft/vaka-bundler-plugin`](https://www.npmjs.com/package/@hellsoft/vaka-bundler-plugin).
 
 ```sh
 npm install --save-dev @hellsoft/vaka-bundler-plugin

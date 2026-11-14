@@ -59,8 +59,3 @@ node -e "require('@hellsoft/vaka-node'); import('@hellsoft/vaka-browser').then((
 - A bad release: `npm deprecate @hellsoft/vaka-node@0.3.0 "use 0.3.1"` and publish a fix.
   `npm unpublish` only works within 72 hours and blocks the version number forever; prefer
   deprecating.
-
-## After the first publish
-
-Update `docs/install/javascript.md`, `sdks/js-bundler/README.md` and the release notes that
-say the packages are not on npm yet.
