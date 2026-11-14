@@ -5,8 +5,8 @@ stored next to your crashes, linked to the crash it is about, tagged with sentim
 and readable by agents through the [REST API](api.md#user-feedback) and the
 [MCP server](mcp.md).
 
-- **Widget**: a floating "Feedback" button for web and Android apps (iOS is coming), with an
-  optional screenshot and email field.
+- **Widget**: a floating "Feedback" button for web and Android apps and a feedback form for iOS,
+  macOS and tvOS, with an optional screenshot and email field.
 - **Crash prompt**: after an uncaught error, ask "what were you doing?". The answer is linked to
   that crash's issue.
 - **API**: `captureFeedback()` in the SDKs, or `POST /ingest/v1/feedback` from anywhere.
@@ -65,6 +65,20 @@ Vaka.showFeedback(activity)   // open it from your own menu item
 The crash prompt appears on the first screen of the next launch after a JVM or native crash.
 Screenshots skip `FLAG_SECURE` windows and black out password fields and views passed to
 `Vaka.maskInScreenshots(view)`. See the [Android SDK](sdk-android.md#user-feedback) for every option.
+
+## iOS, macOS and tvOS
+
+```swift
+Vaka.installFeedback(Vaka.FeedbackOptions(crashPrompt: true))
+Vaka.showFeedback()                                   // UIKit or anywhere
+VakaFeedbackButton()                                  // SwiftUI
+Button("Report a problem") { show = true }.vakaFeedback(isPresented: $show)
+```
+
+The form opens with a screenshot of the current screen (secure text fields and `.vakaMask()` views blacked
+out) that the user can remove, and lets them add up to 3 images. With `crashPrompt`, the next launch after a
+crash asks what the user was doing, and so does recovering from a hang. Feedback written offline is sent later.
+See the [iOS SDK](sdk-ios.md#user-feedback).
 
 ## Sending feedback from code
 

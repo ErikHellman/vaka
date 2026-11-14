@@ -14,12 +14,20 @@ final class Client {
     private let q = DispatchQueue(label: "se.hellsoft.vaka")
     private let dir: URL
     private let transport: Transport
+    let feedback: FeedbackSender
     private var buffer: [[String: Any]] = []
     private var timer: DispatchSourceTimer?
     private var observers: [NSObjectProtocol] = []
     private var watchdog: HangWatchdog?
     /// Set while the main thread is hung, so a kill during the hang ends the session as abnormal.
     private var hangSince: Date?
+    /// Event id of the hang report for the current hang.
+    private var hangEventId: String?
+    private var lastEvent: String?
+    private var lastScreen: String?
+    // Crash/hang reports for feedback prompts. Handlers run on the main queue.
+    private var crashHandlers: [(Vaka.CrashReport) -> Void] = []
+    private var pendingCrash: Vaka.CrashReport?
 
     // Scope: persisted on every change so a crash report can carry the state of the run that crashed.
     private var breadcrumbs: [[String: Any]] = []
@@ -51,6 +59,9 @@ final class Client {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let debug = options.debug
         transport = Transport(endpoint: options.endpoint, key: options.key, directory: dir) { msg in
+            if debug { print("[Vaka] \(msg)") }
+        }
+        feedback = FeedbackSender(endpoint: options.endpoint, key: options.key, directory: dir) { msg in
             if debug { print("[Vaka] \(msg)") }
         }
         tags = options.tags
@@ -91,6 +102,7 @@ final class Client {
         if options.sessionTracking { observeLifecycle() }
         if options.appHangDetection && options.appHangThreshold > 0 { startHangDetection() }
         transport.sendPending()
+        feedback.sendPending()
     }
 
     private func reportPreviousRun(crashText: String?, previous: [String: Any]?) {
@@ -116,6 +128,9 @@ final class Client {
                 item["contexts"] = c
             }
             items.append(item)
+            if let eid = item["event_id"] as? String {
+                pendingCrash = Vaka.CrashReport(kind: .crash, eventId: eid, date: report.time, previousRun: true)
+            }
             if let s = prevSession, let id = s["id"] as? String {
                 let started = Date(timeIntervalSince1970: (s["started"] as? Double ?? 0) / 1000)
                 items.append(sessionItem(id: id, status: "crashed", started: started, end: report.time,
@@ -130,6 +145,9 @@ final class Client {
             let updated = (previous?["updated"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) } ?? started
             let hang = (previous?["hang_since"] as? Double).map { Date(timeIntervalSince1970: $0 / 1000) }
             // Killed while hung (e.g. by the iOS watchdog) is abnormal even if it happened in background.
+            if let h = hang, let eid = previous?["hang_event_id"] as? String {
+                pendingCrash = Vaka.CrashReport(kind: .hang, eventId: eid, date: h, previousRun: true)
+            }
             let status = hang != nil ? "abnormal" : bg != nil ? (errors > 0 ? "errored" : "exited") : "abnormal"
             items.append(sessionItem(id: id, status: status, started: started, end: hang ?? bg ?? updated, errors: errors,
                                      release: prevRelease, environment: prevEnv, userId: previous?["user_id"] as? String))
@@ -148,7 +166,11 @@ final class Client {
             onRecover: { [weak self] duration in
                 self?.q.async {
                     guard let self else { return }
+                    if let eid = self.hangEventId, let since = self.hangSince {
+                        self.deliverCrash(Vaka.CrashReport(kind: .hang, eventId: eid, date: since, previousRun: false))
+                    }
                     self.hangSince = nil
+                    self.hangEventId = nil
                     self.log("main thread responsive again after \(Int(duration * 1000)) ms")
                     self.writeScope()
                 }
@@ -167,6 +189,8 @@ final class Client {
         item["exceptions"] = [["type": "AppHang", "value": "Application not responding for \(ms) ms", "stacktrace": frames]]
         item["debug_images"] = images
         item["tags"] = (item["tags"] as? [String: String] ?? [:]).merging(["mechanism": "hang"]) { $1 }
+        hangEventId = item["event_id"] as? String
+        lastEvent = hangEventId
         if var s = session {
             s.errors += 1
             session = s
@@ -222,6 +246,7 @@ final class Client {
         } else {
             startSession()
         }
+        feedback.sendPending()
     }
 
     private func background() {
@@ -263,6 +288,7 @@ final class Client {
         q.async {
             var item = self.eventItem(name: "screen_view", props: props, timestamp: ts)
             item["screen"] = name
+            self.lastScreen = name
             self.enqueue(item)
             self.addBreadcrumbLocked(["timestamp": Client.ms(ts), "category": "navigation", "message": name, "level": "info"])
         }
@@ -298,6 +324,7 @@ final class Client {
             item["message"] = message ?? ""
         }
         if type != nil { item["debug_images"] = images }
+        lastEvent = item["event_id"] as? String
         if !extra.isEmpty { item["tags"] = (item["tags"] as? [String: String] ?? [:]).merging(extra) { $1 } }
         if level == .error || level == .fatal, var s = session {
             s.errors += 1
@@ -340,6 +367,66 @@ final class Client {
         q.async { self.flushLocked() }
     }
 
+    // MARK: feedback
+
+    var lastEventId: String? { q.sync { lastEvent } }
+
+    func captureFeedback(_ f: Vaka.Feedback, completion: @escaping (Result<Vaka.FeedbackResult, Vaka.FeedbackError>) -> Void) {
+        let message = f.message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { completion(.failure(.emptyMessage)); return }
+        let ts = Date()
+        let attachments = FeedbackSender.validAttachments(f.attachments, log: log)
+        q.async {
+            let item = self.feedbackItem(f, message: message, timestamp: ts)
+            self.addBreadcrumbLocked(["timestamp": Client.ms(ts), "category": "feedback", "message": "user feedback sent", "level": "info"])
+            self.feedback.send(item: item, attachments: attachments, completion: completion)
+        }
+    }
+
+    func feedbackItem(_ f: Vaka.Feedback, message: String, timestamp: Date) -> [String: Any] {
+        var item: [String: Any] = [
+            "type": "feedback",
+            "id": UUID().uuidString.lowercased(),
+            "timestamp": Client.ms(timestamp),
+            "platform": "ios",
+            "message": String(message.prefix(FeedbackSender.maxMessage)),
+            "source": f.source.rawValue,
+            "release": options.release ?? "",
+            "environment": options.environment,
+            "anon_id": anonId,
+            "device": device,
+        ]
+        if let e = f.email?.trimmingCharacters(in: .whitespacesAndNewlines), !e.isEmpty { item["email"] = e }
+        if let n = f.name?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty { item["name"] = n }
+        if let e = f.eventId, !e.isEmpty { item["event_id"] = e }
+        if let s = lastScreen { item["screen"] = s }
+        let t = tags.merging(f.tags) { $1 }
+        if !t.isEmpty { item["tags"] = t }
+        if let u = userId { item["user_id"] = u }
+        if let s = session { item["session_id"] = s.id }
+        return item
+    }
+
+    func addCrashHandler(_ handler: @escaping (Vaka.CrashReport) -> Void) {
+        q.async {
+            self.crashHandlers.append(handler)
+            if let p = self.pendingCrash {
+                self.pendingCrash = nil
+                DispatchQueue.main.async { handler(p) }
+            }
+        }
+    }
+
+    /// Runs on `q`.
+    private func deliverCrash(_ r: Vaka.CrashReport) {
+        if crashHandlers.isEmpty {
+            if r.previousRun { pendingCrash = r }
+            return
+        }
+        let handlers = crashHandlers
+        DispatchQueue.main.async { handlers.forEach { $0(r) } }
+    }
+
     /// For tests: flush and wait until the queue is empty (or `timeout` passes).
     func flushAndWait(timeout: TimeInterval = 10) -> Bool {
         q.sync {
@@ -365,6 +452,7 @@ final class Client {
             buffer.removeAll()
         }
         transport.sendPending()
+        feedback.sendPending()
     }
 
     private func enqueue(_ item: [String: Any]) {
@@ -443,6 +531,7 @@ final class Client {
         ]
         if let u = userId { scope["user_id"] = u }
         if let h = hangSince { scope["hang_since"] = Client.ms(h) }
+        if let e = hangEventId { scope["hang_event_id"] = e }
         if let s = session {
             var d: [String: Any] = ["id": s.id, "started": Client.ms(s.started), "errors": s.errors]
             if let bg = s.backgroundSince { d["background_since"] = Client.ms(bg) }

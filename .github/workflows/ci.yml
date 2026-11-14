@@ -147,6 +147,26 @@ jobs:
           uv build
           uvx twine check --strict dist/*
 
+  ios:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: sdks/ios
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tests (macOS)
+        run: swift test
+      - name: Build for iOS, iOS Simulator, tvOS and Mac Catalyst
+        run: |
+          set -e
+          for dest in "generic/platform=iOS" "generic/platform=iOS Simulator" "generic/platform=tvOS" "generic/platform=macOS,variant=Mac Catalyst"; do
+            echo "::group::$dest"
+            xcodebuild build -scheme Vaka -destination "$dest" -quiet CODE_SIGNING_ALLOWED=NO
+            echo "::endgroup::"
+          done
+      - name: Build for app extensions (extension-safe API only)
+        run: xcodebuild build -scheme Vaka -destination "generic/platform=iOS" -quiet CODE_SIGNING_ALLOWED=NO APPLICATION_EXTENSION_API_ONLY=YES
+
   android:
     runs-on: ubuntu-latest
     defaults:

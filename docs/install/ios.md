@@ -169,6 +169,20 @@ curl -H "Authorization: Bearer $VAKA_TOKEN" \
 
 `release` must equal the app's `CFBundleShortVersionString` (or the `release` passed to `Vaka.Options`).
 
+## Optional: user feedback
+
+To let users report problems in their own words (with a screenshot they can remove), and to ask them what
+happened after a crash or hang, add after `Vaka.start(...)`:
+
+```swift
+Vaka.installFeedback(Vaka.FeedbackOptions(crashPrompt: true))
+```
+
+Then open the form from a "Report a problem" menu item or settings row: `Vaka.showFeedback()` (UIKit or any code),
+`VakaFeedbackButton()` or `.vakaFeedback(isPresented: $show)` (SwiftUI). Mark sensitive views with `.vakaMask()`
+(SwiftUI) or `view.vakaMask = true` (UIKit) to black them out in screenshots. See
+[sdk-ios.md](../sdk-ios.md#user-feedback).
+
 ## 5. Verify
 
 1. Build and run the app once; confirm it compiles and launches. With `debug: true` in `Vaka.Options`, the SDK logs
