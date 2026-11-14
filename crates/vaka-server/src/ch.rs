@@ -98,6 +98,14 @@ impl ClickHouse {
         let mut r = self.req(true).query(&[
             ("default_format", "JSON"),
             ("output_format_json_quote_64bit_integers", "0"),
+            // Reads only, with a time and memory budget, so one heavy dashboard or MCP query
+            // can't write data or starve ingest. readonly=2 still allows per-query settings.
+            ("readonly", "2"),
+        ]);
+        let limits = query_limits();
+        r = r.query(&[
+            ("max_execution_time", limits.0.to_string()),
+            ("max_memory_usage", limits.1.to_string()),
         ]);
         for (k, v) in params {
             r = r.query(&[(format!("param_{k}"), v)]);
@@ -279,3 +287,21 @@ PARTITION BY toYYYYMM(timestamp)
 ORDER BY (project_id, timestamp)
 TTL toDateTime(timestamp) + toIntervalDay(retention_days);
 "#;
+
+/// Per-query budget for reads: `VAKA_CH_MAX_EXECUTION_SECS` (default 60) and
+/// `VAKA_CH_MAX_MEMORY_MB` (default 4096; 0 = ClickHouse's own limit).
+fn query_limits() -> (u64, u64) {
+    static L: once_cell::sync::Lazy<(u64, u64)> = once_cell::sync::Lazy::new(|| {
+        let n = |k: &str, d: u64| {
+            std::env::var(k)
+                .ok()
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(d)
+        };
+        (
+            n("VAKA_CH_MAX_EXECUTION_SECS", 60),
+            n("VAKA_CH_MAX_MEMORY_MB", 4096) * 1024 * 1024,
+        )
+    });
+    *L
+}

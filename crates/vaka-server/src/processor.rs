@@ -376,6 +376,18 @@ async fn process_error(
     })
 }
 
+const OVERFLOW_FINGERPRINT: &str = "vaka:new-issue-overflow";
+
+fn new_issues_per_hour() -> u32 {
+    static N: once_cell::sync::Lazy<u32> = once_cell::sync::Lazy::new(|| {
+        std::env::var("VAKA_NEW_ISSUES_PER_HOUR")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(500)
+    });
+    *N
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert_issue(
     state: &AppState,
@@ -388,11 +400,25 @@ pub async fn upsert_issue(
     release: &str,
     ts: i64,
 ) -> anyhow::Result<(String, IssueChange)> {
-    let existing = sqlx::query("SELECT id, status, ignored_until, resolved_in_release FROM issues WHERE project_id = $1 AND fingerprint = $2")
-        .bind(&project.id)
-        .bind(fingerprint)
-        .fetch_optional(&state.db)
-        .await?;
+    let select = |fp: String| async move {
+        sqlx::query("SELECT id, status, ignored_until, resolved_in_release FROM issues WHERE project_id = $1 AND fingerprint = $2")
+            .bind(&project.id)
+            .bind(fp)
+            .fetch_optional(&state.db)
+            .await
+    };
+    let mut existing = select(fingerprint.to_string()).await?;
+    let (mut fingerprint, mut title, mut culprit) = (fingerprint, title, culprit);
+    // Anyone with the public ingest key can invent fingerprints, so new issues per project are
+    // capped per hour; the rest are grouped into one overflow issue.
+    if existing.is_none()
+        && !crate::ratelimit::NEW_ISSUES.take(&project.id, new_issues_per_hour(), now_ms())
+    {
+        fingerprint = OVERFLOW_FINGERPRINT;
+        title = "New issues over the hourly limit (VAKA_NEW_ISSUES_PER_HOUR)";
+        culprit = "";
+        existing = select(fingerprint.to_string()).await?;
+    }
     match existing {
         None => {
             let id = new_id();

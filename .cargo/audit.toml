@@ -1,0 +1,18 @@
+# cargo audit configuration (CI runs `cargo audit`). Every ignore needs a reason and a review date.
+[advisories]
+ignore = [
+    # libsqlite3-sys bundled SQLite CVE (reviewed 2026-11-14). The fix needs libsqlite3-sys >= 0.39,
+    # which no sqlx release accepts yet (sqlx 0.8 pins 0.30, 0.9 allows up to 0.37). Postgres
+    # deployments don't use SQLite; drop this once sqlx allows the patched version.
+    "RUSTSEC-2026-0459",
+    # zip (via symbolic-debuginfo): all four advisories are in `ZipArchive::extract` /
+    # `ZipStreamReader::extract`. Vaka only reads debug files from archives in memory and never
+    # extracts to disk (reviewed 2026-11-14).
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0429",
+    # rsa Marvin attack: only in Cargo.lock through sqlx-mysql, which Vaka doesn't build (no
+    # `mysql` feature), so the crate is never compiled (reviewed 2026-11-14).
+    "RUSTSEC-2023-0071",
+]

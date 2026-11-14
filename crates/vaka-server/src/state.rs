@@ -23,6 +23,8 @@ pub struct AppStateInner {
     pub geoip: Option<maxminddb::Reader<Vec<u8>>>,
     pub symbols: crate::symbolicate::SymbolCache,
     pub http: reqwest::Client,
+    /// Client for user-chosen alert targets: no redirects, public addresses only.
+    pub alert_http: reqwest::Client,
     /// S3-compatible storage for debug files, when configured.
     pub s3: Option<crate::s3::S3>,
     /// (day, salt) used for anonymous visitor hashing; rotated daily.

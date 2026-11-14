@@ -97,6 +97,18 @@ impl Principal {
         }
     }
 
+    /// Whether this principal may change, disable or delete a user who currently has `target`.
+    /// Owners manage everyone; admins only manage roles below their own (not owners or peers).
+    pub fn may_manage(&self, target: Role) -> bool {
+        match self {
+            Principal::User {
+                role: Role::Owner, ..
+            } => true,
+            Principal::User { role, .. } => *role >= Role::Admin && *role > target,
+            Principal::Token { .. } => false,
+        }
+    }
+
     pub fn project_scope(&self) -> Option<&str> {
         match self {
             Principal::Token { project_id, .. } => project_id.as_deref(),
@@ -131,8 +143,14 @@ impl From<anyhow::Error> for ApiError {
         if crate::readonly::requested() && crate::readonly::is_read_only_error(&format!("{e:#}")) {
             return ApiError(StatusCode::SERVICE_UNAVAILABLE, crate::readonly::MESSAGE.into());
         }
-        tracing::error!("internal error: {e:#}");
-        ApiError(StatusCode::INTERNAL_SERVER_ERROR, format!("internal error: {e}"))
+        // Details (SQL, ClickHouse messages, paths) stay in the log; the client gets an id to quote.
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let id = &id[..12];
+        tracing::error!(error_id = id, "internal error: {e:#}");
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("internal error (see server log, id {id})"),
+        )
     }
 }
 
@@ -154,6 +172,56 @@ pub fn verify_password(pw: &str, hash: &str) -> bool {
     PasswordHash::new(hash)
         .map(|h| Argon2::default().verify_password(pw.as_bytes(), &h).is_ok())
         .unwrap_or(false)
+}
+
+/// At most this many Argon2 hashes run at once, so a login flood can't exhaust CPU and memory.
+static ARGON2_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+
+/// `verify_password` on the blocking pool, limited to a few concurrent hashes.
+pub async fn verify_password_async(pw: &str, hash: &str) -> bool {
+    let Ok(_permit) = ARGON2_SLOTS.acquire().await else {
+        return false;
+    };
+    let (pw, hash) = (pw.to_string(), hash.to_string());
+    tokio::task::spawn_blocking(move || verify_password(&pw, &hash))
+        .await
+        .unwrap_or(false)
+}
+
+/// `hash_password` on the blocking pool, limited like `verify_password_async`.
+pub async fn hash_password_async(pw: &str) -> anyhow::Result<String> {
+    let _permit = ARGON2_SLOTS.acquire().await?;
+    let pw = pw.to_string();
+    tokio::task::spawn_blocking(move || hash_password(&pw)).await?
+}
+
+pub const MIN_PASSWORD_LEN: usize = 12;
+
+/// Why a new password is not acceptable, if it isn't.
+pub fn password_problem(pw: &str) -> Option<String> {
+    const WEAK: &[&str] = &[
+        "change-me-please",
+        "changemechangeme",
+        "password1234",
+        "passwordpassword",
+        "123456789012",
+        "qwertyuiopas",
+        "adminadminadmin",
+        "vakavakavaka",
+    ];
+    if pw.chars().count() < MIN_PASSWORD_LEN {
+        return Some(format!(
+            "Password must be at least {MIN_PASSWORD_LEN} characters"
+        ));
+    }
+    let lower = pw.to_lowercase();
+    if WEAK.iter().any(|w| lower == *w)
+        || lower.starts_with("change-me")
+        || pw.chars().all(|c| c == pw.chars().next().unwrap_or(' '))
+    {
+        return Some("That password is too common; choose another".into());
+    }
+    None
 }
 
 pub fn cookie_value(parts: &Parts, name: &str) -> Option<String> {
@@ -209,6 +277,28 @@ pub async fn principal_from_session(state: &AppState, token: &str) -> anyhow::Re
     }))
 }
 
+/// Reject cross-site requests made with the session cookie (defense in depth on top of
+/// SameSite=Lax). Requests without an Origin header (curl, same-origin GETs) pass.
+pub fn same_origin(state: &AppState, headers: &axum::http::HeaderMap) -> bool {
+    if headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) == Some("cross-site") {
+        return false;
+    }
+    match headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|o| o.to_str().ok())
+    {
+        None => true,
+        Some(origin) => {
+            let host = headers
+                .get(axum::http::header::HOST)
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("");
+            (!host.is_empty() && origin.ends_with(&format!("//{host}")))
+                || origin == state.config.public_url.trim_end_matches('/')
+        }
+    }
+}
+
 impl FromRequestParts<AppState> for Principal {
     type Rejection = ApiError;
 
@@ -226,6 +316,18 @@ impl FromRequestParts<AppState> for Principal {
         }
         if let Some(session) = cookie_value(parts, SESSION_COOKIE) {
             if let Some(p) = principal_from_session(state, &session).await? {
+                let safe = matches!(
+                    parts.method,
+                    axum::http::Method::GET
+                        | axum::http::Method::HEAD
+                        | axum::http::Method::OPTIONS
+                );
+                if !safe && !same_origin(state, &parts.headers) {
+                    return Err(ApiError(
+                        StatusCode::FORBIDDEN,
+                        "cross-site request refused; use an API token".into(),
+                    ));
+                }
                 return Ok(p);
             }
         }
@@ -282,8 +384,8 @@ pub async fn bootstrap_admin(state: &AppState) -> anyhow::Result<()> {
     }
     match (&state.config.admin_email, &state.config.admin_password) {
         (Some(email), Some(pw)) => {
-            if pw.len() < 8 {
-                anyhow::bail!("VAKA_ADMIN_PASSWORD must be at least 8 characters");
+            if let Some(problem) = password_problem(pw) {
+                anyhow::bail!("VAKA_ADMIN_PASSWORD is not acceptable: {problem}");
             }
             create_user(state, email, "Admin", pw, Role::Owner).await?;
             tracing::info!(%email, "created initial owner account");

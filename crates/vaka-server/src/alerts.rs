@@ -46,6 +46,18 @@ pub struct Rule {
     pub created_at: i64,
 }
 
+/// What a reader (who can't edit the rule) sees of its target. Webhook and Slack URLs often
+/// carry secrets in their path or query (a Slack incoming-webhook URL is a bearer credential).
+pub fn redact_target(channel: &str, target: &str) -> String {
+    match channel {
+        "webhook" | "slack" => match url::Url::parse(target) {
+            Ok(u) => format!("{}://{}/…", u.scheme(), u.host_str().unwrap_or("")),
+            Err(_) => "(hidden)".into(),
+        },
+        _ => target.to_string(),
+    }
+}
+
 pub fn rule_from_row(r: &sqlx::any::AnyRow) -> Rule {
     Rule {
         id: r.s("id"),
@@ -153,7 +165,11 @@ pub fn filters_match(filters: &Value, issue: &Value, event: Option<&Value>) -> b
     true
 }
 
-async fn rules_for(state: &AppState, project_id: &str, trigger: &str) -> anyhow::Result<Vec<(Rule, String)>> {
+async fn rules_for(
+    state: &AppState,
+    project_id: &str,
+    trigger: &str,
+) -> anyhow::Result<Vec<(Rule, String)>> {
     let rows = sqlx::query(&format!(
         "SELECT {RULE_COLS} FROM alert_rules WHERE enabled = 1 AND trigger = $1 AND (project_id IS NULL OR project_id = '' OR project_id = $2)"
     ))
@@ -161,7 +177,9 @@ async fn rules_for(state: &AppState, project_id: &str, trigger: &str) -> anyhow:
     .bind(project_id)
     .fetch_all(&state.db)
     .await?;
-    Ok(rows.iter().map(|r| (rule_from_row(r), r.s("secret"))).collect())
+    rows.iter()
+        .map(|r| Ok((rule_from_row(r), crate::secretbox::open(&r.s("secret"))?)))
+        .collect()
 }
 
 /// Fire-and-forget notification for an issue event. `event` describes the error event or the
@@ -535,14 +553,29 @@ async fn retry_due(state: &AppState) -> anyhow::Result<()> {
         .await?;
     for r in rows {
         let id = r.s("id");
-        let Some(rule_row) = sqlx::query(&format!("SELECT {RULE_COLS} FROM alert_rules WHERE id = $1")).bind(r.s("rule_id")).fetch_optional(&state.db).await? else {
+        let Some(rule_row) = sqlx::query(&format!(
+            "SELECT {RULE_COLS} FROM alert_rules WHERE id = $1"
+        ))
+        .bind(r.s("rule_id"))
+        .fetch_optional(&state.db)
+        .await?
+        else {
             sqlx::query("UPDATE alert_deliveries SET status = 'failed', detail = 'rule deleted', next_attempt_at = NULL WHERE id = $1").bind(&id).execute(&state.db).await?;
             continue;
         };
         let rule = rule_from_row(&rule_row);
         let payload: Value = serde_json::from_str(&r.s("payload")).unwrap_or(Value::Null);
         let attempts = r.i("attempts") + 1;
-        let result = send(state, &rule, &rule_row.s("secret"), &r.s("trigger"), &r.s("issue_id"), &payload, &id).await;
+        let result = send(
+            state,
+            &rule,
+            &crate::secretbox::open(&rule_row.s("secret"))?,
+            &r.s("trigger"),
+            &r.s("issue_id"),
+            &payload,
+            &id,
+        )
+        .await;
         let (status, detail, next) = match &result {
             Ok(d) => ("ok", d.clone(), None),
             Err(e) if (attempts as usize) <= BACKOFF_MS.len() && retryable(&rule.channel, e) => ("retrying", e.to_string(), Some(now_ms() + BACKOFF_MS[attempts as usize - 1])),
@@ -561,17 +594,37 @@ async fn retry_due(state: &AppState) -> anyhow::Result<()> {
 }
 
 /// Send a stored delivery's payload again now (new delivery row).
-pub async fn redeliver(state: &AppState, rule_id: &str, delivery_id: &str) -> anyhow::Result<Value> {
-    let row = sqlx::query("SELECT issue_id, trigger, payload FROM alert_deliveries WHERE id = $1 AND rule_id = $2")
-        .bind(delivery_id)
-        .bind(rule_id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("delivery not found"))?;
-    let rule_row = sqlx::query(&format!("SELECT {RULE_COLS} FROM alert_rules WHERE id = $1")).bind(rule_id).fetch_one(&state.db).await?;
+pub async fn redeliver(
+    state: &AppState,
+    rule_id: &str,
+    delivery_id: &str,
+) -> anyhow::Result<Value> {
+    let row = sqlx::query(
+        "SELECT issue_id, trigger, payload FROM alert_deliveries WHERE id = $1 AND rule_id = $2",
+    )
+    .bind(delivery_id)
+    .bind(rule_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| anyhow::anyhow!("delivery not found"))?;
+    let rule_row = sqlx::query(&format!(
+        "SELECT {RULE_COLS} FROM alert_rules WHERE id = $1"
+    ))
+    .bind(rule_id)
+    .fetch_one(&state.db)
+    .await?;
     let rule = rule_from_row(&rule_row);
-    let payload: Value = serde_json::from_str(&row.s("payload")).map_err(|_| anyhow::anyhow!("this delivery has no stored payload"))?;
-    let r = deliver_new(state, &rule, &rule_row.s("secret"), &row.s("trigger"), &row.s("issue_id"), payload).await;
+    let payload: Value = serde_json::from_str(&row.s("payload"))
+        .map_err(|_| anyhow::anyhow!("this delivery has no stored payload"))?;
+    let r = deliver_new(
+        state,
+        &rule,
+        &crate::secretbox::open(&rule_row.s("secret"))?,
+        &row.s("trigger"),
+        &row.s("issue_id"),
+        payload,
+    )
+    .await;
     Ok(match r {
         Ok(d) => json!({"ok": true, "detail": d}),
         Err(e) => json!({"ok": false, "error": e.to_string()}),
@@ -580,7 +633,11 @@ pub async fn redeliver(state: &AppState, rule_id: &str, delivery_id: &str) -> an
 
 /// `threshold` rules fire once per issue when it reaches `threshold` events.
 async fn check_thresholds(state: &AppState) -> anyhow::Result<()> {
-    let rules = sqlx::query(&format!("SELECT {RULE_COLS} FROM alert_rules WHERE enabled = 1 AND trigger = 'threshold'")).fetch_all(&state.db).await?;
+    let rules = sqlx::query(&format!(
+        "SELECT {RULE_COLS} FROM alert_rules WHERE enabled = 1 AND trigger = 'threshold'"
+    ))
+    .fetch_all(&state.db)
+    .await?;
     for row in rules {
         let rule = rule_from_row(&row);
         let issues = sqlx::query(
@@ -614,7 +671,15 @@ async fn check_thresholds(state: &AppState) -> anyhow::Result<()> {
             if wants_fix_context(&rule.channel) {
                 payload["fix_context"] = system_fix_context(state, &i.s("id")).await.unwrap_or(Value::Null);
             }
-            let _ = deliver_new(state, &rule, &row.s("secret"), "threshold", &i.s("id"), payload).await;
+            let _ = deliver_new(
+                state,
+                &rule,
+                &crate::secretbox::open(&row.s("secret"))?,
+                "threshold",
+                &i.s("id"),
+                payload,
+            )
+            .await;
         }
     }
     Ok(())
@@ -645,11 +710,23 @@ fn perf_text(payload: &Value) -> String {
 /// (p95 per transaction and Web Vitals) and notify once per rule and release. `force` (rule
 /// tests) sends even without a regression or when already sent.
 pub async fn check_perf_regressions(state: &AppState, force: bool) -> anyhow::Result<Vec<String>> {
-    let rules = sqlx::query(&format!("SELECT {RULE_COLS} FROM alert_rules WHERE enabled = 1 AND trigger = 'perf_regression'")).fetch_all(&state.db).await?;
+    let rules = sqlx::query(&format!(
+        "SELECT {RULE_COLS} FROM alert_rules WHERE enabled = 1 AND trigger = 'perf_regression'"
+    ))
+    .fetch_all(&state.db)
+    .await?;
     let mut out = Vec::new();
     for row in rules {
         let rule = rule_from_row(&row);
-        out.extend(perf_regression_for_rule(state, &rule, &row.s("secret"), force).await?);
+        out.extend(
+            perf_regression_for_rule(
+                state,
+                &rule,
+                &crate::secretbox::open(&row.s("secret"))?,
+                force,
+            )
+            .await?,
+        );
     }
     Ok(out)
 }
@@ -728,11 +805,12 @@ pub(crate) mod hmac_lite {
 async fn send_webhook(state: &AppState, url: &str, secret: &str, trigger: &str, delivery_id: &str, payload: &Value) -> anyhow::Result<String> {
     let body = serde_json::to_vec(payload)?;
     let ts = (now_ms() / 1000).to_string();
+    crate::netguard::check_url(url, state.config.allow_private_alert_targets)
+        .map_err(|e| anyhow::anyhow!("webhook target refused: {e}"))?;
     let mut req = state
-        .http
+        .alert_http
         .post(url)
         .header("content-type", "application/json")
-        .header("user-agent", "Vaka-Webhook/1")
         .header("x-vaka-event", trigger)
         .header("x-vaka-delivery", delivery_id)
         .header("x-vaka-timestamp", &ts)
@@ -862,12 +940,24 @@ fn slack_release_message(payload: &Value) -> Value {
     json!({"text": format!("New release {release} in {project}"), "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": format!(":rocket: *New release* `{release}` in {project}")}}], "unfurl_links": false})
 }
 
-async fn send_slack(state: &AppState, url: &str, message: &serde_json::Value) -> anyhow::Result<String> {
-    let resp = state.http.post(url).json(message).timeout(Duration::from_secs(10)).send().await?;
+async fn send_slack(
+    state: &AppState,
+    url: &str,
+    message: &serde_json::Value,
+) -> anyhow::Result<String> {
+    crate::netguard::check_url(url, state.config.allow_private_alert_targets)
+        .map_err(|e| anyhow::anyhow!("Slack target refused: {e}"))?;
+    let resp = state
+        .alert_http
+        .post(url)
+        .json(message)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await?;
     let status = resp.status();
     if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Slack returned {status}: {}", crate::util::truncate(&body, 200));
+        // The response body is not echoed: it could carry data from whatever the URL points at.
+        anyhow::bail!("Slack returned {status}");
     }
     Ok(format!("HTTP {status}"))
 }
@@ -988,7 +1078,11 @@ impl Schedule {
 }
 
 async fn run_digests(state: &AppState, now: i64) -> anyhow::Result<()> {
-    let rows = sqlx::query(&format!("SELECT {RULE_COLS} FROM alert_rules WHERE enabled = 1 AND trigger = 'digest'")).fetch_all(&state.db).await?;
+    let rows = sqlx::query(&format!(
+        "SELECT {RULE_COLS} FROM alert_rules WHERE enabled = 1 AND trigger = 'digest'"
+    ))
+    .fetch_all(&state.db)
+    .await?;
     for row in rows {
         let rule = rule_from_row(&row);
         let Ok(due) = Schedule::of(&rule).last_due(now) else { continue };
@@ -1005,7 +1099,14 @@ async fn run_digests(state: &AppState, now: i64) -> anyhow::Result<()> {
         if last >= due {
             continue;
         }
-        if let Err(e) = send_digest(state, &rule, &row.s("secret"), now).await {
+        if let Err(e) = send_digest(
+            state,
+            &rule,
+            &crate::secretbox::open(&row.s("secret"))?,
+            now,
+        )
+        .await
+        {
             tracing::warn!("digest {} failed: {e:#}", rule.id);
         }
     }
@@ -1307,17 +1408,31 @@ async fn detect_spikes(state: &AppState) -> anyhow::Result<()> {
 
 /// Send a test notification for a rule (used by the API "test" endpoint).
 pub async fn test_rule(state: &AppState, rule_id: &str) -> anyhow::Result<String> {
-    let row = sqlx::query(&format!("SELECT {RULE_COLS} FROM alert_rules WHERE id = $1"))
-        .bind(rule_id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("rule not found"))?;
+    let row = sqlx::query(&format!(
+        "SELECT {RULE_COLS} FROM alert_rules WHERE id = $1"
+    ))
+    .bind(rule_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| anyhow::anyhow!("rule not found"))?;
     let rule = rule_from_row(&row);
     if rule.trigger == "digest" {
-        return send_digest(state, &rule, &row.s("secret"), now_ms()).await;
+        return send_digest(
+            state,
+            &rule,
+            &crate::secretbox::open(&row.s("secret"))?,
+            now_ms(),
+        )
+        .await;
     }
     if rule.trigger == "perf_regression" {
-        let sent = perf_regression_for_rule(state, &rule, &row.s("secret"), true).await?;
+        let sent = perf_regression_for_rule(
+            state,
+            &rule,
+            &crate::secretbox::open(&row.s("secret"))?,
+            true,
+        )
+        .await?;
         if !sent.is_empty() {
             return Ok(sent.join("; "));
         }
@@ -1330,7 +1445,16 @@ pub async fn test_rule(state: &AppState, rule_id: &str) -> anyhow::Result<String
             "url": state.config.public_url,
             "sent_at": crate::util::iso_time(now_ms()),
         });
-        return send(state, &rule, &row.s("secret"), "new_feedback", "", &payload, &format!("test-{}", new_id())).await;
+        return send(
+            state,
+            &rule,
+            &crate::secretbox::open(&row.s("secret"))?,
+            "new_feedback",
+            "",
+            &payload,
+            &format!("test-{}", new_id()),
+        )
+        .await;
     }
     let payload = json!({
         "trigger": "test",
@@ -1339,7 +1463,16 @@ pub async fn test_rule(state: &AppState, rule_id: &str) -> anyhow::Result<String
         "url": state.config.public_url,
         "sent_at": crate::util::iso_time(now_ms()),
     });
-    send(state, &rule, &row.s("secret"), "test", "", &payload, &format!("test-{}", new_id())).await
+    send(
+        state,
+        &rule,
+        &crate::secretbox::open(&row.s("secret"))?,
+        "test",
+        "",
+        &payload,
+        &format!("test-{}", new_id()),
+    )
+    .await
 }
 
 #[allow(dead_code)]

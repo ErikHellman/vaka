@@ -110,15 +110,8 @@ async fn ui_user(state: &AppState, headers: &HeaderMap) -> Option<Principal> {
     auth::principal_from_session(state, &cookie).await.ok().flatten()
 }
 
-/// Reject cross-site form posts (defense in depth on top of SameSite=Lax).
 fn same_origin(state: &AppState, headers: &HeaderMap) -> bool {
-    match headers.get(header::ORIGIN).and_then(|o| o.to_str().ok()) {
-        None => true,
-        Some(origin) => {
-            let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("");
-            origin.ends_with(&format!("//{host}")) || origin == state.config.public_url
-        }
-    }
+    auth::same_origin(state, headers)
 }
 
 macro_rules! require_user {
@@ -176,17 +169,68 @@ struct LoginForm {
     password: String,
 }
 
-async fn login(State(s): State<AppState>, Form(f): Form<LoginForm>) -> Response {
+/// Per-address and per-account limits for login, email codes and password changes
+/// (15-minute windows).
+const LOGIN_PER_IP: u32 = 30;
+const LOGIN_FAILURES_PER_ACCOUNT: u32 = 10;
+const CODE_REQUESTS_PER_IP: u32 = 10;
+const TOO_MANY: &str = "error:Too many attempts. Wait 15 minutes and try again.";
+
+fn client_key(s: &AppState, headers: &HeaderMap, peer: std::net::SocketAddr) -> String {
+    crate::ingest::client_ip(headers, peer, &s.config.trusted_proxies)
+        .map(crate::ratelimit::ip_key)
+        .unwrap_or_default()
+}
+
+/// Counts an attempt from this address; false when the address is over its limit.
+fn ip_attempt(prefix: &str, ip: &str, limit: u32) -> bool {
+    crate::ratelimit::LOGIN.take(&format!("{prefix}|ip|{ip}"), limit, now_ms())
+}
+
+fn account_locked(prefix: &str, email: &str) -> bool {
+    crate::ratelimit::LOGIN.count(&format!("{prefix}|acct|{email}"), now_ms())
+        >= LOGIN_FAILURES_PER_ACCOUNT
+}
+
+fn account_failed(prefix: &str, email: &str) {
+    crate::ratelimit::LOGIN.hit(&format!("{prefix}|acct|{email}"), now_ms());
+}
+
+async fn login(
+    State(s): State<AppState>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
+    Form(f): Form<LoginForm>,
+) -> Response {
     if !s.config.password_login_enabled() {
-        return back("/ui/login", "error:Password login is turned off; use an email code");
+        return back(
+            "/ui/login",
+            "error:Password login is turned off; use an email code",
+        );
+    }
+    if !same_origin(&s, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let email = f.email.trim().to_lowercase();
+    if !ip_attempt("login", &client_key(&s, &headers, peer), LOGIN_PER_IP)
+        || account_locked("login", &email)
+    {
+        return back("/ui/login", TOO_MANY);
     }
     let row = sqlx::query("SELECT id, password_hash, disabled FROM users WHERE email = $1")
-        .bind(f.email.trim().to_lowercase())
+        .bind(&email)
         .fetch_optional(&s.db)
         .await
         .ok()
         .flatten();
-    let Some(row) = row.filter(|r| r.i("disabled") == 0 && auth::verify_password(&f.password, &r.s("password_hash"))) else {
+    let ok = match &row {
+        Some(r) if r.i("disabled") == 0 => {
+            auth::verify_password_async(&f.password, &r.s("password_hash")).await
+        }
+        _ => false,
+    };
+    let Some(row) = row.filter(|_| ok) else {
+        account_failed("login", &email);
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
         return back("/ui/login", "error:Wrong email or password");
     };
@@ -210,12 +254,27 @@ fn code_page_url(email: &str, msg: &str) -> String {
     format!("/ui/login/code?email={}&flash={}", enc(email), enc(msg))
 }
 
-async fn request_code(State(s): State<AppState>, headers: HeaderMap, Form(f): Form<CodeRequestForm>) -> Response {
+async fn request_code(
+    State(s): State<AppState>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
+    Form(f): Form<CodeRequestForm>,
+) -> Response {
     if !s.config.email_login() {
-        return back("/ui/login", "error:Email codes are not available on this server");
+        return back(
+            "/ui/login",
+            "error:Email codes are not available on this server",
+        );
     }
     if !same_origin(&s, &headers) {
         return StatusCode::FORBIDDEN.into_response();
+    }
+    if !ip_attempt(
+        "code-request",
+        &client_key(&s, &headers, peer),
+        CODE_REQUESTS_PER_IP,
+    ) {
+        return back("/ui/login", TOO_MANY);
     }
     let email = f.email.trim().to_lowercase();
     if email.is_empty() {
@@ -261,24 +320,47 @@ struct VerifyForm {
     code: String,
 }
 
-async fn verify_code(State(s): State<AppState>, headers: HeaderMap, Form(f): Form<VerifyForm>) -> Response {
+async fn verify_code(
+    State(s): State<AppState>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
+    Form(f): Form<VerifyForm>,
+) -> Response {
     if !s.config.email_login() {
-        return back("/ui/login", "error:Email codes are not available on this server");
+        return back(
+            "/ui/login",
+            "error:Email codes are not available on this server",
+        );
     }
     if !same_origin(&s, &headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
     let email = f.email.trim().to_lowercase();
+    // Codes allow 5 guesses each; this caps guesses across codes, so requesting a new code
+    // every minute doesn't give an attacker unlimited tries.
+    if !ip_attempt("code", &client_key(&s, &headers, peer), LOGIN_PER_IP)
+        || account_locked("code", &email)
+    {
+        return Redirect::to(&code_page_url(&email, TOO_MANY)).into_response();
+    }
     match crate::otp::verify_code(&s, &email, &f.code).await {
         Some(user_id) => start_session(&s, &user_id).await,
         None => {
+            account_failed("code", &email);
             tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-            Redirect::to(&code_page_url(&email, "error:That code is wrong or has expired. After 5 wrong tries you need a new code.")).into_response()
+            Redirect::to(&code_page_url(
+                &email,
+                "error:That code is wrong or has expired. After 5 wrong tries you need a new code.",
+            ))
+            .into_response()
         }
     }
 }
 
 async fn logout(State(s): State<AppState>, headers: HeaderMap) -> Response {
+    if !same_origin(&s, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     if let Some(c) = headers
         .get_all(header::COOKIE)
         .iter()
@@ -287,9 +369,16 @@ async fn logout(State(s): State<AppState>, headers: HeaderMap) -> Response {
         .filter_map(|kv| kv.trim().split_once('='))
         .find(|(k, _)| *k == auth::SESSION_COOKIE)
     {
-        let _ = sqlx::query("DELETE FROM web_sessions WHERE token_hash = $1").bind(sha256_hex(c.1)).execute(&s.db).await;
+        let _ = sqlx::query("DELETE FROM web_sessions WHERE token_hash = $1")
+            .bind(sha256_hex(c.1))
+            .execute(&s.db)
+            .await;
     }
-    ([(header::SET_COOKIE, auth::session_cookie(&s, "", 0))], Redirect::to("/ui/login")).into_response()
+    (
+        [(header::SET_COOKIE, auth::session_cookie(&s, "", 0))],
+        Redirect::to("/ui/login"),
+    )
+        .into_response()
 }
 
 async fn dashboard(State(s): State<AppState>, headers: HeaderMap, axum::extract::Query(q): Q) -> Response {
@@ -668,45 +757,70 @@ async fn issue_action(State(s): State<AppState>, headers: HeaderMap, Path((slug,
     }
 }
 
-async fn tokens_page(State(s): State<AppState>, headers: HeaderMap, axum::extract::Query(q): Q) -> Response {
+async fn tokens_page(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Query(q): Q,
+) -> Response {
     let user = require_user!(s, headers);
     if !user.is_admin() {
         return back("/ui", "error:Only admins can manage API tokens");
     }
+    render_tokens(&s, &user, None, q.get("flash").map(String::as_str)).await
+}
+
+/// The tokens page. A newly created token is rendered straight into the POST response, so it
+/// never appears in a URL (browser history, proxy logs).
+async fn render_tokens(
+    s: &AppState,
+    user: &Principal,
+    new_token: Option<&str>,
+    flash: Option<&str>,
+) -> Response {
     let rows = sqlx::query("SELECT t.id, t.name, t.token_prefix, t.scope, t.created_at, t.last_used_at, t.expires_at, p.slug FROM api_tokens t LEFT JOIN projects p ON p.id = t.project_id WHERE t.revoked_at IS NULL ORDER BY t.created_at DESC")
         .fetch_all(&s.db)
         .await
         .unwrap_or_default();
-    let projects = crate::projects::list(&s).await.unwrap_or_default();
-    page("API tokens", Some(&user), None, html! {
-        h1 { "API tokens" }
-        @if let Some(t) = q.get("new_token") {
-            div.flash { "New token (copy it now, it won't be shown again): " br; code { (t) } }
-        }
-        @if let Some(f) = q.get("flash") { div.flash { (f) } }
-        p.muted { "Tokens authenticate the REST API (" code { "/api/v1" } ") and MCP (" code { "/mcp" } "). Read tokens can only query; write tokens can also triage issues, upload debug files and create alert rules." }
-        div.card { table {
-            tr { th { "Name" } th { "Token" } th { "Project" } th { "Scope" } th { "Last used" } th {} }
-            @for r in &rows {
-                tr {
-                    td { (r.s("name")) }
-                    td { code { (r.s("token_prefix")) "…" } }
-                    td { (r.os("slug").unwrap_or_else(|| "all projects".into())) }
-                    td { (r.s("scope")) }
-                    td.muted { (r.oi("last_used_at").map(iso_time).unwrap_or_else(|| "never".into())) }
-                    td { form.inline method="post" { input type="hidden" name="revoke" value=(r.s("id")); button.danger type="submit" { "Revoke" } } }
-                }
+    let projects = crate::projects::list(s).await.unwrap_or_default();
+    let mut resp = page(
+        "API tokens",
+        Some(user),
+        None,
+        html! {
+            h1 { "API tokens" }
+            @if let Some(t) = new_token {
+                div.flash { "New token (copy it now, it won't be shown again): " br; code { (t) } }
             }
-        } }
-        h2 { "New token" }
-        div.card { form.row method="post" {
-            input name="name" placeholder="Name, e.g. claude-code" required;
-            select name="project" { option value="" { "All projects" } @for p in &projects { option value=(p.id) { (p.name) } } }
-            select name="scope" { option value="read" { "read" } option value="write" { "write" } }
-            input type="number" name="expires_in_days" placeholder="Expires in days (optional)" min="1";
-            button type="submit" { "Create token" }
-        } }
-    })
+            @if let Some(f) = flash { @if let Some(e) = f.strip_prefix("error:") { div.flash.err { (e) } } @else { div.flash { (f) } } }
+            p.muted { "Tokens authenticate the REST API (" code { "/api/v1" } ") and MCP (" code { "/mcp" } "). Read tokens can only query; write tokens can also triage issues, upload debug files and create alert rules." }
+            div.card { table {
+                tr { th { "Name" } th { "Token" } th { "Project" } th { "Scope" } th { "Last used" } th {} }
+                @for r in &rows {
+                    tr {
+                        td { (r.s("name")) }
+                        td { code { (r.s("token_prefix")) "…" } }
+                        td { (r.os("slug").unwrap_or_else(|| "all projects".into())) }
+                        td { (r.s("scope")) }
+                        td.muted { (r.oi("last_used_at").map(iso_time).unwrap_or_else(|| "never".into())) }
+                        td { form.inline method="post" { input type="hidden" name="revoke" value=(r.s("id")); button.danger type="submit" { "Revoke" } } }
+                    }
+                }
+            } }
+            h2 { "New token" }
+            div.card { form.row method="post" {
+                input name="name" placeholder="Name, e.g. claude-code" required;
+                select name="project" { option value="" { "All projects" } @for p in &projects { option value=(p.id) { (p.name) } } }
+                select name="scope" { option value="read" { "read" } option value="write" { "write" } }
+                input type="number" name="expires_in_days" placeholder="Expires in days (optional)" min="1";
+                button type="submit" { "Create token" }
+            } }
+        },
+    );
+    resp.headers_mut().insert(
+        header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    resp
 }
 
 #[derive(Deserialize)]
@@ -718,76 +832,126 @@ struct TokenForm {
     expires_in_days: Option<String>,
 }
 
-async fn tokens_action(State(s): State<AppState>, headers: HeaderMap, Form(f): Form<TokenForm>) -> Response {
+async fn tokens_action(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<TokenForm>,
+) -> Response {
     let user = require_user!(s, headers);
     if !user.is_admin() || !same_origin(&s, &headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
     if let Some(id) = f.revoke {
-        let _ = sqlx::query("UPDATE api_tokens SET revoked_at = $1 WHERE id = $2").bind(now_ms()).bind(&id).execute(&s.db).await;
+        let _ = sqlx::query("UPDATE api_tokens SET revoked_at = $1 WHERE id = $2")
+            .bind(now_ms())
+            .bind(&id)
+            .execute(&s.db)
+            .await;
         auth::audit(&s, &user.label(), "revoke_token", &id, "ui").await;
         return back("/ui/tokens", "Token revoked");
     }
-    let expires = f.expires_in_days.and_then(|d| d.parse::<i64>().ok()).map(|d| now_ms() + d * 86_400_000);
+    let expires = f
+        .expires_in_days
+        .and_then(|d| d.parse::<i64>().ok())
+        .map(|d| now_ms() + d * 86_400_000);
     let project = f.project.filter(|p| !p.is_empty());
-    match auth::create_api_token(&s, f.name.as_deref().unwrap_or("token"), project.as_deref(), f.scope.as_deref() == Some("write"), expires, &user.label()).await {
+    match auth::create_api_token(
+        &s,
+        f.name.as_deref().unwrap_or("token"),
+        project.as_deref(),
+        f.scope.as_deref() == Some("write"),
+        expires,
+        &user.label(),
+    )
+    .await
+    {
         Ok(t) => {
             auth::audit(&s, &user.label(), "create_token", &t.id, "ui").await;
-            Redirect::to(&format!("/ui/tokens?new_token={}", t.token)).into_response()
+            render_tokens(&s, &user, Some(&t.token), Some("Token created")).await
         }
         Err(e) => back("/ui/tokens", &format!("error:{e}")),
     }
 }
 
-async fn users_page(State(s): State<AppState>, headers: HeaderMap, axum::extract::Query(q): Q) -> Response {
+async fn users_page(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Query(q): Q,
+) -> Response {
     let user = require_user!(s, headers);
     if !user.is_admin() {
         return back("/ui", "error:Only admins can manage users");
     }
-    let rows = sqlx::query("SELECT id, email, name, role, disabled, created_at FROM users ORDER BY created_at").fetch_all(&s.db).await.unwrap_or_default();
+    render_users(&s, &user, None, q.get("flash").map(String::as_str)).await
+}
+
+/// The users page; a new invite link (with whether it was emailed) is rendered into the POST
+/// response rather than passed in the URL.
+async fn render_users(
+    s: &AppState,
+    user: &Principal,
+    invite: Option<(&str, bool)>,
+    flash: Option<&str>,
+) -> Response {
+    let rows = sqlx::query(
+        "SELECT id, email, name, role, disabled, created_at FROM users ORDER BY created_at",
+    )
+    .fetch_all(&s.db)
+    .await
+    .unwrap_or_default();
     let invites = sqlx::query("SELECT email, role, expires_at FROM invites WHERE accepted_at IS NULL AND expires_at > $1 ORDER BY created_at DESC")
         .bind(now_ms())
         .fetch_all(&s.db)
         .await
         .unwrap_or_default();
-    page("Users", Some(&user), None, html! {
-        h1 { "Users" }
-        @if let Some(link) = q.get("invite_link") {
-            div.flash { "Invite created. " @if q.get("emailed").map(|e| e == "true").unwrap_or(false) { "We emailed it, and here is the link too: " } @else { "Send this link to the person (email is not configured): " } br; code { (link) } }
-        }
-        @if let Some(f) = q.get("flash") { @if let Some(e) = f.strip_prefix("error:") { div.flash.err { (e) } } @else { div.flash { (f) } } }
-        p.muted { "Roles: viewer (read), member (read + triage), admin (projects, tokens, users), owner (everything)." }
-        div.card { table {
-            tr { th { "Email" } th { "Name" } th { "Role" } th { "Status" } th {} }
-            @for r in &rows {
-                tr {
-                    td { (r.s("email")) }
-                    td { (r.s("name")) }
-                    td { form.inline method="post" {
-                        input type="hidden" name="user" value=(r.s("id"));
-                        select name="role" { @for role in ["viewer", "member", "admin", "owner"] { option value=(role) selected[r.s("role") == role] { (role) } } }
-                        " " button.ghost type="submit" name="action" value="role" { "Change" }
-                    } }
-                    td { @if r.i("disabled") != 0 { "disabled" } @else { "active" } }
-                    td { form.inline method="post" {
-                        input type="hidden" name="user" value=(r.s("id"));
-                        @if r.i("disabled") != 0 { button.ghost type="submit" name="action" value="enable" { "Enable" } }
-                        @else { button.danger type="submit" name="action" value="disable" { "Disable" } }
-                    } }
-                }
+    let mut resp = page(
+        "Users",
+        Some(user),
+        None,
+        html! {
+            h1 { "Users" }
+            @if let Some((link, emailed)) = invite {
+                div.flash { "Invite created. " @if emailed { "We emailed it, and here is the link too: " } @else { "Send this link to the person (email is not configured): " } br; code { (link) } }
             }
-        } }
-        @if !invites.is_empty() {
-            h2 { "Pending invites" }
-            div.card { table { @for i in &invites { tr { td { (i.s("email")) } td { (i.s("role")) } td.muted { "expires " (iso_time(i.i("expires_at"))) } } } } }
-        }
-        h2 { "Invite someone" }
-        div.card { form.row method="post" {
-            input type="email" name="email" placeholder="Email" required;
-            select name="role" { option value="viewer" { "viewer" } option value="member" selected { "member" } option value="admin" { "admin" } }
-            button type="submit" name="action" value="invite" { "Invite" }
-        } }
-    })
+            @if let Some(f) = flash { @if let Some(e) = f.strip_prefix("error:") { div.flash.err { (e) } } @else { div.flash { (f) } } }
+            p.muted { "Roles: viewer (read), member (read + triage), admin (projects, tokens, users), owner (everything)." }
+            div.card { table {
+                tr { th { "Email" } th { "Name" } th { "Role" } th { "Status" } th {} }
+                @for r in &rows {
+                    tr {
+                        td { (r.s("email")) }
+                        td { (r.s("name")) }
+                        td { form.inline method="post" {
+                            input type="hidden" name="user" value=(r.s("id"));
+                            select name="role" { @for role in ["viewer", "member", "admin", "owner"] { option value=(role) selected[r.s("role") == role] { (role) } } }
+                            " " button.ghost type="submit" name="action" value="role" { "Change" }
+                        } }
+                        td { @if r.i("disabled") != 0 { "disabled" } @else { "active" } }
+                        td { form.inline method="post" {
+                            input type="hidden" name="user" value=(r.s("id"));
+                            @if r.i("disabled") != 0 { button.ghost type="submit" name="action" value="enable" { "Enable" } }
+                            @else { button.danger type="submit" name="action" value="disable" { "Disable" } }
+                        } }
+                    }
+                }
+            } }
+            @if !invites.is_empty() {
+                h2 { "Pending invites" }
+                div.card { table { @for i in &invites { tr { td { (i.s("email")) } td { (i.s("role")) } td.muted { "expires " (iso_time(i.i("expires_at"))) } } } } }
+            }
+            h2 { "Invite someone" }
+            div.card { form.row method="post" {
+                input type="email" name="email" placeholder="Email" required;
+                select name="role" { option value="viewer" { "viewer" } option value="member" selected { "member" } option value="admin" { "admin" } }
+                button type="submit" name="action" value="invite" { "Invite" }
+            } }
+        },
+    );
+    resp.headers_mut().insert(
+        header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    resp
 }
 
 #[derive(Deserialize)]
@@ -798,41 +962,106 @@ struct UserForm {
     email: Option<String>,
 }
 
-async fn users_action(State(s): State<AppState>, headers: HeaderMap, Form(f): Form<UserForm>) -> Response {
+async fn users_action(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<UserForm>,
+) -> Response {
     let user = require_user!(s, headers);
     if !user.is_admin() || !same_origin(&s, &headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
     match f.action.as_str() {
-        "invite" => match crate::api::invite_inner(&s, &user, crate::api::InviteBody { email: f.email.unwrap_or_default(), role: f.role.unwrap_or_else(|| "member".into()) }).await {
-            Ok(v) => Redirect::to(&format!(
-                "/ui/users?invite_link={}&emailed={}",
-                url::form_urlencoded::byte_serialize(v["invite_link"].as_str().unwrap_or("").as_bytes()).collect::<String>(),
-                v["emailed"]
-            ))
-            .into_response(),
+        "invite" => match crate::api::invite_inner(
+            &s,
+            &user,
+            crate::api::InviteBody {
+                email: f.email.unwrap_or_default(),
+                role: f.role.unwrap_or_else(|| "member".into()),
+            },
+        )
+        .await
+        {
+            Ok(v) => {
+                render_users(
+                    &s,
+                    &user,
+                    Some((
+                        v["invite_link"].as_str().unwrap_or(""),
+                        v["emailed"] == true,
+                    )),
+                    None,
+                )
+                .await
+            }
             Err(e) => back("/ui/users", &format!("error:{}", e.1)),
         },
         action @ ("role" | "disable" | "enable") => {
-            let Some(id) = f.user else { return back("/ui/users", "error:missing user") };
-            let row = sqlx::query("SELECT role FROM users WHERE id = $1").bind(&id).fetch_optional(&s.db).await.ok().flatten();
-            let Some(row) = row else { return back("/ui/users", "error:user not found") };
+            let Some(id) = f.user else {
+                return back("/ui/users", "error:missing user");
+            };
+            let row = sqlx::query("SELECT role FROM users WHERE id = $1")
+                .bind(&id)
+                .fetch_optional(&s.db)
+                .await
+                .ok()
+                .flatten();
+            let Some(row) = row else {
+                return back("/ui/users", "error:user not found");
+            };
             let current = row.s("role");
-            let new_role = if action == "role" { f.role.clone().unwrap_or(current.clone()) } else { current.clone() };
-            let my_role = match &user { Principal::User { role, .. } => *role, _ => Role::Viewer };
+            if !user.may_manage(Role::parse(&current).unwrap_or(Role::Viewer)) {
+                return back(
+                    "/ui/users",
+                    "error:Only an owner can change owners or other admins",
+                );
+            }
+            let new_role = if action == "role" {
+                f.role.clone().unwrap_or(current.clone())
+            } else {
+                current.clone()
+            };
+            let my_role = match &user {
+                Principal::User { role, .. } => *role,
+                _ => Role::Viewer,
+            };
             if Role::parse(&new_role).map(|r| r > my_role).unwrap_or(true) {
-                return back("/ui/users", "error:You cannot grant a higher role than your own");
+                return back(
+                    "/ui/users",
+                    "error:You cannot grant a higher role than your own",
+                );
             }
             let disabling = action == "disable";
             if (current == "owner" && (new_role != "owner" || disabling))
-                && sqlx::query("SELECT COUNT(*) AS n FROM users WHERE role = 'owner' AND disabled = 0").fetch_one(&s.db).await.map(|r| r.i("n")).unwrap_or(0) <= 1
+                && sqlx::query(
+                    "SELECT COUNT(*) AS n FROM users WHERE role = 'owner' AND disabled = 0",
+                )
+                .fetch_one(&s.db)
+                .await
+                .map(|r| r.i("n"))
+                .unwrap_or(0)
+                    <= 1
             {
                 return back("/ui/users", "error:Cannot demote or disable the last owner");
             }
-            let disabled: Option<i64> = match action { "disable" => Some(1), "enable" => Some(0), _ => None };
-            let _ = sqlx::query("UPDATE users SET role = $1, disabled = COALESCE($2, disabled) WHERE id = $3").bind(&new_role).bind(disabled).bind(&id).execute(&s.db).await;
+            let disabled: Option<i64> = match action {
+                "disable" => Some(1),
+                "enable" => Some(0),
+                _ => None,
+            };
+            let _ = sqlx::query(
+                "UPDATE users SET role = $1, disabled = COALESCE($2, disabled) WHERE id = $3",
+            )
+            .bind(&new_role)
+            .bind(disabled)
+            .bind(&id)
+            .execute(&s.db)
+            .await;
             if disabling {
-                let _ = sqlx::query("DELETE FROM web_sessions WHERE user_id = $1").bind(&id).execute(&s.db).await;
+                let _ = sqlx::query("DELETE FROM web_sessions WHERE user_id = $1")
+                    .bind(&id)
+                    .execute(&s.db)
+                    .await;
             }
             auth::audit(&s, &user.label(), "update_user", &id, action).await;
             back("/ui/users", "Updated")
@@ -841,44 +1070,72 @@ async fn users_action(State(s): State<AppState>, headers: HeaderMap, Form(f): Fo
     }
 }
 
-async fn alerts_page(State(s): State<AppState>, headers: HeaderMap, axum::extract::Query(q): Q) -> Response {
+async fn alerts_page(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Query(q): Q,
+) -> Response {
     let user = require_user!(s, headers);
-    let rows = sqlx::query(&format!("SELECT {} FROM alert_rules ORDER BY created_at", crate::alerts::RULE_COLS)).fetch_all(&s.db).await.unwrap_or_default();
-    let rules: Vec<_> = rows.iter().map(crate::alerts::rule_from_row).collect();
-    let projects = crate::projects::list(&s).await.unwrap_or_default();
-    let name_of = |id: &Option<String>| id.as_ref().and_then(|i| projects.iter().find(|p| &p.id == i).map(|p| p.name.clone())).unwrap_or_else(|| "All projects".into());
-    page("Alerts", Some(&user), flash_of(&q).as_deref(), html! {
-        h1 { "Alert rules" }
-        p.muted { "Webhooks receive JSON (signed with HMAC-SHA256 in " code { "X-Vaka-Signature" } " when a secret is set). Email is sent through Resend." @if s.config.resend_api_key.is_none() { " Email is not configured: set VAKA_RESEND_API_KEY." } }
-        div.card { table {
-            tr { th { "Name" } th { "Project" } th { "Trigger" } th { "Channel" } th { "Target" } th {} }
-            @for r in &rules {
-                tr {
-                    td { (r.name) @if !r.enabled { " " span.badge { "disabled" } } }
-                    td { (name_of(&r.project_id)) }
-                    td { (r.trigger) @if r.trigger == "spike" { span.muted { " ≥" (r.threshold) "/h" } } }
-                    td { (r.channel) }
-                    td { code { (r.target) } }
-                    td { @if user.can_write(r.project_id.as_deref().unwrap_or("")) || user.is_admin() {
-                        form.inline method="post" { input type="hidden" name="id" value=(r.id); button.ghost type="submit" name="action" value="test" { "Test" } }
-                        " "
-                        form.inline method="post" { input type="hidden" name="id" value=(r.id); button.danger type="submit" name="action" value="delete" { "Delete" } }
-                    } }
-                }
+    let rows = sqlx::query(&format!(
+        "SELECT {} FROM alert_rules ORDER BY created_at",
+        crate::alerts::RULE_COLS
+    ))
+    .fetch_all(&s.db)
+    .await
+    .unwrap_or_default();
+    let rules: Vec<_> = rows
+        .iter()
+        .map(crate::alerts::rule_from_row)
+        .map(|mut r| {
+            if !crate::api::can_write_rule(&user, &r) {
+                r.target = crate::alerts::redact_target(&r.channel, &r.target);
             }
-        } }
-        h2 { "New rule" }
-        div.card { form.row method="post" {
-            input type="hidden" name="action" value="create";
-            select name="project" { option value="" { "All projects" } @for p in &projects { option value=(p.slug) { (p.name) } } }
-            select name="trigger" { @for t in crate::alerts::TRIGGERS { option value=(t) { (t) } } }
-            select name="channel" { @for c in crate::alerts::CHANNELS { option value=(c) { (c) } } }
-            input name="target" placeholder="https://… or email" required style="width:240px";
-            input name="secret" placeholder="Webhook secret (optional)";
-            input type="number" name="threshold" placeholder="Spike: events/hour" min="1";
-            button type="submit" { "Create" }
-        } }
-    })
+            r
+        })
+        .collect();
+    let projects = crate::projects::list(&s).await.unwrap_or_default();
+    let name_of = |id: &Option<String>| {
+        id.as_ref()
+            .and_then(|i| projects.iter().find(|p| &p.id == i).map(|p| p.name.clone()))
+            .unwrap_or_else(|| "All projects".into())
+    };
+    page(
+        "Alerts",
+        Some(&user),
+        flash_of(&q).as_deref(),
+        html! {
+            h1 { "Alert rules" }
+            p.muted { "Webhooks receive JSON (signed with HMAC-SHA256 in " code { "X-Vaka-Signature" } " when a secret is set). Email is sent through Resend." @if s.config.resend_api_key.is_none() { " Email is not configured: set VAKA_RESEND_API_KEY." } }
+            div.card { table {
+                tr { th { "Name" } th { "Project" } th { "Trigger" } th { "Channel" } th { "Target" } th {} }
+                @for r in &rules {
+                    tr {
+                        td { (r.name) @if !r.enabled { " " span.badge { "disabled" } } }
+                        td { (name_of(&r.project_id)) }
+                        td { (r.trigger) @if r.trigger == "spike" { span.muted { " ≥" (r.threshold) "/h" } } }
+                        td { (r.channel) }
+                        td { code { (r.target) } }
+                        td { @if crate::api::can_write_rule(&user, r) {
+                            form.inline method="post" { input type="hidden" name="id" value=(r.id); button.ghost type="submit" name="action" value="test" { "Test" } }
+                            " "
+                            form.inline method="post" { input type="hidden" name="id" value=(r.id); button.danger type="submit" name="action" value="delete" { "Delete" } }
+                        } }
+                    }
+                }
+            } }
+            h2 { "New rule" }
+            div.card { form.row method="post" {
+                input type="hidden" name="action" value="create";
+                select name="project" { option value="" { "All projects" } @for p in &projects { option value=(p.slug) { (p.name) } } }
+                select name="trigger" { @for t in crate::alerts::TRIGGERS { option value=(t) { (t) } } }
+                select name="channel" { @for c in crate::alerts::CHANNELS { option value=(c) { (c) } } }
+                input name="target" placeholder="https://… or email" required style="width:240px";
+                input name="secret" placeholder="Webhook secret (optional)";
+                input type="number" name="threshold" placeholder="Spike: events/hour" min="1";
+                button type="submit" { "Create" }
+            } }
+        },
+    )
 }
 
 #[derive(Deserialize)]
@@ -893,7 +1150,11 @@ struct AlertForm {
     threshold: Option<String>,
 }
 
-async fn alerts_action(State(s): State<AppState>, headers: HeaderMap, Form(f): Form<AlertForm>) -> Response {
+async fn alerts_action(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<AlertForm>,
+) -> Response {
     let user = require_user!(s, headers);
     if !same_origin(&s, &headers) {
         return StatusCode::FORBIDDEN.into_response();
@@ -916,25 +1177,34 @@ async fn alerts_action(State(s): State<AppState>, headers: HeaderMap, Form(f): F
                 Err(e) => back("/ui/alerts", &format!("error:{}", e.1)),
             }
         }
-        "test" => match crate::alerts::test_rule(&s, f.id.as_deref().unwrap_or("")).await {
-            Ok(d) => back("/ui/alerts", &format!("Test sent: {d}")),
-            Err(e) => back("/ui/alerts", &format!("error:Test failed: {e}")),
+        "test" => match crate::api::test_rule_inner(&s, &user, f.id.as_deref().unwrap_or("")).await
+        {
+            Ok(v) if v["ok"] == true => back(
+                "/ui/alerts",
+                &format!("Test sent: {}", v["detail"].as_str().unwrap_or("")),
+            ),
+            Ok(v) => back(
+                "/ui/alerts",
+                &format!("error:Test failed: {}", v["error"].as_str().unwrap_or("")),
+            ),
+            Err(e) => back("/ui/alerts", &format!("error:{}", e.1)),
         },
         "delete" => {
             let id = f.id.unwrap_or_default();
-            let row = sqlx::query("SELECT project_id FROM alert_rules WHERE id = $1").bind(&id).fetch_optional(&s.db).await.ok().flatten();
-            let allowed = row.map(|r| r.os("project_id").filter(|p| !p.is_empty()).map(|p| user.can_write(&p)).unwrap_or(user.is_admin())).unwrap_or(false);
-            if !allowed {
-                return back("/ui/alerts", "error:Not allowed");
+            match crate::api::delete_rule_inner(&s, &user, &id).await {
+                Ok(_) => back("/ui/alerts", "Rule deleted"),
+                Err(e) => back("/ui/alerts", &format!("error:{}", e.1)),
             }
-            let _ = sqlx::query("DELETE FROM alert_rules WHERE id = $1").bind(&id).execute(&s.db).await;
-            back("/ui/alerts", "Rule deleted")
         }
         _ => back("/ui/alerts", "error:unknown action"),
     }
 }
 
-async fn invite_page(State(s): State<AppState>, Path(token): Path<String>, axum::extract::Query(q): Q) -> Response {
+async fn invite_page(
+    State(s): State<AppState>,
+    Path(token): Path<String>,
+    axum::extract::Query(q): Q,
+) -> Response {
     let row = sqlx::query("SELECT email, role FROM invites WHERE token_hash = $1 AND accepted_at IS NULL AND expires_at > $2")
         .bind(sha256_hex(&token))
         .bind(now_ms())
@@ -942,18 +1212,28 @@ async fn invite_page(State(s): State<AppState>, Path(token): Path<String>, axum:
         .await
         .ok()
         .flatten();
-    let Some(row) = row else { return back("/ui/login", "error:This invite link is invalid or has expired") };
-    page("Accept invite", None, flash_of(&q).as_deref(), html! {
-        div.card style="max-width:420px;margin:60px auto" {
-            h1 { "Join Vaka" }
-            p { "You're invited as " strong { (row.s("role")) } " with " strong { (row.s("email")) } "." }
-            form method="post" {
-                p { input name="name" placeholder="Your name" required style="width:100%"; }
-                p { input type="password" name="password" placeholder="Choose a password (min 8 characters)" minlength="8" required style="width:100%"; }
-                button type="submit" { "Create account" }
+    let Some(row) = row else {
+        return back(
+            "/ui/login",
+            "error:This invite link is invalid or has expired",
+        );
+    };
+    page(
+        "Accept invite",
+        None,
+        flash_of(&q).as_deref(),
+        html! {
+            div.card style="max-width:420px;margin:60px auto" {
+                h1 { "Join Vaka" }
+                p { "You're invited as " strong { (row.s("role")) } " with " strong { (row.s("email")) } "." }
+                form method="post" {
+                    p { input name="name" placeholder="Your name" required style="width:100%"; }
+                    p { input type="password" name="password" placeholder="Choose a password (min 12 characters)" minlength="12" required style="width:100%"; }
+                    button type="submit" { "Create account" }
+                }
             }
-        }
-    })
+        },
+    )
 }
 
 #[derive(Deserialize)]
@@ -962,10 +1242,18 @@ struct AcceptForm {
     password: String,
 }
 
-async fn accept_invite(State(s): State<AppState>, Path(token): Path<String>, Form(f): Form<AcceptForm>) -> Response {
+async fn accept_invite(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+    Form(f): Form<AcceptForm>,
+) -> Response {
     let to = format!("/ui/invite/{token}");
-    if f.password.len() < 8 {
-        return back(&to, "error:Password must be at least 8 characters");
+    if !same_origin(&s, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if let Some(problem) = auth::password_problem(&f.password) {
+        return back(&to, &format!("error:{problem}"));
     }
     let row = sqlx::query("SELECT email, role FROM invites WHERE token_hash = $1 AND accepted_at IS NULL AND expires_at > $2")
         .bind(sha256_hex(&token))
@@ -974,30 +1262,77 @@ async fn accept_invite(State(s): State<AppState>, Path(token): Path<String>, For
         .await
         .ok()
         .flatten();
-    let Some(row) = row else { return back("/ui/login", "error:This invite link is invalid or has expired") };
-    let role = Role::parse(&row.s("role")).unwrap_or(Role::Viewer);
-    let user_id = match auth::create_user(&s, &row.s("email"), f.name.trim(), &f.password, role).await {
-        Ok(id) => id,
-        Err(_) => return back("/ui/login", "error:An account with this email already exists; log in instead"),
+    let Some(row) = row else {
+        return back(
+            "/ui/login",
+            "error:This invite link is invalid or has expired",
+        );
     };
-    let _ = sqlx::query("UPDATE invites SET accepted_at = $1 WHERE token_hash = $2").bind(now_ms()).bind(sha256_hex(&token)).execute(&s.db).await;
-    let Ok(session) = auth::create_session(&s, &user_id).await else { return back("/ui/login", "Account created, please log in") };
-    ([(header::SET_COOKIE, auth::session_cookie(&s, &session, 30 * 86400))], Redirect::to("/ui")).into_response()
+    let role = Role::parse(&row.s("role")).unwrap_or(Role::Viewer);
+    // Claim the invite first so two concurrent submissions can't both use it.
+    let claimed = sqlx::query(
+        "UPDATE invites SET accepted_at = $1 WHERE token_hash = $2 AND accepted_at IS NULL",
+    )
+    .bind(now_ms())
+    .bind(sha256_hex(&token))
+    .execute(&s.db)
+    .await
+    .map(|r| r.rows_affected() == 1)
+    .unwrap_or(false);
+    if !claimed {
+        return back(
+            "/ui/login",
+            "error:This invite link is invalid or has expired",
+        );
+    }
+    let user_id =
+        match auth::create_user(&s, &row.s("email"), f.name.trim(), &f.password, role).await {
+            Ok(id) => id,
+            Err(_) => {
+                return back(
+                    "/ui/login",
+                    "error:An account with this email already exists; log in instead",
+                )
+            }
+        };
+    let Ok(session) = auth::create_session(&s, &user_id).await else {
+        return back("/ui/login", "Account created, please log in");
+    };
+    (
+        [(
+            header::SET_COOKIE,
+            auth::session_cookie(&s, &session, 30 * 86400),
+        )],
+        Redirect::to("/ui"),
+    )
+        .into_response()
 }
 
-async fn account_page(State(s): State<AppState>, headers: HeaderMap, axum::extract::Query(q): Q) -> Response {
+async fn account_page(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Query(q): Q,
+) -> Response {
     let user = require_user!(s, headers);
-    let (name, role) = match &user { Principal::User { name, role, .. } => (name.clone(), role.as_str()), _ => (String::new(), "") };
-    page("Account", Some(&user), flash_of(&q).as_deref(), html! {
-        h1 { "Account" }
-        p { (name) " · " span.badge { (role) } }
-        div.card style="max-width:420px" { form method="post" {
-            h2 { "Change password" }
-            p { input type="password" name="current" placeholder="Current password" required style="width:100%"; }
-            p { input type="password" name="new" placeholder="New password (min 8 characters)" minlength="8" required style="width:100%"; }
-            button type="submit" { "Change password" }
-        } }
-    })
+    let (name, role) = match &user {
+        Principal::User { name, role, .. } => (name.clone(), role.as_str()),
+        _ => (String::new(), ""),
+    };
+    page(
+        "Account",
+        Some(&user),
+        flash_of(&q).as_deref(),
+        html! {
+            h1 { "Account" }
+            p { (name) " · " span.badge { (role) } }
+            div.card style="max-width:420px" { form method="post" {
+                h2 { "Change password" }
+                p { input type="password" name="current" placeholder="Current password" required style="width:100%"; }
+                p { input type="password" name="new" placeholder="New password (min 12 characters)" minlength="12" required style="width:100%"; }
+                button type="submit" { "Change password" }
+            } }
+        },
+    )
 }
 
 #[derive(Deserialize)]
@@ -1006,23 +1341,63 @@ struct PasswordForm {
     new: String,
 }
 
-async fn change_password(State(s): State<AppState>, headers: HeaderMap, Form(f): Form<PasswordForm>) -> Response {
+async fn change_password(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Form(f): Form<PasswordForm>,
+) -> Response {
     let user = require_user!(s, headers);
     if !same_origin(&s, &headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let Principal::User { id, .. } = &user else { return back("/ui/account", "error:not a user") };
-    let row = sqlx::query("SELECT password_hash FROM users WHERE id = $1").bind(id).fetch_one(&s.db).await;
-    let Ok(row) = row else { return back("/ui/account", "error:user not found") };
-    if !auth::verify_password(&f.current, &row.s("password_hash")) {
+    let Principal::User { id, .. } = &user else {
+        return back("/ui/account", "error:not a user");
+    };
+    if account_locked("password", id) {
+        return back("/ui/account", TOO_MANY);
+    }
+    let row = sqlx::query("SELECT password_hash FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_one(&s.db)
+        .await;
+    let Ok(row) = row else {
+        return back("/ui/account", "error:user not found");
+    };
+    if !auth::verify_password_async(&f.current, &row.s("password_hash")).await {
+        account_failed("password", id);
         return back("/ui/account", "error:Current password is wrong");
     }
-    if f.new.len() < 8 {
-        return back("/ui/account", "error:New password must be at least 8 characters");
+    if let Some(problem) = auth::password_problem(&f.new) {
+        return back("/ui/account", &format!("error:{problem}"));
     }
-    let Ok(hash) = auth::hash_password(&f.new) else { return back("/ui/account", "error:could not hash password") };
-    let _ = sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2").bind(hash).bind(id).execute(&s.db).await;
-    back("/ui/account", "Password changed")
+    let Ok(hash) = auth::hash_password_async(&f.new).await else {
+        return back("/ui/account", "error:could not hash password");
+    };
+    let _ = sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+        .bind(hash)
+        .bind(id)
+        .execute(&s.db)
+        .await;
+    // Sign out every other session: a password change is often a response to a compromise.
+    let current = headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .filter_map(|kv| kv.trim().split_once('='))
+        .find(|(k, _)| *k == auth::SESSION_COOKIE)
+        .map(|(_, v)| sha256_hex(v))
+        .unwrap_or_default();
+    let _ = sqlx::query("DELETE FROM web_sessions WHERE user_id = $1 AND token_hash != $2")
+        .bind(id)
+        .bind(current)
+        .execute(&s.db)
+        .await;
+    auth::audit(&s, &user.label(), "change_password", id, "ui").await;
+    back(
+        "/ui/account",
+        "Password changed. Other sessions were signed out.",
+    )
 }
 
 /// Email an invite link through Resend when configured. Returns whether it was sent.

@@ -9,8 +9,13 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
+  # The smoke tests deliver alerts to local mock servers on 127.0.0.1.
+  VAKA_ALLOW_PRIVATE_ALERT_TARGETS: "true"
 
 jobs:
   rust:
@@ -21,7 +26,6 @@ jobs:
         env:
           CLICKHOUSE_USER: vaka
           CLICKHOUSE_PASSWORD: vaka
-          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
         ports: ["8123:8123"]
         options: >-
           --health-cmd "wget -qO- http://localhost:8123/ping"
@@ -51,13 +55,13 @@ jobs:
           VAKA_DATA_DIR=/tmp/vaka-sqlite VAKA_LISTEN=127.0.0.1:8080 \
           VAKA_CLICKHOUSE_URL=http://localhost:8123 VAKA_CLICKHOUSE_USER=vaka VAKA_CLICKHOUSE_PASSWORD=vaka \
           VAKA_CLICKHOUSE_DATABASE=vaka_sqlite \
-          VAKA_ADMIN_EMAIL=ci@example.com VAKA_ADMIN_PASSWORD=password123 VAKA_GITHUB_API_URL=http://127.0.0.1:18099/gh \
+          VAKA_ADMIN_EMAIL=ci@example.com VAKA_ADMIN_PASSWORD=ci-smoke-Passw0rd VAKA_GITHUB_API_URL=http://127.0.0.1:18099/gh \
             ./target/debug/vaka-server > /tmp/vaka-sqlite.log 2>&1 &
           SERVER_PID=$!
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8080/health && break; sleep 1; done
-          VAKA=http://127.0.0.1:8080 EMAIL=ci@example.com PASSWORD=password123 bash scripts/smoke.sh
+          VAKA=http://127.0.0.1:8080 EMAIL=ci@example.com PASSWORD=ci-smoke-Passw0rd bash scripts/smoke.sh
           PGPASSWORD=vaka psql -h localhost -U vaka -d vaka -c 'CREATE DATABASE vaka_cutover'
-          VAKA=http://127.0.0.1:8080 EMAIL=ci@example.com PASSWORD=password123 \
+          VAKA=http://127.0.0.1:8080 EMAIL=ci@example.com PASSWORD=ci-smoke-Passw0rd \
           SQLITE_URL=sqlite:///tmp/vaka-sqlite/vaka.db PG_URL=postgres://vaka:vaka@localhost:5432/vaka_cutover \
           VAKA_CLICKHOUSE_URL=http://localhost:8123 VAKA_CLICKHOUSE_USER=vaka VAKA_CLICKHOUSE_PASSWORD=vaka \
           VAKA_CLICKHOUSE_DATABASE=vaka_sqlite VAKA_GITHUB_API_URL=http://127.0.0.1:18099/gh \
@@ -72,15 +76,25 @@ jobs:
           VAKA_DATA_DIR=/tmp/vaka-pg VAKA_LISTEN=127.0.0.1:8081 VAKA_DB_URL=postgres://vaka:vaka@localhost:5432/vaka \
           VAKA_CLICKHOUSE_URL=http://localhost:8123 VAKA_CLICKHOUSE_USER=vaka VAKA_CLICKHOUSE_PASSWORD=vaka \
           VAKA_CLICKHOUSE_DATABASE=vaka_pg \
-          VAKA_ADMIN_EMAIL=ci@example.com VAKA_ADMIN_PASSWORD=password123 VAKA_GITHUB_API_URL=http://127.0.0.1:18099/gh \
+          VAKA_ADMIN_EMAIL=ci@example.com VAKA_ADMIN_PASSWORD=ci-smoke-Passw0rd VAKA_GITHUB_API_URL=http://127.0.0.1:18099/gh \
             ./target/debug/vaka-server > /tmp/vaka-pg.log 2>&1 &
           SERVER_PID=$!
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8081/health && break; sleep 1; done
-          VAKA=http://127.0.0.1:8081 EMAIL=ci@example.com PASSWORD=password123 ARTIFACT_DIR=/tmp/vaka-pg/artifacts bash scripts/smoke.sh
+          VAKA=http://127.0.0.1:8081 EMAIL=ci@example.com PASSWORD=ci-smoke-Passw0rd ARTIFACT_DIR=/tmp/vaka-pg/artifacts bash scripts/smoke.sh
           kill $SERVER_PID
       - name: Server logs
         if: failure()
         run: tail -n 200 /tmp/vaka-*.log
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      # Ignores, each with a reason, live in .cargo/audit.toml.
+      - run: cargo audit
 
   js:
     runs-on: ubuntu-latest

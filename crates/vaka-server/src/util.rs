@@ -93,3 +93,36 @@ mod tests {
         assert_eq!(ch_time(0), "1970-01-01 00:00:00.000");
     }
 }
+
+/// Make model-written text safe to forward to Slack, email or the UI: the model reads crash and
+/// feedback text that anyone can send, so it could be steered into emitting phishing links.
+/// Markdown links keep their label, bare URLs are dropped, and control characters go.
+pub fn defang_llm_text(s: &str) -> String {
+    static MD_LINK: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(r"\[([^\]\n]{0,200})\]\([^)\s]*\)").unwrap()
+    });
+    static URL: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| regex::Regex::new(r"(?i)\b(?:https?://|www\.)\S+").unwrap());
+    let s = MD_LINK.replace_all(s, "$1");
+    let s = URL.replace_all(&s, "[link removed]");
+    s.chars()
+        .filter(|c| !c.is_control() || *c == '\n')
+        .collect()
+}
+
+#[cfg(test)]
+mod defang_tests {
+    #[test]
+    fn strips_links() {
+        assert_eq!(
+            super::defang_llm_text(
+                "See [here](https://evil.example/x) or https://evil.example/y now"
+            ),
+            "See here or [link removed] now"
+        );
+        assert_eq!(
+            super::defang_llm_text("Errors up 20%.\nWEB-1 is new."),
+            "Errors up 20%.\nWEB-1 is new."
+        );
+    }
+}

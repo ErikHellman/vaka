@@ -8,6 +8,7 @@
 #   - COMPOSE_PROFILES=postgres   adds Postgres for metadata (also set VAKA_DB_URL)
 #   - VAKA_VERSION=0.3.0          pins the server image (default: latest)
 #   - VAKA_PORT=127.0.0.1:8080    keeps the plain HTTP port off the network behind a proxy
+#                                 (recommended with the caddy profile, so nobody bypasses HTTPS)
 
 services:
   vaka:
@@ -20,9 +21,14 @@ services:
     environment:
       VAKA_CLICKHOUSE_URL: http://clickhouse:8123
       VAKA_CLICKHOUSE_USER: vaka
-      VAKA_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-vaka}
+      VAKA_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD in .env (a long random value)}
+      # Only the bundled Caddy (fixed address below) may set X-Forwarded-For. Requests that reach
+      # the published port directly are keyed by their own address.
+      VAKA_TRUSTED_PROXIES: ${VAKA_TRUSTED_PROXIES:-127.0.0.1,::1,172.30.0.10}
     volumes:
       - vaka-data:/data
+    networks:
+      vaka:
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -35,11 +41,12 @@ services:
     restart: unless-stopped
     environment:
       CLICKHOUSE_USER: vaka
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-vaka}
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD in .env (a long random value)}
     volumes:
       - clickhouse-data:/var/lib/clickhouse
       - ./deploy/clickhouse/low-memory.xml:/etc/clickhouse-server/config.d/low-memory.xml:ro
+    networks:
+      vaka:
     ulimits:
       nofile: { soft: 262144, hard: 262144 }
     healthcheck:
@@ -56,6 +63,8 @@ services:
       POSTGRES_USER: vaka
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vaka}
       POSTGRES_DB: vaka
+    networks:
+      vaka:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -78,8 +87,17 @@ services:
       - ./deploy/docker/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    networks:
+      vaka:
+        ipv4_address: 172.30.0.10
     depends_on:
       - vaka
+
+networks:
+  vaka:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
 
 volumes:
   vaka-data:

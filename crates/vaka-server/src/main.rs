@@ -14,24 +14,27 @@ mod fixctx;
 mod flags;
 mod github;
 mod grouping;
-mod insights;
 mod ingest;
+mod insights;
 mod maintenance;
 mod mcp;
-mod otp;
-mod ownership;
+mod migrate_db;
 mod models;
+mod netguard;
 mod openapi;
 mod otel;
+mod otp;
+mod ownership;
 mod perf;
 mod processor;
 mod product;
 mod projects;
 mod query;
-mod migrate_db;
+mod ratelimit;
 mod readonly;
 mod s3;
 mod scrub;
+mod secretbox;
 mod state;
 mod symbolicate;
 mod timeline;
@@ -49,7 +52,10 @@ use tower_http::trace::TraceLayer;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_env("VAKA_LOG").unwrap_or_else(|_| "info,tower_http=warn,sqlx=warn".into()))
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_env("VAKA_LOG")
+                .unwrap_or_else(|_| "info,tower_http=warn,sqlx=warn".into()),
+        )
         .init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -65,7 +71,12 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(config.artifact_dir())?;
 
     let db = db::connect(&config.db_url).await?;
-    let ch = ch::ClickHouse::new(&config.clickhouse_url, &config.clickhouse_user, &config.clickhouse_password, &config.clickhouse_database);
+    let ch = ch::ClickHouse::new(
+        &config.clickhouse_url,
+        &config.clickhouse_user,
+        &config.clickhouse_password,
+        &config.clickhouse_database,
+    );
     // ClickHouse may still be starting (docker-compose); retry for a while.
     let mut attempt = 0;
     loop {
@@ -80,13 +91,16 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let geoip = config.geoip_db.as_ref().and_then(|p| match maxminddb::Reader::open_readfile(p) {
-        Ok(r) => Some(r),
-        Err(e) => {
-            tracing::warn!("could not open GeoIP database {p}: {e}");
-            None
-        }
-    });
+    let geoip = config
+        .geoip_db
+        .as_ref()
+        .and_then(|p| match maxminddb::Reader::open_readfile(p) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                tracing::warn!("could not open GeoIP database {p}: {e}");
+                None
+            }
+        });
 
     let (work_tx, work_rx) = tokio::sync::mpsc::channel(100_000);
     let state: state::AppState = Arc::new(state::AppStateInner {
@@ -97,12 +111,23 @@ async fn main() -> anyhow::Result<()> {
         key_cache: Default::default(),
         geoip,
         symbols: Default::default(),
-        http: reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build()?,
+        http: reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()?,
+        alert_http: netguard::alert_client(config.allow_private_alert_targets)?,
         s3: s3::S3Config::from_env().map(s3::S3::new).transpose()?,
         salt: Default::default(),
     });
     auth::bootstrap_admin(&state).await?;
-    if matches!(std::env::var("VAKA_READ_ONLY").map(|v| v.trim().to_lowercase()).as_deref(), Ok("1" | "true" | "yes" | "on")) {
+    if let Err(e) = secretbox::seal_existing(&state.db).await {
+        tracing::warn!("could not encrypt stored alert secrets: {e:#}");
+    }
+    if matches!(
+        std::env::var("VAKA_READ_ONLY")
+            .map(|v| v.trim().to_lowercase())
+            .as_deref(),
+        Ok("1" | "true" | "yes" | "on")
+    ) {
         readonly::enable(&state.db, std::time::Duration::ZERO).await?;
         tracing::warn!("VAKA_READ_ONLY is set: metadata writes are refused");
     }
@@ -137,21 +162,62 @@ async fn main() -> anyhow::Result<()> {
             axum::http::header::HeaderName::from_static("x-content-type-options"),
             HeaderValue::from_static("nosniff"),
         ))
+        // The admin UI and docs use no scripts and no third-party resources; lock that in.
+        .layer(tower_http::set_header::SetResponseHeaderLayer::if_not_present(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(
+                "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; frame-ancestors 'none'; form-action 'self'; base-uri 'none'; object-src 'none'",
+            ),
+        ))
+        .layer(tower_http::set_header::SetResponseHeaderLayer::if_not_present(
+            axum::http::header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(tower_http::set_header::SetResponseHeaderLayer::if_not_present(
+            axum::http::header::REFERRER_POLICY,
+            HeaderValue::from_static("same-origin"),
+        ))
+        .layer(tower_http::set_header::SetResponseHeaderLayer::if_not_present(
+            axum::http::header::STRICT_TRANSPORT_SECURITY,
+            if config.public_url.starts_with("https://") {
+                Some(HeaderValue::from_static("max-age=31536000"))
+            } else {
+                None
+            },
+        ))
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&config.listen).await?;
-    tracing::info!("Vaka listening on {} (public URL {})", config.listen, config.public_url);
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .await?;
+    tracing::info!(
+        "Vaka listening on {} (public URL {})",
+        config.listen,
+        config.public_url
+    );
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await?;
     Ok(())
 }
 
-async fn health(axum::extract::State(s): axum::extract::State<state::AppState>) -> (axum::http::StatusCode, Json<serde_json::Value>) {
+async fn health(
+    axum::extract::State(s): axum::extract::State<state::AppState>,
+) -> (axum::http::StatusCode, Json<serde_json::Value>) {
     let db_ok = sqlx::query("SELECT 1").execute(&s.db).await.is_ok();
     let ch_ok = s.ch.ping().await;
-    let status = if db_ok && ch_ok { axum::http::StatusCode::OK } else { axum::http::StatusCode::SERVICE_UNAVAILABLE };
-    (status, Json(serde_json::json!({"ok": db_ok && ch_ok, "db": db_ok, "clickhouse": ch_ok, "read_only": readonly::requested(), "version": env!("CARGO_PKG_VERSION")})))
+    let status = if db_ok && ch_ok {
+        axum::http::StatusCode::OK
+    } else {
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    };
+    (
+        status,
+        Json(
+            serde_json::json!({"ok": db_ok && ch_ok, "db": db_ok, "clickhouse": ch_ok, "read_only": readonly::requested(), "version": env!("CARGO_PKG_VERSION")}),
+        ),
+    )
 }

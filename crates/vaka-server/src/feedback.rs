@@ -14,12 +14,12 @@ use crate::models::{Device, UserRef};
 use crate::query::{project_for, QResult};
 use crate::state::{AppState, ProjectInfo};
 use crate::util::{iso_time, new_id, now_ms, parse_time_expr, sha256_hex, truncate};
-use once_cell::sync::Lazy;
+
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
-use std::sync::Mutex;
+use std::collections::BTreeMap;
+
 use std::time::Duration;
 
 pub const MAX_MESSAGE_CHARS: usize = 5000;
@@ -208,37 +208,41 @@ pub fn strip_jpeg_metadata(b: &[u8]) -> Vec<u8> {
 // Rate limiting
 // ---------------------------------------------------------------------------
 
-static WINDOWS: Lazy<Mutex<HashMap<String, (i64, u32)>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-
-/// Fixed one-hour windows kept in memory. Returns false when `key` is over `limit`.
-fn take(key: &str, limit: u32, now: i64) -> bool {
-    if limit == 0 {
-        return true;
-    }
-    let window = now / 3_600_000;
-    let mut m = WINDOWS.lock().unwrap_or_else(|e| e.into_inner());
-    if m.len() > 50_000 {
-        m.retain(|_, (w, _)| *w == window);
-    }
-    let e = m.entry(key.to_string()).or_insert((window, 0));
-    if e.0 != window {
-        *e = (window, 0);
-    }
-    if e.1 >= limit {
-        return false;
-    }
-    e.1 += 1;
-    true
-}
-
-fn check_rate(state: &AppState, project: &ProjectInfo, ctx: &RequestCtx, session_id: &str) -> Result<(), Reject> {
+fn check_rate(
+    state: &AppState,
+    project: &ProjectInfo,
+    ctx: &RequestCtx,
+    session_id: &str,
+) -> Result<(), Reject> {
     let now = now_ms();
-    let ip = ctx.ip.map(|i| sha256_hex(&i.to_string())).unwrap_or_default();
-    if !ip.is_empty() && !take(&format!("{}|ip|{ip}", project.id), state.config.feedback_ip_limit, now) {
-        return Err(Reject::RateLimited(format!("too much feedback from this address: the limit is {} per hour", state.config.feedback_ip_limit)));
+    let ip = ctx
+        .ip
+        .map(|i| sha256_hex(&crate::ratelimit::ip_key(i)))
+        .unwrap_or_default();
+    let take = |key: &str, limit: u32, now: i64| crate::ratelimit::FEEDBACK.take(key, limit, now);
+    if !ip.is_empty()
+        && !take(
+            &format!("{}|ip|{ip}", project.id),
+            state.config.feedback_ip_limit,
+            now,
+        )
+    {
+        return Err(Reject::RateLimited(format!(
+            "too much feedback from this address: the limit is {} per hour",
+            state.config.feedback_ip_limit
+        )));
     }
-    if !session_id.is_empty() && !take(&format!("{}|s|{session_id}", project.id), state.config.feedback_session_limit, now) {
-        return Err(Reject::RateLimited(format!("too much feedback in this session: the limit is {} per hour", state.config.feedback_session_limit)));
+    if !session_id.is_empty()
+        && !take(
+            &format!("{}|s|{session_id}", project.id),
+            state.config.feedback_session_limit,
+            now,
+        )
+    {
+        return Err(Reject::RateLimited(format!(
+            "too much feedback in this session: the limit is {} per hour",
+            state.config.feedback_session_limit
+        )));
     }
     Ok(())
 }
@@ -527,12 +531,27 @@ fn row_json(state: &AppState, r: &sqlx::any::AnyRow, include_contact: bool) -> V
 
 /// Load one feedback row by id or short id (`WEB-F12`), checking read access.
 async fn find(state: &AppState, p: &Principal, id: &str) -> QResult<sqlx::any::AnyRow> {
-    let short = id.rsplit_once("-F").or_else(|| id.rsplit_once("-f")).and_then(|(s, n)| Some((s.to_lowercase(), n.parse::<i64>().ok()?)));
+    let short = id
+        .rsplit_once("-F")
+        .or_else(|| id.rsplit_once("-f"))
+        .and_then(|(s, n)| Some((s.to_lowercase(), n.parse::<i64>().ok()?)));
     let row = match short {
         Some((slug, n)) => {
-            sqlx::query(&format!("{SELECT} WHERE (p.slug = $1 AND f.short_id = $2) OR f.id = $3")).bind(slug).bind(n).bind(id).fetch_optional(&state.db).await?
+            sqlx::query(&format!(
+                "{SELECT} WHERE (p.slug = $1 AND f.short_id = $2) OR f.id = $3"
+            ))
+            .bind(slug)
+            .bind(n)
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
         }
-        None => sqlx::query(&format!("{SELECT} WHERE f.id = $1")).bind(id).fetch_optional(&state.db).await?,
+        None => {
+            sqlx::query(&format!("{SELECT} WHERE f.id = $1"))
+                .bind(id)
+                .fetch_optional(&state.db)
+                .await?
+        }
     };
     let row = row.ok_or_else(|| ApiError::not_found("feedback"))?;
     if !p.can_read(&row.s("project_id")) {
@@ -582,8 +601,12 @@ fn csv(s: &Option<String>) -> Vec<String> {
 pub async fn list(state: &AppState, p: &Principal, q: ListParams) -> QResult<Value> {
     let project = project_for(state, p, &q.project).await?;
     let now = now_ms();
-    let since = parse_time_expr(q.since.as_deref().unwrap_or("30d"), now).ok_or_else(|| ApiError::bad("`since` must look like 24h, 7d or an ISO time"))?;
-    let mut wh = vec!["f.project_id = $1".to_string(), "f.created_at >= $2".to_string()];
+    let since = parse_time_expr(q.since.as_deref().unwrap_or("30d"), now)
+        .ok_or_else(|| ApiError::bad("`since` must look like 24h, 7d or an ISO time"))?;
+    let mut wh = vec![
+        "f.project_id = $1".to_string(),
+        "f.created_at >= $2".to_string(),
+    ];
     let mut binds = vec![Bind::S(project.id.clone()), Bind::I(since)];
     let push = |cond: &str, b: Bind, binds: &mut Vec<Bind>, wh: &mut Vec<String>| {
         binds.push(b);
@@ -595,7 +618,10 @@ pub async fn list(state: &AppState, p: &Principal, q: ListParams) -> QResult<Val
         _ => csv(&q.status),
     };
     if let Some(bad) = statuses.iter().find(|s| !STATUSES.contains(&s.as_str())) {
-        return Err(ApiError::bad(format!("unknown status `{bad}`: use open, all, or {}", STATUSES.join(", "))));
+        return Err(ApiError::bad(format!(
+            "unknown status `{bad}`: use open, all, or {}",
+            STATUSES.join(", ")
+        )));
     }
     if !statuses.is_empty() {
         let list: Vec<String> = statuses.iter().map(|s| format!("'{s}'")).collect();
@@ -608,41 +634,94 @@ pub async fn list(state: &AppState, p: &Principal, q: ListParams) -> QResult<Val
             match s.as_str() {
                 "untagged" => parts.push("f.sentiment IS NULL".to_string()),
                 x if SENTIMENTS.contains(&x) => parts.push(format!("f.sentiment = '{x}'")),
-                other => return Err(ApiError::bad(format!("unknown sentiment `{other}`: use {}, untagged", SENTIMENTS.join(", ")))),
+                other => {
+                    return Err(ApiError::bad(format!(
+                        "unknown sentiment `{other}`: use {}, untagged",
+                        SENTIMENTS.join(", ")
+                    )))
+                }
             }
         }
         wh.push(format!("({})", parts.join(" OR ")));
     }
-    if let Some(t) = q.topic.as_deref().map(|t| t.trim().to_lowercase()).filter(|t| !t.is_empty()) {
-        push("f.topics LIKE ?", Bind::S(format!("%{}%", serde_json::to_string(&t).unwrap_or_default())), &mut binds, &mut wh);
+    if let Some(t) = q
+        .topic
+        .as_deref()
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty())
+    {
+        push(
+            "f.topics LIKE ?",
+            Bind::S(format!(
+                "%{}%",
+                serde_json::to_string(&t).unwrap_or_default()
+            )),
+            &mut binds,
+            &mut wh,
+        );
     }
-    for (val, col) in [(&q.release, "f.release"), (&q.environment, "f.environment"), (&q.platform, "f.platform"), (&q.source, "f.source"), (&q.user, "f.user_id"), (&q.session, "f.session_id")] {
+    for (val, col) in [
+        (&q.release, "f.release"),
+        (&q.environment, "f.environment"),
+        (&q.platform, "f.platform"),
+        (&q.source, "f.source"),
+        (&q.user, "f.user_id"),
+        (&q.session, "f.session_id"),
+    ] {
         if let Some(v) = val.as_deref().filter(|v| !v.is_empty()) {
-            push(&format!("{col} = ?"), Bind::S(v.to_string()), &mut binds, &mut wh);
+            push(
+                &format!("{col} = ?"),
+                Bind::S(v.to_string()),
+                &mut binds,
+                &mut wh,
+            );
         }
     }
     if let Some(f) = q.flag.as_deref().filter(|f| !f.is_empty()) {
         let pat = match f.split_once('=') {
-            Some((k, v)) => format!("%{}:{}%", serde_json::to_string(k).unwrap_or_default(), serde_json::to_string(v).unwrap_or_default()),
+            Some((k, v)) => format!(
+                "%{}:{}%",
+                serde_json::to_string(k).unwrap_or_default(),
+                serde_json::to_string(v).unwrap_or_default()
+            ),
             None => format!("%{}:%", serde_json::to_string(f).unwrap_or_default()),
         };
         push("f.flags LIKE ?", Bind::S(pat), &mut binds, &mut wh);
     }
     if let Some(i) = q.issue.as_deref().filter(|i| !i.is_empty()) {
         let issue = crate::query::issue_for(state, p, i).await?;
-        push("f.issue_id = ?", Bind::S(issue["id"].as_str().unwrap_or("").to_string()), &mut binds, &mut wh);
+        push(
+            "f.issue_id = ?",
+            Bind::S(issue["id"].as_str().unwrap_or("").to_string()),
+            &mut binds,
+            &mut wh,
+        );
     }
     match q.has_screenshot {
         Some(true) => wh.push("f.attachment_count > 0".into()),
         Some(false) => wh.push("f.attachment_count = 0".into()),
         None => {}
     }
-    if let Some(t) = q.query.as_deref().map(|t| t.trim().to_lowercase()).filter(|t| !t.is_empty()) {
-        push("LOWER(f.message) LIKE ?", Bind::S(format!("%{t}%")), &mut binds, &mut wh);
+    if let Some(t) = q
+        .query
+        .as_deref()
+        .map(|t| t.trim().to_lowercase())
+        .filter(|t| !t.is_empty())
+    {
+        push(
+            "LOWER(f.message) LIKE ?",
+            Bind::S(format!("%{t}%")),
+            &mut binds,
+            &mut wh,
+        );
     }
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let offset = q.offset.unwrap_or(0).max(0);
-    let sql = format!("{SELECT} WHERE {} ORDER BY f.created_at DESC LIMIT {} OFFSET {offset}", wh.join(" AND "), limit + 1);
+    let sql = format!(
+        "{SELECT} WHERE {} ORDER BY f.created_at DESC LIMIT {} OFFSET {offset}",
+        wh.join(" AND "),
+        limit + 1
+    );
     let mut query = sqlx::query(&sql);
     for b in binds {
         query = match b {
@@ -653,8 +732,14 @@ pub async fn list(state: &AppState, p: &Principal, q: ListParams) -> QResult<Val
     let rows = query.fetch_all(&state.db).await?;
     let include_contact = p.can_write(&project.id);
     let has_more = rows.len() as i64 > limit;
-    let items: Vec<Value> = rows.iter().take(limit as usize).map(|r| row_json(state, r, include_contact)).collect();
-    Ok(json!({"project": project.slug, "feedback": items, "count": items.len(), "has_more": has_more, "next_offset": if has_more { json!(offset + limit) } else { Value::Null }}))
+    let items: Vec<Value> = rows
+        .iter()
+        .take(limit as usize)
+        .map(|r| row_json(state, r, include_contact))
+        .collect();
+    Ok(
+        json!({"project": project.slug, "feedback": items, "count": items.len(), "has_more": has_more, "next_offset": if has_more { json!(offset + limit) } else { Value::Null }}),
+    )
 }
 
 pub async fn get(state: &AppState, p: &Principal, id: &str) -> QResult<Value> {
@@ -824,11 +909,19 @@ pub async fn summary(state: &AppState, p: &Principal, q: SummaryParams) -> QResu
     let project = project_for(state, p, &q.project).await?;
     let by = q.by.as_deref().unwrap_or("sentiment");
     if !SUMMARY_DIMENSIONS.contains(&by) {
-        return Err(ApiError::bad(format!("`by` must be one of {}", SUMMARY_DIMENSIONS.join(", "))));
+        return Err(ApiError::bad(format!(
+            "`by` must be one of {}",
+            SUMMARY_DIMENSIONS.join(", ")
+        )));
     }
     let now = now_ms();
-    let since = parse_time_expr(q.since.as_deref().unwrap_or("30d"), now).ok_or_else(|| ApiError::bad("`since` must look like 24h, 7d or an ISO time"))?;
-    let closed = if q.include_closed.unwrap_or(true) { "" } else { " AND status IN ('new', 'triaged')" };
+    let since = parse_time_expr(q.since.as_deref().unwrap_or("30d"), now)
+        .ok_or_else(|| ApiError::bad("`since` must look like 24h, 7d or an ISO time"))?;
+    let closed = if q.include_closed.unwrap_or(true) {
+        ""
+    } else {
+        " AND status IN ('new', 'triaged')"
+    };
     let rows = sqlx::query(&format!(
         "SELECT id, short_id, message, sentiment, topics, release, flags, status, platform, source, created_at FROM feedback \
          WHERE project_id = $1 AND created_at >= $2{closed} ORDER BY created_at DESC LIMIT 20000"
@@ -845,11 +938,18 @@ pub async fn summary(state: &AppState, p: &Principal, q: SummaryParams) -> QResu
             "sentiment" => vec![sentiment.clone()],
             "topic" => {
                 let t = topics_of(&r.s("topics"));
-                if t.is_empty() { vec!["(none)".into()] } else { t }
+                if t.is_empty() {
+                    vec!["(none)".into()]
+                } else {
+                    t
+                }
             }
-            "release" => vec![Some(r.s("release")).filter(|s| !s.is_empty()).unwrap_or_else(|| "(none)".into())],
+            "release" => vec![Some(r.s("release"))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "(none)".into())],
             "flag" => {
-                let flags: BTreeMap<String, String> = serde_json::from_str(&r.s("flags")).unwrap_or_default();
+                let flags: BTreeMap<String, String> =
+                    serde_json::from_str(&r.s("flags")).unwrap_or_default();
                 match q.flag.as_deref().filter(|f| !f.is_empty()) {
                     Some(k) => vec![flags.get(k).cloned().unwrap_or_else(|| "(not set)".into())],
                     None => flags.iter().map(|(k, v)| format!("{k}={v}")).collect(),
@@ -865,7 +965,9 @@ pub async fn summary(state: &AppState, p: &Principal, q: SummaryParams) -> QResu
             let b = buckets.entry(k).or_default();
             b.count += 1;
             *b.sentiment.entry(sentiment.clone()).or_default() += 1;
-            let slot = b.quotes.len() < 3 || (sentiment == "negative" && b.quotes.iter().any(|q| q["sentiment"] != "negative"));
+            let slot = b.quotes.len() < 3
+                || (sentiment == "negative"
+                    && b.quotes.iter().any(|q| q["sentiment"] != "negative"));
             if slot {
                 if b.quotes.len() >= 3 {
                     if let Some(pos) = b.quotes.iter().rposition(|q| q["sentiment"] != "negative") {
@@ -877,8 +979,24 @@ pub async fn summary(state: &AppState, p: &Principal, q: SummaryParams) -> QResu
         }
     }
     let rate = |b: &Bucket| {
-        let tagged: i64 = b.sentiment.iter().filter(|(k, _)| k.as_str() != "untagged").map(|(_, v)| *v).sum();
-        if tagged == 0 { Value::Null } else { json!(((*b.sentiment.get("negative").unwrap_or(&0) + *b.sentiment.get("mixed").unwrap_or(&0)) as f64 / tagged as f64 * 1000.0).round() / 1000.0) }
+        let tagged: i64 = b
+            .sentiment
+            .iter()
+            .filter(|(k, _)| k.as_str() != "untagged")
+            .map(|(_, v)| *v)
+            .sum();
+        if tagged == 0 {
+            Value::Null
+        } else {
+            json!(
+                ((*b.sentiment.get("negative").unwrap_or(&0)
+                    + *b.sentiment.get("mixed").unwrap_or(&0)) as f64
+                    / tagged as f64
+                    * 1000.0)
+                    .round()
+                    / 1000.0
+            )
+        }
     };
     let mut list: Vec<(String, Bucket)> = buckets.into_iter().collect();
     if by == "day" {
@@ -920,7 +1038,14 @@ pub async fn for_issue(state: &AppState, issue_id: &str) -> Value {
 }
 
 /// Feedback entries for a timeline: one session or one identified user.
-pub async fn for_timeline(state: &AppState, project_id: &str, session_id: Option<&str>, user_id: Option<&str>, from: i64, to: i64) -> Vec<Value> {
+pub async fn for_timeline(
+    state: &AppState,
+    project_id: &str,
+    session_id: Option<&str>,
+    user_id: Option<&str>,
+    from: i64,
+    to: i64,
+) -> Vec<Value> {
     let (col, val) = match (session_id, user_id) {
         (Some(s), _) => ("session_id", s),
         (None, Some(u)) => ("user_id", u),
@@ -1001,9 +1126,17 @@ async fn delete_where(state: &AppState, cond: &str, binds: &[Bind]) -> anyhow::R
             Bind::I(i) => q.bind(*i),
         };
     }
-    let ids: Vec<String> = q.fetch_all(&state.db).await?.iter().map(|r| r.s("id")).collect();
+    let ids: Vec<String> = q
+        .fetch_all(&state.db)
+        .await?
+        .iter()
+        .map(|r| r.s("id"))
+        .collect();
     for id in &ids {
-        let files = sqlx::query("SELECT path FROM feedback_attachments WHERE feedback_id = $1").bind(id).fetch_all(&state.db).await?;
+        let files = sqlx::query("SELECT path FROM feedback_attachments WHERE feedback_id = $1")
+            .bind(id)
+            .fetch_all(&state.db)
+            .await?;
         for f in files {
             let path = f.s("path");
             let _ = tokio::fs::remove_file(&path).await;
@@ -1012,8 +1145,14 @@ async fn delete_where(state: &AppState, cond: &str, binds: &[Bind]) -> anyhow::R
                 let _ = tokio::fs::remove_dir(dir).await;
             }
         }
-        sqlx::query("DELETE FROM feedback_attachments WHERE feedback_id = $1").bind(id).execute(&state.db).await?;
-        sqlx::query("DELETE FROM feedback WHERE id = $1").bind(id).execute(&state.db).await?;
+        sqlx::query("DELETE FROM feedback_attachments WHERE feedback_id = $1")
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+        sqlx::query("DELETE FROM feedback WHERE id = $1")
+            .bind(id)
+            .execute(&state.db)
+            .await?;
     }
     Ok(ids.len() as u64)
 }
@@ -1096,17 +1235,33 @@ pub fn tag_request(model: &str, message: &str, platform: &str, location: &str, e
 
 /// Parse the model's reply into (sentiment, topics, summary).
 pub fn parse_tags(text: &str) -> anyhow::Result<(String, Vec<String>, String)> {
-    let start = text.find('{').ok_or_else(|| anyhow::anyhow!("no JSON object in reply"))?;
-    let end = text.rfind('}').ok_or_else(|| anyhow::anyhow!("no JSON object in reply"))?;
+    let start = text
+        .find('{')
+        .ok_or_else(|| anyhow::anyhow!("no JSON object in reply"))?;
+    let end = text
+        .rfind('}')
+        .ok_or_else(|| anyhow::anyhow!("no JSON object in reply"))?;
     let v: Value = serde_json::from_str(&text[start..=end])?;
     let sentiment = v["sentiment"].as_str().unwrap_or("").to_lowercase();
     if !SENTIMENTS.contains(&sentiment.as_str()) {
         anyhow::bail!("unexpected sentiment `{sentiment}`");
     }
-    let topics: Vec<String> = v["topics"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(String::from)).collect();
+    let topics: Vec<String> = v["topics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|t| t.as_str().map(String::from))
+        .collect();
     let mut topics = clean_topics(&topics);
     topics.truncate(3);
-    Ok((sentiment, topics, truncate(v["summary"].as_str().unwrap_or("").trim(), 300)))
+    Ok((
+        sentiment,
+        topics,
+        truncate(
+            &crate::util::defang_llm_text(v["summary"].as_str().unwrap_or("").trim()),
+            300,
+        ),
+    ))
 }
 
 /// Only the path of a URL goes to the LLM: query strings can carry personal data.
@@ -1190,7 +1345,10 @@ async fn tag_pending(state: &AppState) -> anyhow::Result<()> {
 async fn alert_pending(state: &AppState) -> anyhow::Result<()> {
     let now = now_ms();
     // Items older than a day (a long outage) are not alerted any more.
-    sqlx::query("UPDATE feedback SET alerted = 1 WHERE alerted = 0 AND received_at < $1").bind(now - 86_400_000).execute(&state.db).await?;
+    sqlx::query("UPDATE feedback SET alerted = 1 WHERE alerted = 0 AND received_at < $1")
+        .bind(now - 86_400_000)
+        .execute(&state.db)
+        .await?;
     let rows = sqlx::query(&format!(
         "{SELECT} WHERE f.alerted = 0 AND (f.tag_state != 'pending' OR f.received_at < $1) AND (f.event_id = '' OR f.issue_id IS NOT NULL OR f.received_at < $1) \
          ORDER BY f.created_at LIMIT 50"
@@ -1200,11 +1358,17 @@ async fn alert_pending(state: &AppState) -> anyhow::Result<()> {
     .await?;
     for r in rows {
         let id = r.s("id");
-        let claimed = sqlx::query("UPDATE feedback SET alerted = 1 WHERE id = $1 AND alerted = 0").bind(&id).execute(&state.db).await?.rows_affected();
+        let claimed = sqlx::query("UPDATE feedback SET alerted = 1 WHERE id = $1 AND alerted = 0")
+            .bind(&id)
+            .execute(&state.db)
+            .await?
+            .rows_affected();
         if claimed == 0 {
             continue;
         }
-        let Some(project) = crate::projects::find(state, &r.s("project_id")).await? else { continue };
+        let Some(project) = crate::projects::find(state, &r.s("project_id")).await? else {
+            continue;
+        };
         let fb = row_json(state, &r, false);
         if let Err(e) = crate::alerts::notify_feedback(state, &project, &fb).await {
             tracing::warn!("feedback alert failed: {e:#}");
@@ -1266,7 +1430,15 @@ mod tests {
 
     #[test]
     fn inspects_png() {
-        assert_eq!(inspect_image(&png(640, 480)).unwrap(), ImageInfo { content_type: "image/png", ext: "png", width: 640, height: 480 });
+        assert_eq!(
+            inspect_image(&png(640, 480)).unwrap(),
+            ImageInfo {
+                content_type: "image/png",
+                ext: "png",
+                width: 640,
+                height: 480
+            }
+        );
         assert!(inspect_image(b"GIF89a....").is_err());
         assert!(inspect_image(b"").is_err());
     }
@@ -1278,7 +1450,9 @@ mod tests {
         // APP1 EXIF with "secret" payload
         b.extend_from_slice(&[0xFF, 0xE1, 0x00, 0x08, b'E', b'x', b'i', b'f', b'G', b'P']);
         // SOF0: len 11, precision 8, height 300, width 400
-        b.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x01, 0x2C, 0x01, 0x90, 0x01, 0x01, 0x11, 0x00]);
+        b.extend_from_slice(&[
+            0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x01, 0x2C, 0x01, 0x90, 0x01, 0x01, 0x11, 0x00,
+        ]);
         // SOS + data + EOI
         b.extend_from_slice(&[0xFF, 0xDA, 0x00, 0x02, 0x12, 0x34, 0xFF, 0xD9]);
         b
@@ -1288,7 +1462,10 @@ mod tests {
     fn inspects_and_strips_jpeg() {
         let j = jpeg_with_exif();
         let info = inspect_image(&j).unwrap();
-        assert_eq!((info.content_type, info.width, info.height), ("image/jpeg", 400, 300));
+        assert_eq!(
+            (info.content_type, info.width, info.height),
+            ("image/jpeg", 400, 300)
+        );
         let stripped = strip_jpeg_metadata(&j);
         assert!(!stripped.windows(4).any(|w| w == b"Exif"));
         assert!(stripped.windows(4).any(|w| w == b"JFIF"));
@@ -1307,16 +1484,6 @@ mod tests {
     }
 
     #[test]
-    fn rate_windows() {
-        let now = 10 * 3_600_000;
-        assert!(take("t|a", 2, now));
-        assert!(take("t|a", 2, now + 1));
-        assert!(!take("t|a", 2, now + 2));
-        assert!(take("t|a", 2, now + 3_600_000));
-        assert!(take("t|b", 0, now));
-    }
-
-    #[test]
     fn parses_tags() {
         let (s, t, sum) = parse_tags("```json\n{\"sentiment\": \"Negative\", \"topics\": [\"Checkout\", \"checkout\", \"payments\", \"a\", \"b\"], \"summary\": \"Card payment fails.\"}\n```").unwrap();
         assert_eq!(s, "negative");
@@ -1331,7 +1498,10 @@ mod tests {
         assert!(valid_email("a@b.se"));
         assert!(!valid_email("a@b"));
         assert!(!valid_email("a b@c.se"));
-        assert_eq!(location_of("https://x.io/checkout?email=a@b.se"), "/checkout");
+        assert_eq!(
+            location_of("https://x.io/checkout?email=a@b.se"),
+            "/checkout"
+        );
         assert_eq!(location_of("CheckoutScreen"), "CheckoutScreen");
         assert_eq!(short_id("web", 12), "WEB-F12");
     }

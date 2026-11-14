@@ -86,8 +86,8 @@ and ownership rules, and queries issues and release health.
 
 ```sh
 docker run -d -p 8123:8123 clickhouse/clickhouse-server:24.8
-VAKA_ADMIN_EMAIL=me@example.com VAKA_ADMIN_PASSWORD=password123 cargo run -p vaka-server
-scripts/smoke.sh   # end-to-end test against the running server
+VAKA_ADMIN_EMAIL=me@example.com VAKA_ADMIN_PASSWORD=dev-Passw0rd-local cargo run -p vaka-server
+PASSWORD=dev-Passw0rd-local scripts/smoke.sh   # end-to-end test against the running server
 ```
 
 ## License

@@ -135,8 +135,11 @@ fn country(state: &AppState, headers: &HeaderMap, ip: Option<IpAddr>) -> String 
         }
     }
     if let (Some(reader), Some(ip)) = (&state.geoip, ip) {
-        if let Ok(c) = reader.lookup::<maxminddb::geoip2::Country>(ip) {
-            if let Some(code) = c.country.and_then(|c| c.iso_code) {
+        if let Ok(Some(c)) = reader
+            .lookup(ip)
+            .and_then(|r| r.decode::<maxminddb::geoip2::Country>())
+        {
+            if let Some(code) = c.country.iso_code {
                 return code.to_string();
             }
         }
@@ -321,6 +324,26 @@ async fn accept_items(
     items: Vec<Value>,
     forced_type: Option<&str>,
 ) -> Result<(usize, Vec<Rejected>), IngestError> {
+    // Per-project and per-address quotas: ingest keys are public, so without them one key could
+    // fill the shared queue for every project.
+    let now = now_ms();
+    let n = items.len() as u32;
+    if let Some(ip) = ctx.ip {
+        let key = format!("{}|{}", project.id, crate::ratelimit::ip_key(ip));
+        if !crate::ratelimit::INGEST.take_n(&key, n, state.config.ingest_per_ip_minute, now) {
+            return Err(IngestError(
+                StatusCode::TOO_MANY_REQUESTS,
+                "too many items from this address for this project, retry with backoff".into(),
+            ));
+        }
+    }
+    if !crate::ratelimit::INGEST.take_n(&project.id, n, state.config.ingest_per_project_minute, now)
+    {
+        return Err(IngestError(
+            StatusCode::TOO_MANY_REQUESTS,
+            "this project is over its ingest rate limit, retry with backoff".into(),
+        ));
+    }
     // Refuse the whole batch up front when the queue is nearly full, so SDKs can retry it
     // without creating duplicates of items that were already enqueued.
     if state.work_tx.capacity() < items.len() {
