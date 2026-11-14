@@ -339,6 +339,7 @@ pub async fn get_issue(state: &AppState, p: &Principal, id: &str) -> QResult<Val
     issue["daily_last_14d"] = json!(daily);
     issue["comments"] = json!(comments);
     issue["links"] = json!(crate::fixctx::links_for(state, &issue_id).await?);
+    issue["feedback"] = crate::feedback::for_issue(state, &issue_id).await;
     let first_release = issue["first_release"].as_str().unwrap_or("").to_string();
     issue["suspect_commits"] = if latest_event.is_null() {
         json!([])
@@ -647,7 +648,11 @@ pub async fn compare_releases(state: &AppState, p: &Principal, project: &str, ba
         "issues_new_in_target": new_in_target,
         "issues_not_seen_in_target": gone_in_target,
         "issues_increased": increased,
-        "note": "Event counts are raw totals per release; compare with session counts to normalize for adoption.",
+        "feedback": {
+            "base": crate::feedback::sentiment_by(state, &proj.id, Some(base), None, now_ms() - 90 * 86_400_000).await.get(base).cloned().unwrap_or(json!({"count": 0})),
+            "target": crate::feedback::sentiment_by(state, &proj.id, Some(target), None, now_ms() - 90 * 86_400_000).await.get(target).cloned().unwrap_or(json!({"count": 0})),
+        },
+        "note": "Event counts are raw totals per release; compare with session counts to normalize for adoption. feedback.negative_rate = (negative + mixed) / tagged feedback.",
     }))
 }
 

@@ -38,6 +38,10 @@ release's commit, breadcrumbs, tags, `suspect_commits`, `owners`, already linked
 root cause. The issue resolves itself in the release whose commits CI sends with
 `vaka releases set-commits --release <version>` (or call `resolve_issue` with `resolved_in_release`).
 For "what changed" questions use `release_health`, `compare_releases` and `explain_spike`.
+
+User feedback: `feedback_summary` (by sentiment, topic, release or flag) → `list_feedback` →
+`get_feedback` (screenshots as images); `update_feedback` to triage or link an issue. `get_issue`
+and `get_fix_context` include feedback about that crash.
 Source links need either `set-commits` (repository) or `set_code_mappings`; owners come from
 `set_ownership_rules`.
 

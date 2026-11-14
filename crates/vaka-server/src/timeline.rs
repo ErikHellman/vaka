@@ -166,6 +166,12 @@ pub async fn session_timeline(state: &AppState, p: &Principal, project: &str, se
     }
     let now = crate::util::now_ms();
     let mut items = load(state, &proj.id, session_id, now - 30 * 86_400_000, now + 60_000).await?;
+    for f in crate::feedback::for_timeline(state, &proj.id, Some(session_id), None, now - 30 * 86_400_000, now + 60_000).await {
+        let ts = f["ts_ms"].as_i64().unwrap_or(0);
+        let title = crate::util::truncate(f["message"].as_str().unwrap_or(""), 300);
+        items.push(entry(ts, "feedback", title, json!({"feedback": f["short_id"], "sentiment": f["sentiment"], "source": f["source"], "screenshots": f["screenshots"]})));
+    }
+    items.sort_by_key(|e| e["ts_ms"].as_i64().unwrap_or(0));
     let limit = limit.unwrap_or(500).clamp(1, 2000) as usize;
     let truncated = items.len() > limit;
     if truncated {
@@ -175,7 +181,7 @@ pub async fn session_timeline(state: &AppState, p: &Principal, project: &str, se
     strip(&mut items);
     let crashes = items.iter().filter(|i| i["kind"] == "crash" || i["kind"] == "error").count();
     Ok(json!({"project": proj.slug, "session_id": session_id, "entries": items.len(), "errors": crashes, "truncated": truncated, "timeline": items,
-        "hint": "Oldest first. Kinds: session_start, pageview, screen_view, event, breadcrumb, error, crash, session_end."}))
+        "hint": "Oldest first. Kinds: session_start, pageview, screen_view, event, breadcrumb, error, crash, feedback, session_end. Open feedback with get_feedback."}))
 }
 
 /// The last `max` timeline entries within `minutes` before an error event (inclusive).

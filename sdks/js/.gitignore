@@ -2,3 +2,5 @@ node_modules
 dist/*.d.ts
 dist/vaka.mjs
 dist/vaka.cjs
+dist/feedback.mjs
+dist/feedback.cjs

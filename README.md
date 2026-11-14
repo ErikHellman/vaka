@@ -20,11 +20,13 @@ fix PRs. There is no dashboard: the web UI only covers setup and administration.
   session timelines, crash precursors and per-user timelines for users the app identifies.
 - **Feature flags and experiments**: rollouts and targeting, flag health per variant, experiment
   results with uplift, confidence interval and p-value.
+- **User feedback**: a web feedback widget and crash prompt with screenshots, sentiment and topics
+  tagging, linked to crashes and readable by agents.
 - **Alerts, webhooks and agent triggers**: webhook, Slack, email, GitHub `repository_dispatch` or a
   GitHub issue on new issues, regressions, spikes, thresholds and more, with a delivery log.
 - **Anomaly detection and digests**: daily or weekly digests in any time zone, with an optional
   narrative written by any OpenAI-compatible LLM.
-- **Agent-first**: MCP server at `/mcp` (about 75 tools), REST API at `/api/v1`, `llms.txt` and
+- **Agent-first**: MCP server at `/mcp` (about 80 tools), REST API at `/api/v1`, `llms.txt` and
   install guides written for coding agents.
 - **Self-hosted**: one Rust binary plus ClickHouse; metadata in SQLite or Postgres; debug files on
   disk or in S3-compatible storage. Docker Compose (with optional

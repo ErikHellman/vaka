@@ -29,6 +29,8 @@ pub fn router() -> Router<AppState> {
         .route("/ui/projects/{slug}", get(project_page).post(update_project))
         .route("/ui/projects/{slug}/keys", post(project_keys))
         .route("/ui/projects/{slug}/issues/{id}", get(issue_page).post(issue_action))
+        .route("/ui/projects/{slug}/feedback", get(feedback_page))
+        .route("/ui/projects/{slug}/feedback/{id}", get(feedback_detail).post(feedback_action))
         .route("/ui/tokens", get(tokens_page).post(tokens_action))
         .route("/ui/users", get(users_page).post(users_action))
         .route("/ui/alerts", get(alerts_page).post(alerts_action))
@@ -51,6 +53,8 @@ code,pre{font:13px ui-monospace,SFMono-Regular,Menlo,monospace}pre{background:va
 .muted{color:var(--muted)}.flash{padding:10px 14px;border-radius:6px;border:1px solid var(--accent);margin:12px 0}.err{border-color:var(--bad);color:var(--bad)}
 .badge{display:inline-block;padding:1px 8px;border-radius:999px;border:1px solid var(--line);font-size:12px}
 .frame{padding:4px 0;border-bottom:1px dashed var(--line)}.frame.app{font-weight:600}
+.thumb{width:72px;height:48px;object-fit:cover;border:1px solid var(--line);border-radius:4px}.shot{max-width:100%;border:1px solid var(--line);border-radius:6px;margin:8px 0}
+.s-negative{border-color:var(--bad);color:var(--bad)}.s-positive{border-color:var(--ok);color:var(--ok)}.msg{white-space:pre-wrap}
 "#;
 
 fn page(title: &str, user: Option<&Principal>, flash: Option<&str>, body: Markup) -> Response {
@@ -361,6 +365,7 @@ async fn project_page(State(s): State<AppState>, headers: HeaderMap, Path(slug):
     let install = crate::docs::install_markdown(&p.platform, &s.config.public_url, keys.first().map(|s| s.as_str()).unwrap_or(""), &p.slug);
     page(&p.name, Some(&user), flash_of(&q).as_deref(), html! {
         h1 { (p.name) " " span.badge { (p.platform) } }
+        p { a href=(format!("/ui/projects/{}/feedback", p.slug)) { "User feedback →" } }
         h2 { "Open issues (last 7 days)" }
         div.card {
             @if issues.is_empty() { p.muted { "No open issues. " } }
@@ -504,6 +509,143 @@ async fn issue_page(State(s): State<AppState>, headers: HeaderMap, Path((slug, i
         h2 { "Releases" }
         div.card { table { @for r in issue["by_release"].as_array().cloned().unwrap_or_default() { tr { td { (r["value"].as_str().unwrap_or("")) } td { (r["events"]) } } } } }
     })
+}
+
+fn sentiment_badge(s: &serde_json::Value) -> Markup {
+    match s.as_str() {
+        Some(x) => html! { span class=(format!("badge s-{x}")) { (x) } },
+        None => html! { span.badge.muted { "untagged" } },
+    }
+}
+
+async fn feedback_page(State(s): State<AppState>, headers: HeaderMap, Path(slug): Path<String>, axum::extract::Query(q): Q) -> Response {
+    let user = require_user!(s, headers);
+    let Ok(Some(p)) = crate::projects::find(&s, &slug).await else { return back("/ui", "error:Project not found") };
+    let status = q.get("status").cloned().filter(|v| !v.is_empty()).unwrap_or_else(|| "open".into());
+    let sentiment = q.get("sentiment").cloned().filter(|v| !v.is_empty());
+    let offset: i64 = q.get("offset").and_then(|o| o.parse().ok()).unwrap_or(0);
+    let params = crate::feedback::ListParams {
+        project: p.id.clone(),
+        status: Some(status.clone()),
+        sentiment: sentiment.clone(),
+        since: Some("365d".into()),
+        limit: Some(50),
+        offset: Some(offset),
+        ..Default::default()
+    };
+    let (items, next) = match crate::feedback::list(&s, &user, params).await {
+        Ok(v) => (v["feedback"].as_array().cloned().unwrap_or_default(), v["next_offset"].as_i64()),
+        Err(e) => return back(&format!("/ui/projects/{slug}"), &format!("error:{}", e.1)),
+    };
+    page(&format!("Feedback · {}", p.name), Some(&user), flash_of(&q).as_deref(), html! {
+        p { a href=(format!("/ui/projects/{slug}")) { "← " (p.name) } }
+        h1 { "User feedback" }
+        form.row method="get" {
+            select name="status" {
+                @for st in ["open", "all", "new", "triaged", "resolved", "ignored"] { option value=(st) selected[st == status] { (st) } }
+            }
+            select name="sentiment" {
+                option value="" { "any sentiment" }
+                @for st in ["negative", "mixed", "neutral", "positive", "untagged"] { option value=(st) selected[sentiment.as_deref() == Some(st)] { (st) } }
+            }
+            button.ghost type="submit" { "Filter" }
+        }
+        div.card {
+            @if items.is_empty() { p.muted { "No feedback matches. Feedback arrives from the SDK widgets, crash prompts or captureFeedback()." } }
+            @else { table {
+                tr { th { "" } th { "Feedback" } th { "Sentiment" } th { "Status" } th { "Release" } th { "Received" } }
+                @for f in &items {
+                    @let id = f["id"].as_str().unwrap_or("");
+                    @let link = format!("/ui/projects/{slug}/feedback/{id}");
+                    tr {
+                        td { @if f["attachments"].as_array().map(|a| !a.is_empty()).unwrap_or(false) { a href=(link) { img.thumb loading="lazy" alt="screenshot" src=(format!("/api/v1/feedback/{id}/attachments/0")); } } }
+                        td {
+                            a href=(link) { code { (f["short_id"].as_str().unwrap_or("")) } } " " (crate::util::truncate(f["message"].as_str().unwrap_or(""), 160))
+                            @let topics: Vec<String> = f["topics"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(String::from)).collect();
+                            @if !topics.is_empty() || f["issue_short_id"].is_string() {
+                                br; span.muted { (topics.join(", ")) @if let Some(i) = f["issue_short_id"].as_str() { " · about " (i) } }
+                            }
+                        }
+                        td { (sentiment_badge(&f["sentiment"])) }
+                        td { span.badge { (f["status"].as_str().unwrap_or("")) } }
+                        td { (f["release"].as_str().unwrap_or("")) }
+                        td.muted { (f["created_at"].as_str().unwrap_or("")) }
+                    }
+                }
+            } }
+        }
+        @if let Some(n) = next {
+            p { a href=(format!("/ui/projects/{slug}/feedback?status={status}&sentiment={}&offset={n}", sentiment.clone().unwrap_or_default())) { "Older →" } }
+        }
+        p.muted { "Agents read and triage feedback with the MCP tools list_feedback, get_feedback, update_feedback and feedback_summary." }
+    })
+}
+
+async fn feedback_detail(State(s): State<AppState>, headers: HeaderMap, Path((slug, id)): Path<(String, String)>, axum::extract::Query(q): Q) -> Response {
+    let user = require_user!(s, headers);
+    let f = match crate::feedback::get(&s, &user, &id).await {
+        Ok(f) => f,
+        Err(e) => return back(&format!("/ui/projects/{slug}/feedback"), &format!("error:{}", e.1)),
+    };
+    let fid = f["id"].as_str().unwrap_or("").to_string();
+    let can_write = user.can_write(f["project_id"].as_str().unwrap_or(""));
+    let status = f["status"].as_str().unwrap_or("").to_string();
+    let device = &f["device"];
+    let device_line: Vec<String> = ["model", "os_name", "os_version", "browser", "app_version"].iter().filter_map(|k| device[*k].as_str().filter(|v| !v.is_empty()).map(String::from)).collect();
+    page(&format!("Feedback {}", f["short_id"].as_str().unwrap_or("")), Some(&user), flash_of(&q).as_deref(), html! {
+        p { a href=(format!("/ui/projects/{slug}/feedback")) { "← Feedback" } }
+        h1 { code { (f["short_id"].as_str().unwrap_or("")) } " " (sentiment_badge(&f["sentiment"])) " " span.badge { (status) } }
+        div.card {
+            p.msg { (f["message"].as_str().unwrap_or("")) }
+            @if let Some(sum) = f["summary"].as_str() { p.muted { "Summary: " (sum) } }
+            @let topics: Vec<String> = f["topics"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(String::from)).collect();
+            @if !topics.is_empty() { p { @for t in &topics { span.badge { (t) } " " } } }
+        }
+        @if can_write {
+            form.row method="post" {
+                select name="status" { @for st in crate::feedback::STATUSES { option value=(st) selected[*st == status] { (st) } } }
+                button type="submit" { "Update status" }
+            }
+        }
+        @for a in f["attachments"].as_array().cloned().unwrap_or_default() {
+            a href=(format!("/api/v1/feedback/{fid}/attachments/{}", a["index"])) target="_blank" {
+                img.shot alt="screenshot" src=(format!("/api/v1/feedback/{fid}/attachments/{}", a["index"]));
+            }
+        }
+        h2 { "Context" }
+        div.card { table {
+            @if let Some(e) = f["contact_email"].as_str() { tr { th { "Contact" } td { (f["contact_name"].as_str().unwrap_or("")) " " a href=(format!("mailto:{e}")) { (e) } } } }
+            @if let Some(i) = f["issue"].as_object() {
+                tr { th { "Issue" } td { a href=(format!("/ui/projects/{slug}/issues/{}", i.get("id").and_then(|v| v.as_str()).unwrap_or(""))) { code { (i.get("short_id").and_then(|v| v.as_str()).unwrap_or("")) } " " (i.get("title").and_then(|v| v.as_str()).unwrap_or("")) } } }
+            }
+            tr { th { "Source" } td { (f["source"].as_str().unwrap_or("")) } }
+            tr { th { "Received" } td { (f["created_at"].as_str().unwrap_or("")) } }
+            tr { th { "Release" } td { (f["release"].as_str().unwrap_or("")) " · " (f["environment"].as_str().unwrap_or("")) } }
+            tr { th { "Where" } td { (f["url"].as_str().unwrap_or("")) } }
+            tr { th { "Device" } td { (device_line.join(" · ")) " " (f["country"].as_str().unwrap_or("")) } }
+            @if let Some(u) = f["user_id"].as_str() { tr { th { "User" } td { code { (u) } } } }
+            @if let Some(sid) = f["session_id"].as_str() { tr { th { "Session" } td { code { (sid) } } } }
+            @if f["flags"].as_object().map(|o| !o.is_empty()).unwrap_or(false) { tr { th { "Flags" } td { code { (f["flags"].to_string()) } } } }
+            @if f["tags"].as_object().map(|o| !o.is_empty()).unwrap_or(false) { tr { th { "Tags" } td { code { (f["tags"].to_string()) } } } }
+        } }
+    })
+}
+
+#[derive(Deserialize)]
+struct FeedbackForm {
+    status: String,
+}
+
+async fn feedback_action(State(s): State<AppState>, headers: HeaderMap, Path((slug, id)): Path<(String, String)>, Form(f): Form<FeedbackForm>) -> Response {
+    let user = require_user!(s, headers);
+    if !same_origin(&s, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let to = format!("/ui/projects/{slug}/feedback/{id}");
+    match crate::feedback::update(&s, &user, &id, crate::feedback::Update { status: Some(f.status), ..Default::default() }).await {
+        Ok(_) => back(&to, "Updated"),
+        Err(e) => back(&to, &format!("error:{}", e.1)),
+    }
 }
 
 #[derive(Deserialize)]

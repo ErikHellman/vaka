@@ -78,9 +78,10 @@ All settings are environment variables.
 | `VAKA_CLICKHOUSE_USER` / `_PASSWORD` / `_DATABASE` | `default` / empty / `vaka` | ClickHouse credentials |
 | `VAKA_DEFAULT_RETENTION_DAYS` | `90` | Retention for new projects |
 | `VAKA_RESEND_API_KEY` | | Enables email alerts, invite emails and email-code login via Resend |
-| `VAKA_LLM_BASE_URL` | | Optional: OpenAI-compatible API (e.g. `https://api.openai.com/v1`) that writes the opening paragraph of digests ([anomalies.md](anomalies.md#the-narrative)) |
-| `VAKA_LLM_MODEL` | | Model for digest narratives (needed with `VAKA_LLM_BASE_URL`) |
+| `VAKA_LLM_BASE_URL` | | Optional: OpenAI-compatible API (e.g. `https://api.openai.com/v1`) that writes the opening paragraph of digests ([anomalies.md](anomalies.md#the-narrative)) and tags feedback with sentiment and topics ([feedback.md](feedback.md)) |
+| `VAKA_LLM_MODEL` | | Model for digest narratives and feedback tagging (needed with `VAKA_LLM_BASE_URL`) |
 | `VAKA_LLM_API_KEY` | | Bearer key for that API (optional for local servers) |
+| `VAKA_FEEDBACK_PER_IP_HOUR` / `VAKA_FEEDBACK_PER_SESSION_HOUR` | `10` / `5` | Feedback rate limits per project |
 | `VAKA_EMAIL_FROM` | `Vaka <vaka@localhost>` | Sender for emails |
 | `VAKA_PASSWORD_LOGIN` | `true` | Set to `false` to allow only email-code login (needs `VAKA_RESEND_API_KEY`) |
 | `VAKA_GEOIP_DB` | | Optional MaxMind/DB-IP country `.mmdb` file |

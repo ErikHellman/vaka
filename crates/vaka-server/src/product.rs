@@ -565,6 +565,12 @@ pub async fn user_timeline(state: &AppState, p: &Principal, project: &str, user_
             v
         })
         .collect();
+    let mut items = items;
+    for f in crate::feedback::for_timeline(state, &project.id, None, Some(user_id), since, now + 60_000).await {
+        items.push(json!({"kind": "feedback", "timestamp": f["ts"], "what": f["message"], "feedback": f["short_id"], "sentiment": f["sentiment"], "source": f["source"]}));
+    }
+    items.sort_by(|a, b| b["timestamp"].as_str().unwrap_or("").cmp(a["timestamp"].as_str().unwrap_or("")));
+    items.truncate(limit.unwrap_or(200).clamp(1, 2000) as usize);
     Ok(json!({"project": project.slug, "user_id": user_id, "since": iso_time(since), "timeline": items,
         "hint": "Newest first. To see what led to a crash, read the entries just below (older than) the error, and open the issue with get_issue."}))
 }

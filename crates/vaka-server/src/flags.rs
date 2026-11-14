@@ -452,6 +452,7 @@ pub async fn flag_health(state: &AppState, p: &Principal, project: &str, key: &s
         "project": proj.slug, "flag": key, "since": iso_time(since_ms), "release": release,
         "variants": variants.into_values().collect::<Vec<_>>(),
         "over_represented_issues": over,
+        "feedback_by_variant": crate::feedback::sentiment_by(state, &proj.id, None, Some(key), since_ms).await,
         "hint": "A variant with clearly lower crash_free_sessions or issues concentrated in it is a candidate for rollback: update_flag with rollout 0, enabled false, or a rule forcing the safe variant.",
     }))
 }

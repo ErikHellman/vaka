@@ -18,6 +18,8 @@ Vaka is a self-hosted crash reporting and analytics service built for coding age
   per-user timelines for users the app chooses to identify.
 - **Feature flags and experiments**: rollouts, targeting, flag health and experiment results
   ([flags](flags.md)).
+- **User feedback**: a feedback widget and crash prompt for web apps, screenshots, sentiment and
+  topics, linked to the crash it is about ([feedback](feedback.md)).
 - **Alerts and agent triggers**: webhooks, Slack, email, GitHub `repository_dispatch` or GitHub
   issues ([alerts](alerts.md)); anomaly detection and scheduled digests ([anomalies](anomalies.md)).
 
@@ -38,6 +40,6 @@ an agent "what broke in yesterday's release and why?" and let it fix the bug.
 
 - [REST API](api.md) · [MCP tools](mcp.md) · [Ingest protocol](ingest.md)
 - [CLI](cli.md) · [Alerts](alerts.md) · [Privacy and data retention](privacy.md)
-- [Performance](performance.md) · [Feature flags](flags.md) · [Anomalies and digests](anomalies.md) · [OpenTelemetry](opentelemetry.md)
+- [Performance](performance.md) · [Feature flags](flags.md) · [Anomalies and digests](anomalies.md) · [User feedback](feedback.md) · [OpenTelemetry](opentelemetry.md)
 
 Vaka is open source under MIT or Apache-2.0: https://github.com/ErikHellman/vaka

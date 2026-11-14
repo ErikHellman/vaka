@@ -17,6 +17,7 @@ tool `create_alert_rule`.
 | `issue_commented` | Someone comments on an issue (`event.actor` says who, so an agent can ignore its own comments) |
 | `release_created` | Vaka sees a release for the first time (first event or `set-commits`) |
 | `perf_regression` | The newest release with spans is slower than the previous one: a transaction's p95 grew by more than `threshold` percent (default 20) or a Web Vital got worse. Once per release, checked every 10 minutes. See [performance](performance.md) |
+| `new_feedback` | A user sends feedback. Sent once tagging and crash linking are done (at most 2 minutes later), so filters can use sentiment and topics. Not for `github_issue` |
 | `digest` | Daily or weekly on a `schedule` in your time zone (default: daily at `threshold` o'clock UTC): per project, errors and new issues with the change from the previous period, top issues, crash-free sessions, traffic and [detected anomalies](anomalies.md), opened by a short narrative. Quiet projects are left out |
 
 A rule without `project` applies to all projects. A spike rule notifies at most once per issue
@@ -34,6 +35,10 @@ every 6 hours.
 | `owner` | Issue owner or assignee email |
 | `unhandled_only` | `true`: only unhandled errors |
 | `tags` | `{"area": "checkout*"}`: every tag must match its glob |
+| `sentiment` | `new_feedback`: `negative`, or a list such as `["negative", "mixed"]` |
+| `topic` | `new_feedback`: glob on any topic (`checkout*`) |
+| `linked_to_issue` | `new_feedback`: `true` only feedback about a crash, `false` only the rest |
+| `has_screenshot` | `new_feedback`: `true` or `false` |
 | `mention` | `github_issue` only: first line of the issue body, e.g. a mention that starts an agent |
 
 `environment`, `unhandled_only` and `tags` apply to triggers caused by an error event
@@ -162,6 +167,8 @@ Issue payloads also carry `issue.owners` (from [ownership rules](api.md#ownershi
 `{actor, ...}` for resolve/assign/comment) and `fix_context` (the same object as
 `GET /api/v1/issues/{id}/fix-context`: in-app frames with source links, breadcrumbs, suspect
 commits, links and suggested branch and commit trailer). Slack and email messages stay short.
+
+A `new_feedback` webhook gets `{"trigger", "project", "feedback": {"id", "short_id", "message", "source", "sentiment", "topics", "summary", "release", "url", "issue_short_id", "attachments", ...}, "url", "api_url", "sent_at"}`. Contact details are never included.
 
 A `release_created` webhook gets `{"trigger", "project", "release": {"version"}, "api_url", "sent_at"}`.
 

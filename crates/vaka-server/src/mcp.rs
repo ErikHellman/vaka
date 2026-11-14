@@ -27,7 +27,9 @@ list_projects -> list_issues (sort=events, since=24h) -> get_fix_context (in-app
 breadcrumbs, suspect commits, owners) -> fix the code with `Fixes <ID>` in the commit message -> link_issue with the PR URL \
 (or resolve_issue with resolved_in_release). For 'why did X spike' use explain_spike; \
 for release quality use release_health and compare_releases; for traffic use analytics_summary, analytics_timeseries and analytics_breakdown. \
-To instrument a new app: create_project then get_install_instructions. Issues can be referenced by short id like WEB-12.";
+To instrument a new app: create_project then get_install_instructions. Issues can be referenced by short id like WEB-12. \
+For what users say, use feedback_summary (by sentiment, topic, release or flag variant) and list_feedback, then get_feedback for screenshots; \
+feedback short ids look like WEB-F3.";
 
 fn rpc_result(id: &Value, result: Value) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "result": result})
@@ -97,11 +99,15 @@ async fn dispatch(state: &AppState, p: &Principal, msg: Value) -> Option<Value> 
         "tools/call" => {
             let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
+            let screenshots = name == "get_feedback" && args.get("include_screenshots").and_then(|v| v.as_bool()).unwrap_or(true);
             match call_tool(state, p, &name, args).await {
-                Ok(v) => rpc_result(
-                    &id,
-                    json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default()}], "structuredContent": v, "isError": false}),
-                ),
+                Ok(v) => {
+                    let mut content = vec![json!({"type": "text", "text": serde_json::to_string_pretty(&v).unwrap_or_default()})];
+                    if screenshots {
+                        content.extend(feedback_images(state, p, &v).await);
+                    }
+                    rpc_result(&id, json!({"content": content, "structuredContent": v, "isError": false}))
+                }
                 Err(ToolError::Unknown) => rpc_error(&id, -32602, &format!("unknown tool `{name}`")),
                 Err(ToolError::Failed(msg)) => rpc_result(&id, json!({"content": [{"type": "text", "text": msg}], "isError": true})),
             }
@@ -124,6 +130,20 @@ async fn dispatch(state: &AppState, p: &Principal, msg: Value) -> Option<Value> 
         "prompts/list" => rpc_result(&id, json!({"prompts": []})),
         _ => rpc_error(&id, -32601, &format!("method `{method}` not supported")),
     })
+}
+
+/// Screenshots of a feedback item as MCP image content blocks.
+async fn feedback_images(state: &AppState, p: &Principal, fb: &Value) -> Vec<Value> {
+    use base64::Engine;
+    let id = fb["id"].as_str().unwrap_or("");
+    let mut out = Vec::new();
+    for a in fb["attachments"].as_array().into_iter().flatten() {
+        let idx = a["index"].as_i64().unwrap_or(0);
+        if let Ok((ct, bytes)) = crate::feedback::attachment(state, p, id, idx).await {
+            out.push(json!({"type": "image", "mimeType": ct, "data": base64::engine::general_purpose::STANDARD.encode(bytes)}));
+        }
+    }
+    out
 }
 
 async fn read_resource(state: &AppState, p: &Principal, uri: &str) -> Result<Value, String> {
@@ -502,6 +522,21 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
                 return Err(ApiError::forbidden().into());
             }
             json!(crate::maintenance::erase_user(state, &proj.id, &req(&a, "user_id")?, &p.label()).await.map_err(ApiError::from)?)
+        }
+        "list_feedback" => {
+            let mut q: crate::feedback::ListParams = serde_json::from_value(a.clone()).map_err(|e| ToolError::Failed(format!("invalid arguments: {e}")))?;
+            q.project = req(&a, "project")?;
+            crate::feedback::list(state, p, q).await?
+        }
+        "get_feedback" => crate::feedback::get(state, p, &req(&a, "feedback")?).await?,
+        "update_feedback" => {
+            let u: crate::feedback::Update = serde_json::from_value(a.clone()).map_err(|e| ToolError::Failed(format!("invalid arguments: {e}")))?;
+            crate::feedback::update(state, p, &req(&a, "feedback")?, u).await?
+        }
+        "feedback_summary" => {
+            let mut q: crate::feedback::SummaryParams = serde_json::from_value(a.clone()).map_err(|e| ToolError::Failed(format!("invalid arguments: {e}")))?;
+            q.project = req(&a, "project")?;
+            crate::feedback::summary(state, p, q).await?
         }
         _ => return Err(ToolError::Unknown),
     })
@@ -1228,11 +1263,82 @@ pub fn tools() -> Vec<Value> {
         tool(
             "delete_user_data",
             "Delete user data (GDPR)",
-            "Permanently delete all errors, events and sessions stored for a user id in a project. Cannot be undone. Needs a write token.",
+            "Permanently delete all errors, events, sessions and feedback stored for a user id in a project (feedback is also matched by contact email when user_id is an email address). Cannot be undone. Needs a write token.",
             vec![("project", project()), ("user_id", prop("string", "The user id passed to identify()"))],
             &["project", "user_id"],
             false,
             true,
+        ),
+        tool(
+            "list_feedback",
+            "List user feedback",
+            "Feedback end users sent from in-app widgets, crash prompts or the API, newest first, with sentiment and topic tags, release, device, \
+feature flags, session and linked crash issue. Contact email is only included for write tokens. Use feedback_summary first to see what people talk about, \
+then filter here; get_feedback returns screenshots.",
+            vec![
+                ("project", project()),
+                ("status", prop("string", "open (new + triaged, default), all, or a comma-separated list of new, triaged, resolved, ignored")),
+                ("sentiment", prop("string", "Comma-separated: positive, neutral, negative, mixed, untagged")),
+                ("topic", prop("string", "Topic tag, e.g. checkout")),
+                ("release", prop("string", "Release")),
+                ("environment", prop("string", "Environment")),
+                ("platform", prop("string", "Platform")),
+                ("source", prop("string", "widget, crash_prompt or api")),
+                ("flag", prop("string", "Flag key (sent with the flag set) or key=variant")),
+                ("issue", prop("string", "Issue id or short id: feedback about that issue")),
+                ("user", prop("string", "User id")),
+                ("session", prop("string", "Session id")),
+                ("has_screenshot", prop("boolean", "Only feedback with (true) or without (false) screenshots")),
+                ("query", prop("string", "Text search in the message")),
+                ("since", since()),
+                ("limit", prop("integer", "Max items (default 50, max 200)")),
+                ("offset", prop("integer", "Skip this many (paging; see next_offset)")),
+            ],
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "get_feedback",
+            "Get feedback",
+            "One feedback item with full context (device, flags, tags, linked issue, session and user timeline links) and its screenshots as image content.",
+            vec![("feedback", prop("string", "Feedback id or short id such as WEB-F3")), ("include_screenshots", prop("boolean", "Return screenshots as images (default true)"))],
+            &["feedback"],
+            true,
+            false,
+        ),
+        tool(
+            "update_feedback",
+            "Triage feedback",
+            "Set status, assignee, sentiment or topics, or link the feedback to an issue. Needs a write token.",
+            vec![
+                ("feedback", prop("string", "Feedback id or short id such as WEB-F3")),
+                ("status", prop("string", "new, triaged, resolved or ignored")),
+                ("assignee", prop("string", "User email, or empty to unassign")),
+                ("sentiment", prop("string", "positive, neutral, negative, mixed, or empty to clear")),
+                ("topics", json!({"type": "array", "items": {"type": "string"}, "description": "Replaces the topic tags (lowercase, up to 5)"})),
+                ("issue", prop("string", "Issue id or short id to link, or empty to unlink")),
+            ],
+            &["feedback"],
+            false,
+            false,
+        ),
+        tool(
+            "feedback_summary",
+            "Summarize feedback",
+            "Feedback counts by sentiment, topic, release, flag variant, day, status, platform or source, each with a sentiment split, negative rate \
+and up to 3 sample quotes (negative first). Use by=release or by=flag to see whether a release or variant made users unhappier.",
+            vec![
+                ("project", project()),
+                ("by", prop("string", "sentiment (default), topic, release, flag, day, status, platform or source")),
+                ("flag", prop("string", "For by=flag: the flag key to split by variant")),
+                ("since", since()),
+                ("include_closed", prop("boolean", "Count resolved and ignored feedback too (default true)")),
+                ("limit", prop("integer", "Max buckets (default 25)")),
+            ],
+            &["project"],
+            true,
+            false,
         ),
     ]
 }

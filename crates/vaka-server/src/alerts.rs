@@ -19,6 +19,7 @@ pub const TRIGGERS: &[&str] = &[
     "release_created",
     "perf_regression",
     "digest",
+    "new_feedback",
 ];
 pub const CHANNELS: &[&str] = &["webhook", "slack", "email", "github_dispatch", "github_issue"];
 const SPIKE_COOLDOWN_MS: i64 = 6 * 3_600_000;
@@ -64,7 +65,7 @@ pub fn rule_from_row(r: &sqlx::any::AnyRow) -> Rule {
 
 pub const RULE_COLS: &str = "id, project_id, name, trigger, channel, target, secret, threshold, enabled, filters, max_per_hour, schedule, created_at";
 
-pub const FILTER_KEYS: &[&str] = &["environment", "min_level", "release", "owner", "unhandled_only", "tags", "mention"];
+pub const FILTER_KEYS: &[&str] = &["environment", "min_level", "release", "owner", "unhandled_only", "tags", "mention", "sentiment", "topic", "linked_to_issue", "has_screenshot"];
 
 /// Check rule filters; returns a description of the problem for invalid filters.
 pub fn validate_filters(f: &Value) -> Result<(), String> {
@@ -77,7 +78,20 @@ pub fn validate_filters(f: &Value) -> Result<(), String> {
             "unhandled_only" if !v.is_boolean() => return Err("unhandled_only must be true or false".into()),
             "tags" if !v.as_object().map(|t| t.values().all(|x| x.is_string())).unwrap_or(false) => return Err("tags must be an object of strings".into()),
             "min_level" if !matches!(v.as_str(), Some("debug" | "info" | "warning" | "error" | "fatal")) => return Err("min_level must be debug, info, warning, error or fatal".into()),
-            "unhandled_only" | "tags" | "min_level" => {}
+            "linked_to_issue" | "has_screenshot" if !v.is_boolean() => return Err(format!("{k} must be true or false")),
+            "sentiment" => {
+                let list: Vec<&Value> = match v {
+                    Value::Array(a) => a.iter().collect(),
+                    other => vec![other],
+                };
+                for x in list {
+                    match x.as_str() {
+                        Some(s) if crate::feedback::SENTIMENTS.contains(&s) || s == "untagged" => {}
+                        _ => return Err(format!("sentiment must be one or a list of {}, untagged", crate::feedback::SENTIMENTS.join(", "))),
+                    }
+                }
+            }
+            "unhandled_only" | "tags" | "min_level" | "linked_to_issue" | "has_screenshot" => {}
             _ if !v.is_string() => return Err(format!("{k} must be a string")),
             _ => {}
         }
@@ -239,6 +253,125 @@ async fn dispatch(state: &AppState, project: &ProjectInfo, issue_id: &str, trigg
     Ok(())
 }
 
+/// Does a feedback item pass a `new_feedback` rule's filters? Issue-only filters are ignored.
+pub fn feedback_filters_match(filters: &Value, fb: &Value) -> bool {
+    let Some(f) = filters.as_object() else { return true };
+    if let Some(s) = f.get("sentiment") {
+        let want: Vec<&str> = match s {
+            Value::Array(a) => a.iter().filter_map(|x| x.as_str()).collect(),
+            other => other.as_str().into_iter().collect(),
+        };
+        let have = fb["sentiment"].as_str().unwrap_or("untagged");
+        if !want.is_empty() && !want.contains(&have) {
+            return false;
+        }
+    }
+    if let Some(t) = f.get("topic").and_then(|v| v.as_str()).filter(|t| !t.is_empty()) {
+        if !fb["topics"].as_array().into_iter().flatten().filter_map(|x| x.as_str()).any(|x| crate::ownership::glob(&t.to_lowercase(), x)) {
+            return false;
+        }
+    }
+    if let Some(b) = f.get("linked_to_issue").and_then(|v| v.as_bool()) {
+        if b != fb["issue_id"].is_string() {
+            return false;
+        }
+    }
+    if let Some(b) = f.get("has_screenshot").and_then(|v| v.as_bool()) {
+        if b != fb["attachments"].as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+            return false;
+        }
+    }
+    for (key, field) in [("release", "release"), ("environment", "environment")] {
+        if let Some(g) = f.get(key).and_then(|v| v.as_str()).filter(|g| !g.is_empty()) {
+            if !crate::ownership::glob(g, fb[field].as_str().unwrap_or("")) {
+                return false;
+            }
+        }
+    }
+    if let Some(tags) = f.get("tags").and_then(|v| v.as_object()) {
+        for (k, v) in tags {
+            if !fb["tags"][k].as_str().map(|x| crate::ownership::glob(v.as_str().unwrap_or(""), x)).unwrap_or(false) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Notify `new_feedback` rules about a feedback item (contact details are never included).
+pub async fn notify_feedback(state: &AppState, project: &ProjectInfo, fb: &Value) -> anyhow::Result<()> {
+    let rules = rules_for(state, &project.id, "new_feedback").await?;
+    let id = fb["id"].as_str().unwrap_or("");
+    for (rule, secret) in rules {
+        if !feedback_filters_match(&rule.filters, fb) {
+            continue;
+        }
+        let payload = json!({
+            "trigger": "new_feedback",
+            "project": {"id": project.id, "slug": project.slug, "name": project.name},
+            "feedback": fb,
+            "url": format!("{}/ui/projects/{}/feedback/{}", state.config.public_url, project.slug, id),
+            "api_url": format!("{}/api/v1/feedback/{}", state.config.public_url, id),
+            "sent_at": crate::util::iso_time(now_ms()),
+        });
+        deliver_new(state, &rule, &secret, "new_feedback", id, payload).await?;
+    }
+    Ok(())
+}
+
+fn feedback_facts(fb: &Value) -> Vec<String> {
+    let mut facts = Vec::new();
+    if let Some(s) = fb["sentiment"].as_str() {
+        facts.push(s.to_string());
+    }
+    let topics: Vec<&str> = fb["topics"].as_array().into_iter().flatten().filter_map(|t| t.as_str()).collect();
+    if !topics.is_empty() {
+        facts.push(topics.join(", "));
+    }
+    if let Some(r) = fb["release"].as_str().filter(|r| !r.is_empty()) {
+        facts.push(format!("release {r}"));
+    }
+    if let Some(i) = fb["issue_short_id"].as_str() {
+        facts.push(format!("about {i}"));
+    }
+    let n = fb["attachments"].as_array().map(|a| a.len()).unwrap_or(0);
+    if n > 0 {
+        facts.push(format!("{n} screenshot{}", if n == 1 { "" } else { "s" }));
+    }
+    facts
+}
+
+pub fn slack_feedback_message(payload: &Value) -> Value {
+    let fb = &payload["feedback"];
+    let project = payload["project"]["name"].as_str().unwrap_or("");
+    let url = payload["url"].as_str().unwrap_or("");
+    let short = fb["short_id"].as_str().unwrap_or("");
+    let msg = crate::util::truncate(fb["message"].as_str().unwrap_or(""), 600);
+    let quoted: Vec<String> = msg.lines().map(|l| format!("> {}", slack_escape(l))).collect();
+    let mut lines = vec![format!("*:speech_balloon: New feedback* in {} · <{url}|{}>", slack_escape(project), slack_escape(short)), quoted.join("\n")];
+    let facts = feedback_facts(fb);
+    if !facts.is_empty() {
+        lines.push(slack_escape(&facts.join(" · ")));
+    }
+    json!({
+        "text": format!("New feedback in {project}: {}", crate::util::truncate(&msg, 120)),
+        "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": lines.join("\n")}}],
+        "unfurl_links": false,
+    })
+}
+
+async fn send_feedback_email(state: &AppState, to: &str, payload: &Value) -> anyhow::Result<String> {
+    let Some(key) = &state.config.resend_api_key else {
+        anyhow::bail!("email alerts need VAKA_RESEND_API_KEY");
+    };
+    let fb = &payload["feedback"];
+    let project = payload["project"]["name"].as_str().unwrap_or("");
+    let msg = fb["message"].as_str().unwrap_or("");
+    let subject = format!("[{project}] New feedback {}: {}", fb["short_id"].as_str().unwrap_or(""), crate::util::truncate(msg.lines().next().unwrap_or(""), 80));
+    let text = format!("New feedback in {project}\n\n{msg}\n\n{}\n\n{}\n", feedback_facts(fb).join(" · "), payload["url"].as_str().unwrap_or(""));
+    resend(state, key, to, &subject, &text).await
+}
+
 /// Notify `release_created` rules about a release seen for the first time.
 pub fn notify_release(state: &AppState, project: &ProjectInfo, release: &str) {
     let state = state.clone();
@@ -349,6 +482,9 @@ async fn send(state: &AppState, rule: &Rule, secret: &str, trigger: &str, issue_
         ("webhook", _) => send_webhook(state, &rule.target, secret, trigger, delivery_id, payload).await,
         ("slack", "digest") => send_slack(state, &rule.target, &slack_digest_message(payload, &state.config.public_url)).await,
         ("slack", "release_created") => send_slack(state, &rule.target, &slack_release_message(payload)).await,
+        ("slack", "new_feedback") => send_slack(state, &rule.target, &slack_feedback_message(payload)).await,
+        ("email", "new_feedback") => send_feedback_email(state, &rule.target, payload).await,
+        ("github_issue", "new_feedback") => Err(anyhow::anyhow!("the github_issue channel does not support new_feedback; use github_dispatch or a webhook")),
         ("slack", "perf_regression") => send_slack(state, &rule.target, &json!({"text": perf_text(payload), "unfurl_links": false})).await,
         ("email", "perf_regression") => {
             let p = json!({"project": payload["project"], "url": payload["url"], "issue": {"title": perf_text(payload), "culprit": "", "times_seen": payload["regressions"].as_array().map(|a| a.len()).unwrap_or(0), "last_release": payload["target"]}});
@@ -639,7 +775,12 @@ async fn send_email(state: &AppState, to: &str, trigger: &str, payload: &serde_j
         Some(o) => format!("{text}Owners: {o}\n"),
         None => text,
     };
-    let html = format!("<pre style=\"font-family:ui-monospace,monospace\">{}</pre>", html_escape(&text));
+    resend(state, key, to, &subject, &text).await
+}
+
+/// Send a plain-text email through Resend.
+async fn resend(state: &AppState, key: &str, to: &str, subject: &str, text: &str) -> anyhow::Result<String> {
+    let html = format!("<pre style=\"font-family:ui-monospace,monospace;white-space:pre-wrap\">{}</pre>", html_escape(text));
     let resp = state
         .http
         .post(format!("{}/emails", state.config.resend_api_url))
@@ -881,7 +1022,8 @@ pub async fn build_digest(state: &AppState, project_id: Option<&str>, schedule: 
     let mut items = Vec::new();
     for p in &projects {
         let d = project_digest(state, p, now, w).await?;
-        let quiet = d["errors"].as_i64() == Some(0) && d["visitors"].as_i64() == Some(0) && d["sessions"].as_i64() == Some(0) && d["anomalies"].as_array().map(|a| a.is_empty()).unwrap_or(true);
+        let quiet = d["errors"].as_i64() == Some(0) && d["visitors"].as_i64() == Some(0) && d["sessions"].as_i64() == Some(0) && d["anomalies"].as_array().map(|a| a.is_empty()).unwrap_or(true)
+            && d["feedback"]["count"].as_i64().unwrap_or(0) == 0;
         if !quiet {
             items.push(d);
         }
@@ -988,6 +1130,7 @@ async fn project_digest(state: &AppState, p: &ProjectInfo, now: i64, w: i64) -> 
         "crash_free_sessions": if sess > 0 { Some(((1.0 - crashed as f64 / sess as f64) * 10_000.0).round() / 10_000.0) } else { None },
         "visitors": n(&t["visitors"]), "visitors_prev": n(&t["visitors_prev"]),
         "pageviews": n(&t["pageviews"]), "pageviews_prev": n(&t["pageviews_prev"]),
+        "feedback": crate::feedback::digest_block(state, p, now - w, now).await,
     }))
 }
 
@@ -1045,6 +1188,26 @@ pub fn digest_lines(payload: &serde_json::Value, slack: bool) -> Vec<String> {
         if !top.is_empty() {
             out.push("Top issues:".into());
             out.extend(top.iter().map(|i| issue_line(i, format!(" ({} events, {} users)", n(&i["events"]), n(&i["users"])))));
+        }
+        let fb = &p["feedback"];
+        if n(&fb["count"]) > 0 {
+            let mut line = format!("Feedback: {}{}", n(&fb["count"]), delta(n(&fb["count"]), n(&fb["previous"])));
+            let split: Vec<String> = ["negative", "mixed", "neutral", "positive"]
+                .iter()
+                .filter(|k| n(&fb["sentiment"][**k]) > 0)
+                .map(|k| format!("{} {k}", n(&fb["sentiment"][*k])))
+                .collect();
+            if !split.is_empty() {
+                line.push_str(&format!(" ({})", split.join(", ")));
+            }
+            let topics: Vec<String> = fb["top_topics"].as_array().into_iter().flatten().map(|t| format!("{} ({})", t["topic"].as_str().unwrap_or(""), n(&t["count"]))).collect();
+            if !topics.is_empty() {
+                line.push_str(&format!(" · top topics: {}", topics.join(", ")));
+            }
+            out.push(esc(&line));
+            for q in fb["negative_quotes"].as_array().into_iter().flatten() {
+                out.push(format!("{} {}: \"{}\"", if slack { "•" } else { " " }, q["short_id"].as_str().unwrap_or(""), esc(q["message"].as_str().unwrap_or("").replace('\n', " ").as_str())));
+            }
         }
         out.push(String::new());
     }
@@ -1149,6 +1312,16 @@ pub async fn test_rule(state: &AppState, rule_id: &str) -> anyhow::Result<String
         if !sent.is_empty() {
             return Ok(sent.join("; "));
         }
+    }
+    if rule.trigger == "new_feedback" {
+        let payload = json!({
+            "trigger": "new_feedback",
+            "project": {"id": rule.project_id, "slug": "", "name": "Vaka test"},
+            "feedback": {"id": "test", "short_id": "TEST-F1", "message": "Test feedback from Vaka: the checkout button does nothing.", "sentiment": "negative", "topics": ["checkout"], "release": "1.0.0", "attachments": [], "test": true},
+            "url": state.config.public_url,
+            "sent_at": crate::util::iso_time(now_ms()),
+        });
+        return send(state, &rule, &row.s("secret"), "new_feedback", "", &payload, &format!("test-{}", new_id())).await;
     }
     let payload = json!({
         "trigger": "test",

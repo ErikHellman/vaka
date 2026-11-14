@@ -27,6 +27,9 @@ pub struct Config {
     pub secure_cookies: bool,
     /// GitHub REST API base for the github_dispatch / github_issue alert channels.
     pub github_api_url: String,
+    /// User feedback accepted per client IP and per session per hour (0 = unlimited).
+    pub feedback_ip_limit: u32,
+    pub feedback_session_limit: u32,
 }
 
 fn var(name: &str) -> Option<String> {
@@ -60,6 +63,8 @@ impl Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(90),
             github_api_url: var("VAKA_GITHUB_API_URL").unwrap_or_else(|| "https://api.github.com".into()).trim_end_matches('/').to_string(),
+            feedback_ip_limit: var("VAKA_FEEDBACK_PER_IP_HOUR").and_then(|v| v.parse().ok()).unwrap_or(10),
+            feedback_session_limit: var("VAKA_FEEDBACK_PER_SESSION_HOUR").and_then(|v| v.parse().ok()).unwrap_or(5),
             data_dir,
         })
     }

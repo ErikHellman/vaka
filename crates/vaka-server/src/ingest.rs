@@ -23,6 +23,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/ingest/v1/batch", post(batch))
         .route("/ingest/v1/flags", post(flags))
+        .route("/ingest/v1/feedback", post(feedback).layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024)))
         .route("/ingest/v1/{kind}", post(single_kind))
         .route("/ingest/v1/ping", get(|| async { Json(json!({"ok": true})) }))
         // OTLP/HTTP: set OTEL_EXPORTER_OTLP_ENDPOINT to <vaka>/ingest/otlp (the SDK appends /v1/traces).
@@ -181,20 +182,83 @@ async fn single_kind(
     };
     let project = authenticate(&state, &headers, &q).await?;
     let v = parse_body(&body)?;
-    let sdk = headers
-        .get("x-vaka-sdk")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| {
-            let (name, version) = s.split_once('/').unwrap_or((s, ""));
-            SdkInfo { name: name.into(), version: version.into() }
-        })
-        .unwrap_or_default();
+    let sdk = sdk_from_headers(&headers);
     let items = match v {
         Value::Array(a) => a,
         other => vec![other],
     };
     let ctx = build_ctx(&state, &headers, peer, sdk);
     accept(&state, &project, &ctx, items, Some(ty)).await
+}
+
+fn sdk_from_headers(headers: &HeaderMap) -> SdkInfo {
+    headers
+        .get("x-vaka-sdk")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            let (name, version) = s.split_once('/').unwrap_or((s, ""));
+            SdkInfo { name: truncate(name, 64), version: truncate(version, 32) }
+        })
+        .unwrap_or_default()
+}
+
+fn feedback_error(r: crate::feedback::Reject) -> IngestError {
+    use crate::feedback::Reject;
+    match r {
+        Reject::Bad(m) => IngestError(StatusCode::BAD_REQUEST, m),
+        Reject::RateLimited(m) => IngestError(StatusCode::TOO_MANY_REQUESTS, m),
+        Reject::Unavailable(m) => {
+            tracing::error!("feedback ingest failed: {m}");
+            IngestError(StatusCode::SERVICE_UNAVAILABLE, "temporarily unavailable, retry later".into())
+        }
+    }
+}
+
+/// User feedback: a JSON object, or `multipart/form-data` with a `feedback` JSON part and up to
+/// three image parts (PNG, JPEG, WebP; 5 MB each).
+async fn feedback(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Query(q): Query<KeyQuery>,
+    req: axum::extract::Request,
+) -> Result<Response, IngestError> {
+    use axum::extract::FromRequest;
+    let headers = req.headers().clone();
+    let project = authenticate(&state, &headers, &q).await?;
+    let ct = headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_lowercase();
+    let mut item: Option<crate::feedback::FeedbackItem> = None;
+    let mut uploads = Vec::new();
+    let bad_json = |e: serde_json::Error| IngestError(StatusCode::BAD_REQUEST, format!("invalid feedback JSON: {e}"));
+    if ct.starts_with("multipart/form-data") {
+        let mut mp = axum::extract::Multipart::from_request(req, &state).await.map_err(|e| IngestError(StatusCode::BAD_REQUEST, format!("bad multipart body: {e}")))?;
+        while let Some(mut field) = mp.next_field().await.map_err(|e| IngestError(StatusCode::BAD_REQUEST, format!("bad multipart body: {e}")))? {
+            let name = field.name().unwrap_or("").to_string();
+            if name == "feedback" && field.file_name().is_none() {
+                let text = field.text().await.map_err(|e| IngestError(StatusCode::BAD_REQUEST, e.to_string()))?;
+                item = Some(serde_json::from_str(&text).map_err(bad_json)?);
+                continue;
+            }
+            if uploads.len() >= crate::feedback::MAX_ATTACHMENTS {
+                return Err(IngestError(StatusCode::BAD_REQUEST, format!("at most {} attachments per feedback", crate::feedback::MAX_ATTACHMENTS)));
+            }
+            let file_name = field.file_name().map(String::from).unwrap_or_else(|| name.clone());
+            let mut bytes = Vec::new();
+            while let Some(chunk) = field.chunk().await.map_err(|e| IngestError(StatusCode::BAD_REQUEST, format!("upload interrupted: {e}")))? {
+                bytes.extend_from_slice(&chunk);
+                if bytes.len() > crate::feedback::MAX_ATTACHMENT_BYTES {
+                    return Err(IngestError(StatusCode::PAYLOAD_TOO_LARGE, format!("attachment `{file_name}` is larger than 5 MB")));
+                }
+            }
+            uploads.push(crate::feedback::Upload { name: file_name, bytes });
+        }
+    } else {
+        let body = Bytes::from_request(req, &state).await.map_err(|e| IngestError(StatusCode::BAD_REQUEST, e.to_string()))?;
+        item = Some(serde_json::from_value(parse_body(&body)?).map_err(bad_json)?);
+    }
+    let item = item.ok_or_else(|| IngestError(StatusCode::BAD_REQUEST, "missing `feedback` part (a JSON object with at least `message`)".into()))?;
+    let ctx = build_ctx(&state, &headers, peer, sdk_from_headers(&headers));
+    let v = crate::feedback::ingest(&state, &project, &ctx, item, uploads).await.map_err(feedback_error)?;
+    Ok((StatusCode::ACCEPTED, Json(v)).into_response())
 }
 
 fn build_ctx(state: &AppState, headers: &HeaderMap, peer: SocketAddr, sdk: SdkInfo) -> RequestCtx {
@@ -248,12 +312,23 @@ async fn accept_items(
         if let (Some(t), Value::Object(o)) = (forced_type, &mut raw) {
             o.entry("type").or_insert_with(|| Value::String(t.to_string()));
         }
+        if raw.get("type").and_then(|t| t.as_str()) == Some("feedback") {
+            match serde_json::from_value::<crate::feedback::FeedbackItem>(raw) {
+                Ok(item) => match crate::feedback::ingest(state, project, ctx, item, vec![]).await {
+                    Ok(_) => accepted += 1,
+                    Err(r @ crate::feedback::Reject::Unavailable(_)) => return Err(feedback_error(r)),
+                    Err(r) => rejected.push(Rejected { index, error: r.message().to_string() }),
+                },
+                Err(e) => rejected.push(Rejected { index, error: format!("invalid feedback item: {e}") }),
+            }
+            continue;
+        }
         let item: Item = match serde_json::from_value(raw) {
             Ok(i) => i,
             Err(e) => {
                 rejected.push(Rejected {
                     index,
-                    error: format!("invalid item: {e} (each item needs \"type\": \"error\" | \"session\" | \"event\" | \"span\")"),
+                    error: format!("invalid item: {e} (each item needs \"type\": \"error\" | \"session\" | \"event\" | \"span\" | \"feedback\")"),
                 });
                 continue;
             }

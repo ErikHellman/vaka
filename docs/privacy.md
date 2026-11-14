@@ -42,10 +42,18 @@ Before storage, error events are scrubbed (per project, on by default):
 
 SDKs also offer a `beforeSend`-style hook to drop or edit data on the device.
 
+## User feedback
+
+Feedback is text a person chose to send, so it is kept as written, with two exceptions: card
+numbers and secrets (tokens, `password=...`) are filtered like in crash reports. The contact email
+is optional, visible only to write tokens and admins, and never included in alerts, digests or
+LLM requests. Screenshots mask password fields and elements marked `data-vaka-mask`. See
+[feedback](feedback.md#privacy).
+
 ## Retention
 
 Each project has a retention period (default 90 days, `VAKA_DEFAULT_RETENTION_DAYS`). Errors,
-events and sessions older than that are deleted automatically. Change it with
+events, sessions and feedback older than that are deleted automatically. Change it with
 `PATCH /api/v1/projects/{p}` `{"retention_days": 30}`; lowering it deletes older data within an hour.
 
 ## Deleting a user's data
@@ -56,7 +64,8 @@ To honour a deletion request (GDPR article 17), delete everything stored for a u
 curl -X DELETE -H "Authorization: Bearer $VAKA_TOKEN" {{ENDPOINT}}/api/v1/projects/web/users/user-123
 ```
 
-or use the MCP tool `delete_user_data`. This removes the user's errors, events and sessions and
+or use the MCP tool `delete_user_data`. This removes the user's errors, events, sessions and feedback (matched by user id or
+contact email, with screenshots) and
 is recorded in the audit log. Data sent without `identify` is not linked to a user id and cannot be
 looked up per person.
 

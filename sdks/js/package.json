@@ -2,7 +2,7 @@
   "name": "@hellsoft/vaka-browser",
   "publishConfig": {"access": "public"},
   "version": "0.2.0",
-  "description": "Vaka browser SDK: crash reporting and cookieless analytics",
+  "description": "Vaka browser SDK: crash reporting, cookieless analytics and user feedback",
   "license": "MIT OR Apache-2.0",
   "repository": {"type": "git", "url": "https://github.com/ErikHellman/vaka", "directory": "sdks/js"},
   "type": "module",
@@ -10,7 +10,8 @@
   "module": "./dist/vaka.mjs",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": {"types": "./dist/index.d.ts", "import": "./dist/vaka.mjs", "require": "./dist/vaka.cjs"}
+    ".": {"types": "./dist/index.d.ts", "import": "./dist/vaka.mjs", "require": "./dist/vaka.cjs"},
+    "./feedback": {"types": "./dist/feedback.d.ts", "import": "./dist/feedback.mjs", "require": "./dist/feedback.cjs"}
   },
   "files": ["dist", "README.md"],
   "sideEffects": false,

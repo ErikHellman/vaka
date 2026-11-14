@@ -29,6 +29,8 @@ Content-Encoding: gzip          (optional)
 - The body is parsed as JSON regardless of `Content-Type` (so `text/plain` beacons work).
 - Single-kind shortcuts accept one item or an array, without `type`:
   `POST /ingest/v1/errors`, `/ingest/v1/sessions`, `/ingest/v1/events`, `/ingest/v1/spans`.
+- Batches may also carry `{"type": "feedback", ...}` items (without screenshots); see
+  [Feedback item](#feedback-item).
 
 ## Response
 
@@ -194,6 +196,28 @@ Error, session and event items accept `flags`: the flag values the app used, e.g
 ```
 
 See [performance.md](performance.md) for all fields. Error items may carry `trace_id`.
+
+## Feedback item
+
+User feedback ([feedback.md](feedback.md)), sent to `POST /ingest/v1/feedback` as JSON, or as
+`multipart/form-data` with a `feedback` field holding the JSON followed by up to 3 image files
+(PNG, JPEG or WebP, 5 MB each, 16 MB per request). Feedback without screenshots can also go in a
+batch.
+
+```json
+{"id": "6b0a7c1e-…", "message": "The export button does nothing", "email": "ann@example.com",
+ "event_id": "1f0c7c4e-…", "source": "crash_prompt", "url": "https://app.example.com/reports",
+ "release": "2.4.0", "session_id": "…", "user_id": "u-42", "tags": {"plan": "pro"}, "flags": {"new_export": "on"}}
+```
+
+- `message` is required, at most 5000 characters. `email` and `name` are optional contact details.
+- `id`: client-generated (UUID); a retry with the same id is stored once.
+- `event_id`: the error event the feedback is about; Vaka links it to that event's issue.
+- `source`: `widget`, `crash_prompt` or `api` (default). Mobile apps send `screen` instead of `url`.
+- Also accepts the common fields: `timestamp`, `release`, `environment`, `platform`, `anon_id`,
+  `device`.
+- `202` returns `{"id", "short_id"}`. `429` means the per-IP or per-session hourly limit was hit;
+  don't retry it automatically.
 
 ## Privacy guarantees
 

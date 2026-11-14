@@ -430,6 +430,7 @@ pub async fn fix_context(state: &AppState, p: &Principal, id: &str) -> QResult<V
         "links": links,
         "comments": issue["comments"].as_array().map(|c| c.iter().rev().take(5).rev().cloned().collect::<Vec<_>>()).unwrap_or_default(),
         "timeline_before_crash": issue.get("timeline_before_crash").cloned().unwrap_or(Value::Null),
+        "user_feedback": issue["feedback"],
         "suggested": {
             "branch": format!("vaka/{}-{}", short.to_lowercase(), slugify(title, 40)),
             "commit_trailer": format!("Fixes {short}"),
