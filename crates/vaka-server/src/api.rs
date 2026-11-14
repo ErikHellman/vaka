@@ -882,7 +882,7 @@ async fn upload_artifact(State(s): State<AppState>, p: Principal, Path(project):
         .filter(|v| *v > 0)
         .unwrap_or(20_480)
         * 1_048_576;
-    let used = sqlx::query("SELECT COALESCE(SUM(size), 0) AS n FROM (SELECT DISTINCT path, size FROM artifacts WHERE project_id = $1) t")
+    let used = sqlx::query("SELECT CAST(COALESCE(SUM(size), 0) AS BIGINT) AS n FROM (SELECT DISTINCT path, size FROM artifacts WHERE project_id = $1) t")
         .bind(&proj.id)
         .fetch_one(&s.db)
         .await?
