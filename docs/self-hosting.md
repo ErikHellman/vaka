@@ -73,6 +73,7 @@ All settings are environment variables.
 | `VAKA_LISTEN` | `0.0.0.0:8080` | Listen address |
 | `VAKA_ADMIN_EMAIL`, `VAKA_ADMIN_PASSWORD` | | First owner account, created on start when no users exist. With email configured the password is optional |
 | `VAKA_DB_URL` | `sqlite://$VAKA_DATA_DIR/vaka.db?mode=rwc` | `sqlite://...` or `postgres://user:pass@host/db` |
+| `VAKA_READ_ONLY` | `false` | Start in read-only maintenance mode (see [Moving from SQLite to Postgres](#moving-from-sqlite-to-postgres)) |
 | `VAKA_DATA_DIR` | `./data` (`/data` in Docker) | SQLite database and uploaded debug files |
 | `VAKA_CLICKHOUSE_URL` | `http://localhost:8123` | ClickHouse HTTP interface |
 | `VAKA_CLICKHOUSE_USER` / `_PASSWORD` / `_DATABASE` | `default` / empty / `vaka` | ClickHouse credentials |
@@ -144,7 +145,54 @@ Pull the new image and restart: `docker compose pull && docker compose up -d` (b
 `VAKA_VERSION` in `.env` first if you pinned one). On Fly.io, run `deploy/fly/fly.sh deploy server`.
 Migrations run automatically. Read the release notes for anything that needs manual steps.
 
+## Moving from SQLite to Postgres
+
+Start on SQLite and move to Postgres later, for example to run several instances or use a
+managed database. Only metadata moves (users, projects, issues, tokens, alert rules, flags,
+feedback): events, crashes, sessions and traces stay in ClickHouse. The metadata database is
+small, so a copy takes seconds, and the switch costs a few seconds of read-only admin with no
+lost events.
+
+`vaka-server migrate-db --to <postgres url>` copies everything from the current database
+(`VAKA_DB_URL`, or the SQLite file in `VAKA_DATA_DIR`; `--from` overrides it). It creates the
+Postgres schema, copies every table in one transaction from a consistent snapshot, resets
+sequences and checks the row count of every table. Re-running it needs `--replace`, which
+overwrites the target with the source again. With Docker Compose, add the `postgres` profile
+first (`COMPOSE_PROFILES=postgres` and `POSTGRES_PASSWORD` in `.env`, then `docker compose up -d`):
+
+1. **Copy while live**, to check that the copy works. The server keeps running:
+
+   ```sh
+   docker compose exec vaka vaka-server migrate-db --to postgres://vaka:$POSTGRES_PASSWORD@postgres:5432/vaka
+   ```
+
+2. **Turn on read-only mode.** Metadata writes (admin edits, issue state changes, new tokens,
+   alert rules, logins) are refused with a 503 explaining why, and background jobs pause.
+   Events, sessions, spans and logs keep flowing into ClickHouse. Error and feedback items need
+   metadata writes (issue grouping), so ingest answers them with `503` and `Retry-After`, and SDKs
+   send them again after the switch. The call returns once error events already in the queue are
+   stored. Use an admin session or an API token with write access to all projects:
+
+   ```sh
+   curl -X PUT https://vaka.example.com/api/v1/admin/read-only \
+     -H "authorization: Bearer $VAKA_TOKEN" -H 'content-type: application/json' -d '{"enabled": true}'
+   ```
+
+3. **Copy again and switch.** The second copy should report `ok` for every table and no changes in
+   the source. Then set `VAKA_DB_URL` and restart; the new server starts writable:
+
+   ```sh
+   docker compose exec vaka vaka-server migrate-db --replace --to postgres://vaka:$POSTGRES_PASSWORD@postgres:5432/vaka
+   # .env: VAKA_DB_URL=postgres://vaka:...@postgres:5432/vaka
+   docker compose up -d
+   ```
+
+To abandon the move, send `{"enabled": false}` to the same endpoint and keep running on SQLite.
+`GET /api/v1/admin/read-only` shows the current state, and `/health` includes `"read_only"`.
+Keep the SQLite file until you are happy with Postgres: switching back is the same steps with
+`--from` and `--to` swapped. Setting `VAKA_READ_ONLY=true` starts a server in read-only mode.
+
 ## Health and monitoring
 
-`GET /health` returns `{"ok": true, "db": true, "clickhouse": true, "version": "..."}` and
+`GET /health` returns `{"ok": true, "db": true, "clickhouse": true, "read_only": false, "version": "..."}` and
 503 when a dependency is down. Logs go to stdout; set `VAKA_LOG=debug` (tracing filter syntax) for more.

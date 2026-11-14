@@ -183,7 +183,9 @@ pub fn spawn(state: AppState, mut rx: mpsc::Receiver<Work>) {
                     let Some(work) = msg else { break };
                     match work {
                         Work::Error { project, item, country, user_agent, sdk, received_at } => {
-                            match process_error(&state, &project, *item, country, user_agent, sdk, received_at).await {
+                            let res = process_error(&state, &project, *item, country, user_agent, sdk, received_at).await;
+                            crate::readonly::finish_one();
+                            match res {
                                 Ok(row) => errors.push(row),
                                 Err(e) => tracing::error!("failed to process error event: {e:#}"),
                             }

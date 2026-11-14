@@ -507,6 +507,9 @@ pub fn spawn_delivery_worker(state: AppState) {
         let mut n: u64 = 0;
         loop {
             tick.tick().await;
+            if crate::readonly::requested() {
+                continue; // metadata database migration in progress
+            }
             n += 1;
             if let Err(e) = retry_due(&state).await {
                 tracing::warn!("delivery retries failed: {e:#}");
@@ -880,6 +883,9 @@ pub fn spawn_digest_scheduler(state: AppState) {
         let mut tick = tokio::time::interval(Duration::from_secs(600));
         loop {
             tick.tick().await;
+            if crate::readonly::requested() {
+                continue; // metadata database migration in progress
+            }
             if let Err(e) = run_digests(&state, now_ms()).await {
                 tracing::warn!("digests failed: {e:#}");
             }
@@ -1261,6 +1267,9 @@ pub fn spawn_spike_detector(state: AppState) {
         let mut tick = tokio::time::interval(Duration::from_secs(300));
         loop {
             tick.tick().await;
+            if crate::readonly::requested() {
+                continue; // metadata database migration in progress
+            }
             if let Err(e) = detect_spikes(&state).await {
                 tracing::warn!("spike detection failed: {e:#}");
             }

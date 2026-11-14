@@ -28,6 +28,8 @@ mod processor;
 mod product;
 mod projects;
 mod query;
+mod migrate_db;
+mod readonly;
 mod s3;
 mod scrub;
 mod state;
@@ -49,6 +51,16 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_env("VAKA_LOG").unwrap_or_else(|_| "info,tower_http=warn,sqlx=warn".into()))
         .init();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("migrate-db") => return migrate_db::run_cli(&args[1..]).await,
+        Some("-h" | "--help" | "help") => {
+            println!("vaka-server            run the server (configured with VAKA_* environment variables)\n{}", migrate_db::USAGE);
+            return Ok(());
+        }
+        Some(other) => anyhow::bail!("unknown command `{other}`\n{}", migrate_db::USAGE),
+        None => {}
+    }
     let config = config::Config::from_env()?;
     std::fs::create_dir_all(config.artifact_dir())?;
 
@@ -90,6 +102,10 @@ async fn main() -> anyhow::Result<()> {
         salt: Default::default(),
     });
     auth::bootstrap_admin(&state).await?;
+    if matches!(std::env::var("VAKA_READ_ONLY").map(|v| v.trim().to_lowercase()).as_deref(), Ok("1" | "true" | "yes" | "on")) {
+        readonly::enable(&state.db, std::time::Duration::ZERO).await?;
+        tracing::warn!("VAKA_READ_ONLY is set: metadata writes are refused");
+    }
     processor::spawn(state.clone(), work_rx);
     maintenance::spawn(state.clone());
     alerts::spawn_spike_detector(state.clone());
@@ -137,5 +153,5 @@ async fn health(axum::extract::State(s): axum::extract::State<state::AppState>) 
     let db_ok = sqlx::query("SELECT 1").execute(&s.db).await.is_ok();
     let ch_ok = s.ch.ping().await;
     let status = if db_ok && ch_ok { axum::http::StatusCode::OK } else { axum::http::StatusCode::SERVICE_UNAVAILABLE };
-    (status, Json(serde_json::json!({"ok": db_ok && ch_ok, "db": db_ok, "clickhouse": ch_ok, "version": env!("CARGO_PKG_VERSION")})))
+    (status, Json(serde_json::json!({"ok": db_ok && ch_ok, "db": db_ok, "clickhouse": ch_ok, "read_only": readonly::requested(), "version": env!("CARGO_PKG_VERSION")})))
 }

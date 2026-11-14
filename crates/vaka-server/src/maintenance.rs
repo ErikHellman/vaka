@@ -25,6 +25,9 @@ pub fn spawn(state: AppState) {
         let mut tick = tokio::time::interval(Duration::from_secs(3600));
         loop {
             tick.tick().await;
+            if crate::readonly::requested() {
+                continue; // metadata database migration in progress
+            }
             if let Err(e) = enforce_retention(&state).await {
                 tracing::warn!("retention job failed: {e:#}");
             }

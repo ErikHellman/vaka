@@ -22,6 +22,18 @@ const MIGRATIONS: &[(i64, &str)] = &[
 ];
 
 pub async fn connect(url: &str) -> anyhow::Result<Pool> {
+    let pool = open(url).await?;
+    migrate(&pool).await?;
+    Ok(pool)
+}
+
+/// Newest schema version this build knows about.
+pub fn latest_version() -> i64 {
+    MIGRATIONS.last().map(|m| m.0).unwrap_or(0)
+}
+
+/// Open a pool without running migrations.
+pub async fn open(url: &str) -> anyhow::Result<Pool> {
     sqlx::any::install_default_drivers();
     if let Some(path) = url.strip_prefix("sqlite://") {
         let file = path.split('?').next().unwrap_or(path);
@@ -39,13 +51,39 @@ pub async fn connect(url: &str) -> anyhow::Result<Pool> {
                     sqlx::query("PRAGMA busy_timeout=5000").execute(&mut *conn).await?;
                     sqlx::query("PRAGMA foreign_keys=ON").execute(&mut *conn).await?;
                 }
+                if crate::readonly::enforced() {
+                    set_read_only(conn, true).await?;
+                }
                 Ok(())
             })
         })
         .connect(url)
         .await?;
-    migrate(&pool).await?;
     Ok(pool)
+}
+
+async fn set_read_only(conn: &mut sqlx::AnyConnection, on: bool) -> Result<(), sqlx::Error> {
+    let sql = match (conn.backend_name(), on) {
+        ("SQLite", true) => "PRAGMA query_only = ON",
+        ("SQLite", false) => "PRAGMA query_only = OFF",
+        (_, true) => "SET SESSION default_transaction_read_only = on",
+        (_, false) => "SET SESSION default_transaction_read_only = off",
+    };
+    sqlx::query(sql).execute(&mut *conn).await?;
+    Ok(())
+}
+
+/// Switch every connection of the pool to read-only (or back). Holds all connections at
+/// once so none is missed; connections opened later pick the mode up in `after_connect`.
+pub async fn apply_read_only(pool: &Pool, on: bool) -> anyhow::Result<()> {
+    let max = pool.options().get_max_connections() as usize;
+    let mut held = Vec::with_capacity(max);
+    for _ in 0..max {
+        let mut conn = pool.acquire().await?;
+        set_read_only(&mut conn, on).await?;
+        held.push(conn);
+    }
+    Ok(())
 }
 
 async fn migrate(pool: &Pool) -> anyhow::Result<()> {
