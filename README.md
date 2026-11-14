@@ -1,5 +1,9 @@
 # Vaka
 
+[![CI](https://github.com/ErikHellman/vaka/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ErikHellman/vaka/actions/workflows/ci.yml?query=branch%3Amain)
+[![Release](https://img.shields.io/github/v/release/ErikHellman/vaka?filter=v*&label=release)](https://github.com/ErikHellman/vaka/releases/latest)
+[![Docs](https://img.shields.io/badge/docs-vaka.hellsoft.se-2f6f4f)](https://vaka.hellsoft.se)
+
 Crash reporting, performance and product analytics for the agentic era. Vaka collects crashes,
 errors, traces, release health and privacy-friendly web and mobile analytics, and exposes all of
 it through a REST API and an MCP server, so coding agents can query data, triage issues and open

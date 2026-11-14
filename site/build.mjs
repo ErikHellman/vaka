@@ -54,6 +54,12 @@ const rewriteLinks = (html, depth) => {
     .replace(/href="((?:\.\.\/)*)index\.html"/g, (_, p) => `href="${p || './'}"`);
 };
 
+// Live status badges, rendered by GitHub/shields.io at view time so they never go stale.
+const REPO = 'https://github.com/ErikHellman/vaka';
+const badges =
+  `<a href="${REPO}/actions/workflows/ci.yml?query=branch%3Amain"><img src="${REPO}/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status" height="20"></a>` +
+  `<a href="${REPO}/releases/latest"><img src="https://img.shields.io/github/v/release/ErikHellman/vaka?filter=v*&label=release&color=2f6f4f" alt="Latest release" height="20"></a>`;
+
 const css = fs.readFileSync(path.join(import.meta.dirname, 'style.css'), 'utf8');
 
 function page(title, body, current, depth) {
@@ -77,7 +83,7 @@ function page(title, body, current, depth) {
 <style>${css}</style>
 </head>
 <body>
-<header><a class="brand" href="${up || './'}">vaka</a><a href="https://github.com/ErikHellman/vaka">GitHub</a></header>
+<header><a class="brand" href="${up || './'}">vaka</a><div class="status">${badges}<a href="https://github.com/ErikHellman/vaka">GitHub</a></div></header>
 <div class="layout">
 <nav><div class="group">Docs</div>${links}<div class="group">Install guides</div>${installLinks}<div class="group">For agents</div><a href="${up}llms.txt">llms.txt</a></nav>
 <main>${body}</main>
