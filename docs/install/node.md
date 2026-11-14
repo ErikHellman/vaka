@@ -8,7 +8,7 @@ Requires Node.js 22.15 or later.
 ## 1. Install
 
 ```sh
-npm install vaka-node
+npm install @hellsoft/vaka-node
 ```
 
 Optional, for Express, Fastify, Koa, databases, Redis, queues and more in your traces:
@@ -30,10 +30,10 @@ export VAKA_ENDPOINT={{ENDPOINT}}
 export VAKA_RELEASE=REPLACE_WITH_APP_VERSION     # e.g. the git sha or package version
 export VAKA_ENVIRONMENT=production
 export OTEL_SERVICE_NAME=REPLACE_WITH_SERVICE_NAME
-node --import vaka-node/register dist/server.js    # CommonJS apps: --require vaka-node/register
+node --import @hellsoft/vaka-node/register dist/server.js    # CommonJS apps: --require @hellsoft/vaka-node/register
 ```
 
-In `package.json` scripts this is `"start": "node --import vaka-node/register dist/server.js"`.
+In `package.json` scripts this is `"start": "node --import @hellsoft/vaka-node/register dist/server.js"`.
 Release defaults to `npm_package_version` when started through npm.
 
 **Option B: an `instrument` file.** Create `instrument.mjs` (or `.ts`) and load it with
@@ -41,7 +41,7 @@ Release defaults to `npm_package_version` when started through npm.
 entry point:
 
 ```ts
-import * as Vaka from 'vaka-node';
+import * as Vaka from '@hellsoft/vaka-node';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node'; // optional
 
 Vaka.init({
@@ -108,7 +108,7 @@ then reads source lines from disk where they exist. Nothing to upload.
 
 ```sh
 VAKA_KEY={{KEY}} VAKA_ENDPOINT={{ENDPOINT}} VAKA_RELEASE=test node -e "
-const Vaka = require('vaka-node');
+const Vaka = require('@hellsoft/vaka-node');
 Vaka.init({ otel: false });
 Vaka.captureMessage('vaka install test', 'info');
 Vaka.close().then((ok) => console.log(ok ? 'sent' : 'NOT sent'));"

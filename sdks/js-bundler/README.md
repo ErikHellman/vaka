@@ -1,15 +1,15 @@
-# vaka-bundler-plugin
+# @hellsoft/vaka-bundler-plugin
 
 Uploads JavaScript source maps to [Vaka](https://vaka.hellsoft.se) after Vite, Rollup and webpack
 builds, so stack traces resolve to original files and lines. No dependencies, Node 18+.
 
 ```js
 // vite.config.js
-import { vakaVite } from 'vaka-bundler-plugin';
+import { vakaVite } from '@hellsoft/vaka-bundler-plugin';
 export default { build: { sourcemap: 'hidden' }, plugins: [vakaVite({ deleteAfterUpload: true })] };
 
 // webpack.config.js
-const { VakaWebpackPlugin } = require('vaka-bundler-plugin');
+const { VakaWebpackPlugin } = require('@hellsoft/vaka-bundler-plugin');
 module.exports = { devtool: 'hidden-source-map', plugins: [new VakaWebpackPlugin({ deleteAfterUpload: true })] };
 ```
 

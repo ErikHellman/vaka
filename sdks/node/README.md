@@ -1,16 +1,16 @@
-# vaka-node
+# @hellsoft/vaka-node
 
 Node.js SDK for [Vaka](https://github.com/ErikHellman/vaka): crash and error reporting,
 OpenTelemetry traces and logs, breadcrumbs, release tagging and feature flags.
 
 ```sh
-npm install vaka-node
+npm install @hellsoft/vaka-node
 VAKA_KEY=vk_... VAKA_ENDPOINT=https://vaka.example.com VAKA_RELEASE=1.0.0 \
-  node --import vaka-node/register server.js
+  node --import @hellsoft/vaka-node/register server.js
 ```
 
 ```ts
-import * as Vaka from 'vaka-node';
+import * as Vaka from '@hellsoft/vaka-node';
 
 app.use(Vaka.requestHandler());   // Express: per-request scope
 // routes

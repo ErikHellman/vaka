@@ -1,5 +1,6 @@
 {
-  "name": "vaka-bundler-plugin",
+  "name": "@hellsoft/vaka-bundler-plugin",
+  "publishConfig": {"access": "public"},
   "version": "0.2.0",
   "description": "Upload source maps to Vaka from Vite, Rollup and webpack builds",
   "license": "MIT OR Apache-2.0",

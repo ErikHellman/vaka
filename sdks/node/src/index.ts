@@ -1,7 +1,7 @@
 /**
  * Vaka Node.js SDK: crash and error reporting, OpenTelemetry traces and logs, feature flags.
  *
- *   import * as Vaka from 'vaka-node';
+ *   import * as Vaka from '@hellsoft/vaka-node';
  *   Vaka.init({ key: process.env.VAKA_KEY, endpoint: 'https://vaka.example.com', release: '1.2.3' });
  */
 import { randomUUID } from 'node:crypto';

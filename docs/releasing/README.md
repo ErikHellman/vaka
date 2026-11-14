@@ -6,7 +6,7 @@ released by [`release.yml`](../../.github/workflows/release.yml) (see
 
 | SDK | Registry | Guide |
 | --- | --- | --- |
-| `vaka-browser`, `vaka-bundler-plugin`, `vaka-node` | npm | [npm.md](npm.md) |
+| `@hellsoft/vaka-browser`, `@hellsoft/vaka-bundler-plugin`, `@hellsoft/vaka-node` | npm | [npm.md](npm.md) |
 | `se.hellsoft.vaka:vaka-android` + Gradle plugin `se.hellsoft.vaka` | Maven Central, Gradle Plugin Portal | [android.md](android.md) |
 | `Vaka` (iOS, macOS, tvOS) | Swift Package Manager (git tags), CocoaPods trunk | [ios.md](ios.md) |
 | `vaka-sdk` (Rust) | crates.io | [rust.md](rust.md) |
