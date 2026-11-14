@@ -1004,6 +1004,7 @@ fn validate_target(channel: &str, target: &str) -> QResult<()> {
             Err(ApiError::bad("slack target must be an incoming webhook URL (https://hooks.slack.com/services/...)"))
         }
         "email" if !target.contains('@') => Err(ApiError::bad("email target must be one or more comma-separated email addresses")),
+        "sms" => crate::sms::parse_numbers(target).map(|_| ()).map_err(ApiError::bad),
         "github_dispatch" | "github_issue" if crate::github::repo_slug(target).is_none() => Err(ApiError::bad("GitHub target must be owner/repo or https://github.com/owner/repo")),
         _ => Ok(()),
     }
@@ -1074,7 +1075,7 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
     .bind(b.enabled.unwrap_or(true) as i64)
     .bind(now_ms())
     .bind(b.filters.filter(|f| !f.is_null()).map(|f| f.to_string()).unwrap_or_default())
-    .bind(b.max_per_hour.unwrap_or(if channel.starts_with("github_") { 10 } else { 0 }).max(0))
+    .bind(b.max_per_hour.unwrap_or(if channel.starts_with("github_") || channel == "sms" { 10 } else { 0 }).max(0))
     .bind(schedule)
     .execute(&s.db)
     .await?;

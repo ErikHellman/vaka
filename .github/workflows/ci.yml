@@ -52,10 +52,11 @@ jobs:
           VAKA_CLICKHOUSE_URL=http://localhost:8123 VAKA_CLICKHOUSE_USER=vaka VAKA_CLICKHOUSE_PASSWORD=vaka \
           VAKA_CLICKHOUSE_DATABASE=vaka_sqlite \
           VAKA_ADMIN_EMAIL=ci@example.com VAKA_ADMIN_PASSWORD=password123 VAKA_GITHUB_API_URL=http://127.0.0.1:18099/gh \
+          VAKA_SMS_API_URL=http://127.0.0.1:18099/elks VAKA_46ELKS_USERNAME=u1 VAKA_46ELKS_PASSWORD=p1 \
             ./target/debug/vaka-server > /tmp/vaka-sqlite.log 2>&1 &
           SERVER_PID=$!
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8080/health && break; sleep 1; done
-          VAKA=http://127.0.0.1:8080 EMAIL=ci@example.com PASSWORD=password123 bash scripts/smoke.sh
+          VAKA=http://127.0.0.1:8080 EMAIL=ci@example.com PASSWORD=password123 SMS_PATH=/elks/a1/sms bash scripts/smoke.sh
           PGPASSWORD=vaka psql -h localhost -U vaka -d vaka -c 'CREATE DATABASE vaka_cutover'
           VAKA=http://127.0.0.1:8080 EMAIL=ci@example.com PASSWORD=password123 \
           SQLITE_URL=sqlite:///tmp/vaka-sqlite/vaka.db PG_URL=postgres://vaka:vaka@localhost:5432/vaka_cutover \
@@ -73,10 +74,11 @@ jobs:
           VAKA_CLICKHOUSE_URL=http://localhost:8123 VAKA_CLICKHOUSE_USER=vaka VAKA_CLICKHOUSE_PASSWORD=vaka \
           VAKA_CLICKHOUSE_DATABASE=vaka_pg \
           VAKA_ADMIN_EMAIL=ci@example.com VAKA_ADMIN_PASSWORD=password123 VAKA_GITHUB_API_URL=http://127.0.0.1:18099/gh \
+          VAKA_SMS_PROVIDER=twilio VAKA_SMS_FROM=+15005550006 VAKA_SMS_API_URL=http://127.0.0.1:18099/twilio VAKA_TWILIO_ACCOUNT_SID=AC1 VAKA_TWILIO_AUTH_TOKEN=t1 \
             ./target/debug/vaka-server > /tmp/vaka-pg.log 2>&1 &
           SERVER_PID=$!
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8081/health && break; sleep 1; done
-          VAKA=http://127.0.0.1:8081 EMAIL=ci@example.com PASSWORD=password123 ARTIFACT_DIR=/tmp/vaka-pg/artifacts bash scripts/smoke.sh
+          VAKA=http://127.0.0.1:8081 EMAIL=ci@example.com PASSWORD=password123 ARTIFACT_DIR=/tmp/vaka-pg/artifacts SMS_PATH=/twilio/2010-04-01/Accounts/AC1/Messages.json bash scripts/smoke.sh
           kill $SERVER_PID
       - name: Server logs
         if: failure()

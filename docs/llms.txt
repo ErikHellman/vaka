@@ -76,7 +76,7 @@ filter to any analytics tool, or `breakdown: "cohort:<name>"` to a funnel.
 - [REST API]({{ENDPOINT}}/docs/api.md) and [OpenAPI]({{ENDPOINT}}/api/v1/openapi.json)
 - [Ingest protocol (write your own SDK)]({{ENDPOINT}}/docs/ingest.md)
 - [CLI: debug file uploads]({{ENDPOINT}}/docs/cli.md)
-- [Alerts: webhooks, Slack, email, daily digests]({{ENDPOINT}}/docs/alerts.md)
+- [Alerts: webhooks, Slack, email, SMS (46elks, Twilio, Sinch), daily digests]({{ENDPOINT}}/docs/alerts.md)
 - [Performance tracing: spans, Web Vitals, app start]({{ENDPOINT}}/docs/performance.md)
 - [Feature flags and experiments]({{ENDPOINT}}/docs/flags.md)
 - [Anomaly detection and scheduled digests]({{ENDPOINT}}/docs/anomalies.md)

@@ -109,7 +109,7 @@ Write:
 | `set_code_mappings` | Replace the stack path → repository path mappings |
 | `apply_ownership_rules` | Re-apply ownership rules to open issues |
 | `comment_issue` | Add a Markdown comment, e.g. root cause and a link to the fix |
-| `create_alert_rule` | Webhook, Slack, email, GitHub repository_dispatch or GitHub issue on new issues, regressions, spikes, thresholds, resolves, assignments, comments, new releases, or a daily or weekly digest (`schedule` with a time zone); with filters and rate limits |
+| `create_alert_rule` | Webhook, Slack, email, SMS, GitHub repository_dispatch or GitHub issue on new issues, regressions, spikes, thresholds, resolves, assignments, comments, new releases, or a daily or weekly digest (`schedule` with a time zone); with filters and rate limits |
 | `list_alert_rules` | Rules with triggers, channels and filters |
 | `update_alert_rule` / `delete_alert_rule` | Change or delete a rule |
 | `test_alert_rule` | Send a test notification |

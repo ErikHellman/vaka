@@ -849,7 +849,8 @@ async fn alerts_page(State(s): State<AppState>, headers: HeaderMap, axum::extrac
     let name_of = |id: &Option<String>| id.as_ref().and_then(|i| projects.iter().find(|p| &p.id == i).map(|p| p.name.clone())).unwrap_or_else(|| "All projects".into());
     page("Alerts", Some(&user), flash_of(&q).as_deref(), html! {
         h1 { "Alert rules" }
-        p.muted { "Webhooks receive JSON (signed with HMAC-SHA256 in " code { "X-Vaka-Signature" } " when a secret is set). Email is sent through Resend." @if s.config.resend_api_key.is_none() { " Email is not configured: set VAKA_RESEND_API_KEY." } }
+        p.muted { "Webhooks receive JSON (signed with HMAC-SHA256 in " code { "X-Vaka-Signature" } " when a secret is set). Email is sent through Resend." @if s.config.resend_api_key.is_none() { " Email is not configured: set VAKA_RESEND_API_KEY." }
+            " SMS goes to E.164 numbers (+46701234567) through " (s.config.sms.provider) "." @if let Some(why) = s.config.sms.missing() { " SMS is not configured: " (why.trim_start_matches("SMS alerts need ")) "." } }
         div.card { table {
             tr { th { "Name" } th { "Project" } th { "Trigger" } th { "Channel" } th { "Target" } th {} }
             @for r in &rules {
@@ -873,7 +874,7 @@ async fn alerts_page(State(s): State<AppState>, headers: HeaderMap, axum::extrac
             select name="project" { option value="" { "All projects" } @for p in &projects { option value=(p.slug) { (p.name) } } }
             select name="trigger" { @for t in crate::alerts::TRIGGERS { option value=(t) { (t) } } }
             select name="channel" { @for c in crate::alerts::CHANNELS { option value=(c) { (c) } } }
-            input name="target" placeholder="https://… or email" required style="width:240px";
+            input name="target" placeholder="https://…, email or +46…" required style="width:240px";
             input name="secret" placeholder="Webhook secret (optional)";
             input type="number" name="threshold" placeholder="Spike: events/hour" min="1";
             button type="submit" { "Create" }
