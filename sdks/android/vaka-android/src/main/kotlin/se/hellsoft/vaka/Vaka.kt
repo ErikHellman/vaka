@@ -10,6 +10,7 @@ import android.os.Debug
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.View
 import se.hellsoft.vaka.internal.AnrWatchdog
 import se.hellsoft.vaka.internal.Client
 import se.hellsoft.vaka.internal.HttpTransport
@@ -35,6 +36,7 @@ import java.io.File
  */
 public object Vaka {
     @Volatile private var client: Client? = null
+    private var application: Application? = null
     private var anrWatchdog: AnrWatchdog? = null
 
     /** True once [init] has run with an enabled config. */
@@ -68,6 +70,7 @@ public object Vaka {
             // Reports from the previous run are read even if capture is now off.
             nativeCrashDir = nativeDir,
             sessionObserver = if (native) NativeCrashes::setSession else { _ -> },
+            feedbackDir = File(dir, "feedback"),
         )
         client = c
         if (cfg.captureUncaughtExceptions) CrashHandler.install(c)
@@ -82,6 +85,7 @@ public object Vaka {
                 isDebugging = { Debug.isDebuggerConnected() || Debug.waitingForDebugger() },
             ).also { it.start() }
         }
+        application = app
         Lifecycle(c, cfg).register(app)
         log.debug("initialized for release ${cfg.release} (${cfg.environment})")
     }
@@ -126,6 +130,60 @@ public object Vaka {
     @JvmStatic
     public fun setTag(key: String, value: String?) {
         client?.setTag(key, value)
+    }
+
+    /** Id of the last error or message reported in this process, e.g. to link feedback to it. */
+    @JvmStatic
+    public fun lastEventId(): String? = client?.lastEventId
+
+    /**
+     * Sends user feedback with the current session, user, screen, release and tags. Feedback is
+     * stored on disk first, so it is sent later when the device is offline. [callback] runs on a
+     * background thread. Returns the feedback's client id, or null before [init].
+     *
+     * ```kotlin
+     * Vaka.captureFeedback(VakaFeedback("The export button does nothing", eventId = Vaka.lastEventId()))
+     * ```
+     */
+    @JvmStatic @JvmOverloads
+    public fun captureFeedback(feedback: VakaFeedback, callback: ((VakaFeedbackResult) -> Unit)? = null): String? =
+        client?.captureFeedback(feedback, callback)
+
+    /**
+     * Installs the feedback widget: a floating button on every Activity (unless
+     * `button = false`) and, with `crashPrompt = true`, a "what happened?" dialog on the first
+     * screen after a crash. Call after [init], from the main thread.
+     */
+    @JvmStatic @JvmOverloads
+    public fun installFeedback(options: VakaFeedbackOptions = VakaFeedbackOptions()) {
+        val app = application ?: return
+        runOnMain { FeedbackUi.install(app, options) }
+    }
+
+    /**
+     * Opens the feedback dialog, e.g. from your own "Report a problem" menu item. Uses the
+     * options from [installFeedback] when [options] is null. [activity] defaults to the
+     * resumed Activity. Pass [eventId] to ask about a specific error.
+     */
+    @JvmStatic @JvmOverloads
+    public fun showFeedback(activity: Activity? = null, options: VakaFeedbackOptions? = null, eventId: String? = null) {
+        if (client == null) return
+        runOnMain {
+            val a = activity ?: CurrentActivity.get() ?: return@runOnMain
+            FeedbackUi.show(a, options ?: FeedbackUi.currentOptions, eventId, crashPrompt = false)
+        }
+    }
+
+    /** Blacks out [view] (and its children) in feedback screenshots, e.g. for personal data. */
+    @JvmStatic
+    public fun maskInScreenshots(view: View) {
+        view.setTag(R.id.vaka_mask, true)
+    }
+
+    internal fun takePreviousCrash(): String? = client?.takePreviousCrash()
+
+    private fun runOnMain(r: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) r() else Handler(Looper.getMainLooper()).post(r)
     }
 
     /** Sends queued items now instead of waiting for the next interval. */
@@ -261,6 +319,7 @@ private class Lifecycle(private val client: Client, private val cfg: VakaConfig)
     }
 
     override fun onActivityResumed(a: Activity) {
+        CurrentActivity.set(a)
         crumb(a, "resumed")
         if (cfg.autoScreenViews) client.screen(a.javaClass.simpleName)
     }
@@ -275,5 +334,8 @@ private class Lifecycle(private val client: Client, private val cfg: VakaConfig)
 
     override fun onActivitySaveInstanceState(a: Activity, b: Bundle) {}
 
-    override fun onActivityDestroyed(a: Activity) = crumb(a, "destroyed")
+    override fun onActivityDestroyed(a: Activity) {
+        if (CurrentActivity.get() === a) CurrentActivity.set(null)
+        crumb(a, "destroyed")
+    }
 }

@@ -17,7 +17,7 @@ internal class DiskQueue(private val dir: File, private val maxItems: Int, priva
     @Synchronized
     fun add(json: String) {
         try {
-            val name = String.format("%013d-%06d", System.currentTimeMillis(), seq++ % 1_000_000)
+            val name = String.format(java.util.Locale.ROOT, "%013d-%06d", System.currentTimeMillis(), seq++ % 1_000_000)
             val tmp = File(dir, "$name.tmp")
             tmp.writeText(json)
             if (!tmp.renameTo(File(dir, "$name.json"))) tmp.delete()

@@ -1,6 +1,8 @@
 package se.hellsoft.vaka.internal
 
 import se.hellsoft.vaka.VakaConfig
+import se.hellsoft.vaka.VakaFeedback
+import se.hellsoft.vaka.VakaFeedbackResult
 import se.hellsoft.vaka.VakaLevel
 import java.io.File
 import java.util.ArrayDeque
@@ -34,12 +36,22 @@ internal class Client(
     private val nativeCrashDir: File? = null,
     /** Told about every session id change (the native handler records it in its reports). */
     private val sessionObserver: (String?) -> Unit = {},
+    /** Where feedback waits while offline; null keeps nothing (tests). */
+    feedbackDir: File? = null,
 ) {
     private val sdk = mapOf("name" to SDK_NAME, "version" to sdkVersion)
     private val queue = DiskQueue(queueDir, config.maxQueueSize, log)
     private val errors = ErrorBuilder(config.inAppPackages)
     private val breadcrumbs = ArrayDeque<Map<String, Any?>>()
     private val tags = LinkedHashMap(config.tags)
+    private val feedback = feedbackDir?.let { FeedbackStore(it, MAX_PENDING_FEEDBACK, log) }
+
+    /** Id of the last error or message reported in this process. */
+    @Volatile var lastEventId: String? = null
+        private set
+
+    /** The fatal error that ended the previous run (JVM or native), for the crash prompt. */
+    private var previousCrash: String? = null
 
     val anonId: String = store.getString(K_ANON) ?: UUID.randomUUID().toString().also { store.put(mapOf(K_ANON to it)) }
     @Volatile var userId: String? = store.getString(K_USER)
@@ -61,6 +73,10 @@ internal class Client(
     private var lastScreen: String? = null
 
     init {
+        store.getString(K_CRASH_EVENT)?.let { id ->
+            if (clock.now() - store.getLong(K_CRASH_AT) < CRASH_PROMPT_MAX_AGE) previousCrash = id
+            store.put(mapOf(K_CRASH_EVENT to null, K_CRASH_AT to null))
+        }
         val crashedSessions = reportNativeCrashes()
         closePreviousSession(crashedSessions)
         executor.scheduleWithFixedDelay({ tick() }, config.flushIntervalMillis, config.flushIntervalMillis, TimeUnit.MILLISECONDS)
@@ -103,14 +119,14 @@ internal class Client(
         countSessionError()
         enqueue(item)
         addBreadcrumb("error", "${t.javaClass.name}: ${t.message ?: ""}", level)
-        return item["event_id"] as String
+        return (item["event_id"] as String).also { lastEventId = it }
     }
 
     fun captureMessage(message: String, level: VakaLevel = VakaLevel.INFO): String {
         val item = error(level, fatal = false, handled = true).also { it["message"] = message }
         if (level == VakaLevel.ERROR || level == VakaLevel.FATAL) countSessionError()
         enqueue(item)
-        return item["event_id"] as String
+        return (item["event_id"] as String).also { lastEventId = it }
     }
 
     /**
@@ -121,6 +137,7 @@ internal class Client(
         try {
             val item = error(VakaLevel.FATAL, fatal = true, handled = false).also { it["exceptions"] = errors.exceptions(t) }
             queue.add(Json.write(item))
+            store.put(mapOf(K_CRASH_EVENT to item["event_id"], K_CRASH_AT to clock.now()), commit = true)
             val ended = synchronized(this) {
                 val id = sessionId ?: return@synchronized null
                 sessionErrors++
@@ -164,6 +181,83 @@ internal class Client(
 
     fun flush() {
         executor.execute { drain(force = true) }
+    }
+
+    /** Returns the event id of the crash that ended the previous run, once; null if none. */
+    fun takePreviousCrash(): String? = synchronized(this) { previousCrash.also { previousCrash = null } }
+
+    /**
+     * Stores the feedback and sends it on [executor]. [callback] runs on that thread with the
+     * outcome. Returns the feedback's client id.
+     */
+    fun captureFeedback(fb: VakaFeedback, callback: ((VakaFeedbackResult) -> Unit)? = null): String {
+        val id = UUID.randomUUID().toString()
+        val message = fb.message.trim()
+        if (message.isEmpty() || !config.enabled) {
+            callback?.invoke(VakaFeedbackResult(VakaFeedbackResult.Status.REJECTED, id, error = "message is required"))
+            return id
+        }
+        val item = base("feedback")
+        item["id"] = id
+        item["platform"] = "android"
+        item["message"] = message.take(MAX_FEEDBACK_CHARS)
+        fb.email?.trim()?.takeIf { it.isNotEmpty() }?.let { item["email"] = it }
+        fb.name?.trim()?.takeIf { it.isNotEmpty() }?.let { item["name"] = it }
+        fb.eventId?.takeIf { it.isNotBlank() }?.let { item["event_id"] = it }
+        item["source"] = fb.source.wire
+        synchronized(this) {
+            lastScreen?.let { item["screen"] = it }
+            item["tags"] = LinkedHashMap(tags).apply { putAll(fb.tags) }
+        }
+        userId?.let { item["user_id"] = it }
+        val attachments = Images.attachments(fb.attachments, log)
+        val json = Json.write(item)
+        addBreadcrumb("feedback", "user feedback sent")
+        executor.execute {
+            val pending = feedback?.add(id, json, attachments)
+            val r = if (paused) FeedbackSendResult.Retry else sendFeedback(json, attachments, pending)
+            val result = when (r) {
+                is FeedbackSendResult.Accepted -> VakaFeedbackResult(VakaFeedbackResult.Status.SENT, id, r.shortId)
+                is FeedbackSendResult.Rejected -> VakaFeedbackResult(VakaFeedbackResult.Status.REJECTED, id, error = r.error)
+                else -> if (pending != null) {
+                    VakaFeedbackResult(VakaFeedbackResult.Status.QUEUED, id)
+                } else {
+                    VakaFeedbackResult(VakaFeedbackResult.Status.REJECTED, id, error = "could not send feedback")
+                }
+            }
+            try {
+                callback?.invoke(result)
+            } catch (e: Exception) {
+                log.warn("feedback callback failed", e)
+            }
+        }
+        return id
+    }
+
+    fun pendingFeedback(): Int = feedback?.all()?.size ?: 0
+
+    /** Runs on [executor]. Removes [pending] unless the item should be tried again. */
+    private fun sendFeedback(json: String, attachments: List<Attachment>, pending: FeedbackStore.Pending?): FeedbackSendResult {
+        val r = transport.sendFeedback(json, attachments)
+        when (r) {
+            is FeedbackSendResult.Accepted -> pending?.let { feedback?.remove(it) }
+            is FeedbackSendResult.Rejected -> {
+                log.warn("feedback rejected: ${r.error}")
+                pending?.let { feedback?.remove(it) }
+            }
+            FeedbackSendResult.Unauthorized -> paused = true
+            FeedbackSendResult.Retry -> backOff(null)
+        }
+        return r
+    }
+
+    /** Runs on [executor]: retries stored feedback after the batch queue is empty. */
+    private fun drainFeedback() {
+        val store = feedback ?: return
+        for (p in store.all()) {
+            if (paused) return
+            if (sendFeedback(p.json, p.attachments, p) == FeedbackSendResult.Retry) return
+        }
     }
 
     /** For tests: wait for queued work to finish. */
@@ -306,6 +400,8 @@ internal class Client(
                     put("thread", linkedMapOf("id" to r.tid, "name" to r.thread))
                 }
                 queue.add(Json.write(item))
+                val at = if (r.timestampMillis > 0) r.timestampMillis else clock.now()
+                if (clock.now() - at < CRASH_PROMPT_MAX_AGE) previousCrash = item["event_id"] as String
                 r.sessionId?.let { crashed[it] = if (r.timestampMillis > 0) r.timestampMillis else clock.now() }
             } catch (e: Exception) {
                 log.warn("could not report native crash", e)
@@ -389,7 +485,10 @@ internal class Client(
         var batchSize = config.maxBatchSize.coerceAtMost(MAX_ITEMS_PER_REQUEST)
         while (true) {
             val items = queue.peek(batchSize)
-            if (items.isEmpty()) return
+            if (items.isEmpty()) {
+                drainFeedback()
+                return
+            }
             val body = StringBuilder("{\"sdk\":").append(Json.write(sdk)).append(",\"items\":[")
             items.forEachIndexed { i, (_, json) -> if (i > 0) body.append(','); body.append(json) }
             body.append("]}")
@@ -412,13 +511,17 @@ internal class Client(
                     return
                 }
                 is SendResult.Retry -> {
-                    backoffMillis = (if (backoffMillis == 0L) 1_000 else backoffMillis * 2).coerceAtMost(MAX_BACKOFF)
-                    nextAttempt = clock.now() + (r.retryAfterMillis ?: backoffMillis)
-                    log.debug("will retry in ${nextAttempt - clock.now()} ms")
+                    backOff(r.retryAfterMillis)
                     return
                 }
             }
         }
+    }
+
+    private fun backOff(retryAfterMillis: Long?) {
+        backoffMillis = (if (backoffMillis == 0L) 1_000 else backoffMillis * 2).coerceAtMost(MAX_BACKOFF)
+        nextAttempt = clock.now() + (retryAfterMillis ?: backoffMillis)
+        log.debug("will retry in ${nextAttempt - clock.now()} ms")
     }
 
     companion object {
@@ -435,5 +538,10 @@ internal class Client(
         const val K_BG = "session.backgrounded"
         const val K_SEEN = "session.seen"
         const val K_ANR = "session.anr"
+        const val K_CRASH_EVENT = "crash.event_id"
+        const val K_CRASH_AT = "crash.at"
+        const val MAX_FEEDBACK_CHARS = 5000
+        const val MAX_PENDING_FEEDBACK = 10
+        const val CRASH_PROMPT_MAX_AGE = 24 * 60 * 60_000L
     }
 }

@@ -2,7 +2,9 @@ package se.hellsoft.vaka.sample
 
 import android.app.Activity
 import android.os.Bundle
+import android.text.InputType
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import se.hellsoft.vaka.Vaka
 
@@ -26,6 +28,11 @@ class MainActivity : Activity() {
         button("Native crash") { Vaka.crashNativeForTesting() }
         button("Freeze for 10 s (ANR)") { Thread.sleep(10_000) }
         button("Identify") { Vaka.identify("user-123") }
+        button("Send feedback") { Vaka.showFeedback(this) }
+        layout.addView(EditText(this).apply {
+            hint = "Password (masked in screenshots)"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        })
         setContentView(layout)
     }
 }

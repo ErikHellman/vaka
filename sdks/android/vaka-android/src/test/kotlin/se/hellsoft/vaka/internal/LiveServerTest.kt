@@ -56,6 +56,32 @@ class LiveServerTest {
         println("vaka: sent ${results.size} batches, anon_id=${c.anonId}")
     }
 
+    @Test fun sendsFeedbackToServer() {
+        val endpoint = System.getenv("VAKA_TEST_ENDPOINT")
+        val key = System.getenv("VAKA_TEST_KEY")
+        assumeTrue(endpoint != null && key != null)
+        val http = HttpTransport(endpoint!!, key!!, "vaka-android/test", object : Logger {
+            override fun debug(msg: String) = println("vaka: $msg")
+            override fun warn(msg: String, t: Throwable?) = println("vaka WARN: $msg $t")
+        })
+        val cfg = VakaConfig(key = key, endpoint = endpoint, release = "0.1.0-test", environment = "test", flushIntervalMillis = 60_000)
+        val c = Client(cfg, tmp.root.resolve("q"), MemoryStore(), mapOf("model" to "JVM test", "os_name" to "Android"), emptyMap(),
+            http, executor = Executors.newSingleThreadScheduledExecutor(), feedbackDir = tmp.root.resolve("fb"))
+        c.onForeground()
+        c.screen("Reports")
+        val eventId = c.captureException(IllegalStateException("export failed in LiveServerTest"))
+        c.flush(); c.awaitIdle()
+        // 1x1 PNG.
+        val png = java.util.Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+        val done = java.util.concurrent.CountDownLatch(1)
+        var result: se.hellsoft.vaka.VakaFeedbackResult? = null
+        c.captureFeedback(se.hellsoft.vaka.VakaFeedback("The export button does nothing (LiveServerTest)", email = "ann@example.com",
+            eventId = eventId, source = se.hellsoft.vaka.VakaFeedbackSource.WIDGET, attachments = listOf(png))) { result = it; done.countDown() }
+        done.await(30, java.util.concurrent.TimeUnit.SECONDS)
+        println("vaka: feedback result $result")
+        assertEquals(se.hellsoft.vaka.VakaFeedbackResult.Status.SENT, result?.status)
+    }
+
     private fun checkout(items: List<String>) {
         check(items.isNotEmpty()) { "Cart is empty" }
     }
