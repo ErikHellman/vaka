@@ -80,8 +80,12 @@ scope's user, tags and flags:
 - Link feedback to a crash with `eventId` (the id the capture call returned) or to an issue
   with `issue` (`API-12`).
 - Pass the end user's IP address. The SDK sends it as `X-Forwarded-For`, so the per-address
-  rate limit applies to each user instead of to your server. Without it, all feedback from one
-  server shares one limit; raise `VAKA_FEEDBACK_PER_IP_HOUR` if you can't pass it.
+  rate limit applies to each user instead of to your server. Vaka only believes that header from
+  [trusted proxies](self-hosting.md#configuration): backends on a private network (the same
+  Docker network, VPC or cluster) are trusted by default; add a backend that calls Vaka from a
+  public address to `VAKA_TRUSTED_PROXIES`. Otherwise all feedback from that server shares one
+  limit (raise `VAKA_FEEDBACK_PER_IP_HOUR` if needed). Browsers can't use the header to dodge
+  the limit.
 - Up to 3 images go as a multipart upload.
 - The call returns `{ id, short_id }`, and fails with the HTTP status when the server refuses
   the feedback (`429` for a rate limit), so your form can tell the user.

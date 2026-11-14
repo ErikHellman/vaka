@@ -102,7 +102,7 @@ Keyword arguments: `email`, `name`, `event_id`, `issue`, `user_id`, `session_id`
 5 MB), `timeout`. It raises `vaka.FeedbackError` with `.status` (429: rate limited). In async code
 call it with `await asyncio.to_thread(vaka.capture_feedback, ...)`.
 
-Link it to a crash with the event id from a capture call, or to an issue by its short id (`API-12`). Pass the end user's IP address: feedback is rate limited per address (10 an hour by default), so without it all feedback from your server shares one limit. Rejected feedback raises an error with the HTTP status; 429 means a limit was hit. See [user feedback](feedback.md).
+Link it to a crash with the event id from a capture call, or to an issue by its short id (`API-12`). Pass the end user's IP address: feedback is rate limited per address (10 an hour by default), so without it all feedback from your server shares one limit. Vaka believes the address only from backends on a private network or listed in `VAKA_TRUSTED_PROXIES`. Rejected feedback raises an error with the HTTP status; 429 means a limit was hit. See [user feedback](feedback.md).
 
 ## Frameworks
 

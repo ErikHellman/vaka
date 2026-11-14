@@ -30,6 +30,66 @@ pub struct Config {
     /// User feedback accepted per client IP and per session per hour (0 = unlimited).
     pub feedback_ip_limit: u32,
     pub feedback_session_limit: u32,
+    /// Peers whose `X-Forwarded-For` / `X-Real-IP` headers are believed (`VAKA_TRUSTED_PROXIES`).
+    pub trusted_proxies: Vec<Cidr>,
+}
+
+/// An IP network such as `10.0.0.0/8` or `203.0.113.7` (a single address).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cidr {
+    pub addr: std::net::IpAddr,
+    pub prefix: u8,
+}
+
+impl Cidr {
+    pub fn parse(s: &str) -> Option<Cidr> {
+        let s = s.trim();
+        let (a, p) = match s.split_once('/') {
+            Some((a, p)) => (a, Some(p.parse::<u8>().ok()?)),
+            None => (s, None),
+        };
+        let addr: std::net::IpAddr = a.parse().ok()?;
+        let max = if addr.is_ipv4() { 32 } else { 128 };
+        let prefix = p.unwrap_or(max);
+        (prefix <= max).then_some(Cidr { addr, prefix })
+    }
+
+    pub fn contains(&self, ip: std::net::IpAddr) -> bool {
+        use std::net::IpAddr;
+        let ip = match ip {
+            IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(ip),
+            v4 => v4,
+        };
+        match (self.addr, ip) {
+            (IpAddr::V4(n), IpAddr::V4(a)) => {
+                let mask = if self.prefix == 0 { 0 } else { u32::MAX << (32 - self.prefix as u32) };
+                u32::from(n) & mask == u32::from(a) & mask
+            }
+            (IpAddr::V6(n), IpAddr::V6(a)) => {
+                let mask = if self.prefix == 0 { 0 } else { u128::MAX << (128 - self.prefix as u32) };
+                u128::from(n) & mask == u128::from(a) & mask
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Loopback, private (RFC 1918), CGNAT, link-local and unique-local ranges: where reverse proxies,
+/// Docker networks and platform load balancers usually connect from.
+pub const DEFAULT_TRUSTED_PROXIES: &str = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16,fc00::/7,fe80::/10";
+
+/// Parse a comma-separated list; `none` (or an empty value) trusts nobody.
+pub fn parse_trusted_proxies(s: &str) -> Vec<Cidr> {
+    if s.trim().eq_ignore_ascii_case("none") {
+        return Vec::new();
+    }
+    s.split(',').filter(|p| !p.trim().is_empty()).filter_map(|p| {
+        let c = Cidr::parse(p);
+        if c.is_none() {
+            tracing::warn!("VAKA_TRUSTED_PROXIES: ignoring {p:?} (not an IP address or CIDR)");
+        }
+        c
+    }).collect()
 }
 
 fn var(name: &str) -> Option<String> {
@@ -65,6 +125,7 @@ impl Config {
             github_api_url: var("VAKA_GITHUB_API_URL").unwrap_or_else(|| "https://api.github.com".into()).trim_end_matches('/').to_string(),
             feedback_ip_limit: var("VAKA_FEEDBACK_PER_IP_HOUR").and_then(|v| v.parse().ok()).unwrap_or(10),
             feedback_session_limit: var("VAKA_FEEDBACK_PER_SESSION_HOUR").and_then(|v| v.parse().ok()).unwrap_or(5),
+            trusted_proxies: parse_trusted_proxies(&std::env::var("VAKA_TRUSTED_PROXIES").unwrap_or_else(|_| DEFAULT_TRUSTED_PROXIES.into())),
             data_dir,
         })
     }

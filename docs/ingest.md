@@ -217,7 +217,8 @@ batch.
   backend. Unknown issues and issues of other projects are ignored. `event_id` wins when both
   resolve.
 - Rate limits count per client address. A backend forwarding its users' feedback should send the
-  end user's address in `X-Forwarded-For`.
+  end user's address in `X-Forwarded-For`; Vaka believes it only when the backend's own address
+  is in `VAKA_TRUSTED_PROXIES` (private ranges by default).
 - `source`: `widget`, `crash_prompt` or `api` (default). Mobile apps send `screen` instead of `url`.
 - Also accepts the common fields: `timestamp`, `release`, `environment`, `platform`, `anon_id`,
   `device`.

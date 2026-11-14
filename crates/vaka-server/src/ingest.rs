@@ -93,10 +93,18 @@ pub struct RequestCtx {
     pub sdk: SdkInfo,
 }
 
-fn client_ip(headers: &HeaderMap, peer: SocketAddr) -> Option<IpAddr> {
+/// The client's address. Forwarding headers are only believed when the TCP peer is a trusted
+/// proxy (`VAKA_TRUSTED_PROXIES`); otherwise anyone could pick their own address and dodge the
+/// per-address limits. In `X-Forwarded-For` the rightmost hop that isn't itself trusted wins.
+pub(crate) fn client_ip(headers: &HeaderMap, peer: SocketAddr, trusted: &[crate::config::Cidr]) -> Option<IpAddr> {
+    let is_trusted = |ip: IpAddr| trusted.iter().any(|c| c.contains(ip));
+    if !is_trusted(peer.ip()) {
+        return Some(peer.ip());
+    }
     if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-        if let Some(ip) = xff.split(',').next().and_then(|s| s.trim().parse().ok()) {
-            return Some(ip);
+        let hops: Vec<IpAddr> = xff.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        if let Some(ip) = hops.iter().rev().find(|ip| !is_trusted(**ip)).or(hops.first()) {
+            return Some(*ip);
         }
     }
     if let Some(ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()).and_then(|s| s.trim().parse().ok()) {
@@ -262,7 +270,7 @@ async fn feedback(
 }
 
 fn build_ctx(state: &AppState, headers: &HeaderMap, peer: SocketAddr, sdk: SdkInfo) -> RequestCtx {
-    let ip = client_ip(headers, peer);
+    let ip = client_ip(headers, peer, &state.config.trusted_proxies);
     RequestCtx {
         country: country(state, headers, ip),
         ip,
@@ -663,4 +671,47 @@ fn event_row(project: &ProjectInfo, e: &EventItem, salt: &str, ctx: &RequestCtx)
         }
         r
     })
+}
+
+#[cfg(test)]
+mod client_ip_tests {
+    use super::client_ip;
+    use crate::config::{parse_trusted_proxies, DEFAULT_TRUSTED_PROXIES};
+    use axum::http::HeaderMap;
+    use std::net::{IpAddr, SocketAddr};
+
+    fn ip(headers: &[(&'static str, &str)], peer: &str, trusted: &str) -> IpAddr {
+        let mut h = HeaderMap::new();
+        for (k, v) in headers {
+            h.insert(*k, v.parse().unwrap());
+        }
+        let peer = SocketAddr::new(peer.parse().unwrap(), 443);
+        client_ip(&h, peer, &parse_trusted_proxies(trusted)).unwrap()
+    }
+
+    #[test]
+    fn forwarding_headers_need_a_trusted_peer() {
+        let d = DEFAULT_TRUSTED_PROXIES;
+        // A public caller can't choose its own address.
+        assert_eq!(ip(&[("x-forwarded-for", "1.2.3.4")], "203.0.113.9", d).to_string(), "203.0.113.9");
+        assert_eq!(ip(&[("x-real-ip", "1.2.3.4")], "203.0.113.9", d).to_string(), "203.0.113.9");
+        // A proxy on the private network is believed; the rightmost untrusted hop wins.
+        assert_eq!(ip(&[("x-forwarded-for", "6.6.6.6, 1.2.3.4, 10.0.0.2")], "10.0.0.1", d).to_string(), "1.2.3.4");
+        assert_eq!(ip(&[("x-forwarded-for", "1.2.3.4")], "127.0.0.1", d).to_string(), "1.2.3.4");
+        assert_eq!(ip(&[("x-real-ip", "1.2.3.4")], "fdaa::1", d).to_string(), "1.2.3.4");
+        // A backend added by address may forward its users' addresses.
+        assert_eq!(ip(&[("x-forwarded-for", "1.2.3.4")], "203.0.113.9", "203.0.113.0/24").to_string(), "1.2.3.4");
+        // none trusts nobody, even loopback.
+        assert_eq!(ip(&[("x-forwarded-for", "1.2.3.4")], "127.0.0.1", "none").to_string(), "127.0.0.1");
+        assert_eq!(ip(&[], "10.0.0.1", d).to_string(), "10.0.0.1");
+    }
+
+    #[test]
+    fn cidr_parsing() {
+        assert_eq!(parse_trusted_proxies("10.0.0.0/8, 2001:db8::/32, 1.2.3.4, bogus, 1.2.3.4/33").len(), 3);
+        let c = crate::config::Cidr::parse("192.168.0.0/16").unwrap();
+        assert!(c.contains("192.168.4.5".parse().unwrap()));
+        assert!(c.contains("::ffff:192.168.4.5".parse().unwrap()));
+        assert!(!c.contains("192.169.0.1".parse().unwrap()));
+    }
 }

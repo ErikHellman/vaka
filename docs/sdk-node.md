@@ -124,7 +124,7 @@ Fields: `message` (required), `email`, `name`, `eventId`, `issue`, `userId`, `se
 (defaults to the request URL), `ip`, `tags`, `attachments` (up to 3 PNG, JPEG or WebP images of
 5 MB). It rejects with a `FeedbackError` whose `status` is the HTTP status (429: rate limited).
 
-Link it to a crash with the event id from a capture call, or to an issue by its short id (`API-12`). Pass the end user's IP address: feedback is rate limited per address (10 an hour by default), so without it all feedback from your server shares one limit. Rejected feedback raises an error with the HTTP status; 429 means a limit was hit. See [user feedback](feedback.md).
+Link it to a crash with the event id from a capture call, or to an issue by its short id (`API-12`). Pass the end user's IP address: feedback is rate limited per address (10 an hour by default), so without it all feedback from your server shares one limit. Vaka believes the address only from backends on a private network or listed in `VAKA_TRUSTED_PROXIES`. Rejected feedback raises an error with the HTTP status; 429 means a limit was hit. See [user feedback](feedback.md).
 
 ## Frameworks
 
