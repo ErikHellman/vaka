@@ -90,6 +90,8 @@ All settings are environment variables.
 | `VAKA_SYMBOL_CACHE_MB` | `256` | Memory for parsed symbol files used during symbolication |
 | `VAKA_CH_MAX_EXECUTION_SECS` / `VAKA_CH_MAX_MEMORY_MB` | `60` / `4096` | Budget for each ClickHouse read (dashboards, API, MCP). Reads also run with `readonly=2` |
 | `VAKA_ALLOW_PRIVATE_ALERT_TARGETS` | `false` | Allow webhook and Slack alert targets on private, loopback or internal addresses. Off, Vaka refuses them and never follows redirects |
+| `VAKA_MONITOR_ALLOW_CIDRS` | | Private ranges HTTP and TLS monitors may reach, e.g. `10.0.0.0/8,fd00::/8`. Without it monitors only reach public addresses |
+| `VAKA_MONITOR_CANARY_URLS` | Google and Cloudflare | URLs Vaka requests to tell its own network failing from a target failing; `off` disables |
 | `VAKA_SECRET_KEY` | | Encrypts stored alert secrets (webhook signing secrets, GitHub tokens) at rest. Existing plaintext secrets are encrypted on start. Keep it stable: changing it breaks those rules until their secrets are set again |
 | `VAKA_SMS_PROVIDER` | `46elks` | SMS alert provider: `46elks`, `twilio` or `sinch` ([alerts.md](alerts.md#sms)) |
 | `VAKA_46ELKS_USERNAME`, `VAKA_46ELKS_PASSWORD` | | 46elks API credentials |

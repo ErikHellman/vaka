@@ -287,10 +287,11 @@ See [feedback](feedback.md). Contact emails are returned to write tokens only.
 | Method & path | Description |
 | --- | --- |
 | `GET /projects/{p}/monitors` | Monitors with state and uptime (24 h, 7 d, 30 d) |
-| `POST /projects/{p}/monitors` | `{slug?, name?, kind: "heartbeat", environment?, config: {schedule, grace_s?, max_runtime_s?}, fail_threshold?, recover_threshold?}`; see [monitoring](monitoring.md) |
+| `POST /projects/{p}/monitors` | `{slug?, name?, kind: "heartbeat" \| "http" \| "tls", environment?, config, secret_headers?, fail_threshold?, recover_threshold?}`; config per kind in [monitoring](monitoring.md) |
 | `GET /projects/{p}/monitors/{slug}` | One monitor, recent checks and incidents |
 | `PATCH /projects/{p}/monitors/{slug}` / `DELETE` | Update (`paused_until`: `"2h"`, a time or `"forever"`; `null` resumes) or delete |
 | `GET /projects/{p}/monitors/{slug}/checks` | Check results; `since`, `limit` |
+| `POST /projects/{p}/monitors/{slug}/run` | Run an HTTP or TLS check now and apply the result |
 | `GET /projects/{p}/incidents` | Incidents; `monitor`, `status` (open, closed, all), `since`, `limit` |
 | `GET /incidents/{id}` / `PATCH /incidents/{id}` | One incident; `{"acknowledged": true}` |
 

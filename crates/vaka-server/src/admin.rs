@@ -731,7 +731,14 @@ async fn monitor_page(State(s): State<AppState>, headers: HeaderMap, Path((slug,
         p { a href=(format!("/ui/projects/{slug}/monitors")) { "← Monitors" } }
         h1 { (m["name"].as_str().unwrap_or("")) " " (state_badge(state)) @if m["flapping"] == true { " " span.badge { "flapping" } } }
         div.card {
-            p { "Schedule: " (m["schedule"].as_str().unwrap_or("")) " · next expected " (m["next_expected_at"].as_str().unwrap_or("–")) " · deadline " (m["deadline"].as_str().unwrap_or("–")) }
+            @if m["kind"] == "heartbeat" {
+                p { "Schedule: " (m["schedule"].as_str().unwrap_or("")) " · next expected " (m["next_expected_at"].as_str().unwrap_or("–")) " · deadline " (m["deadline"].as_str().unwrap_or("–")) }
+            } @else {
+                p { (m["kind"].as_str().unwrap_or("").to_uppercase()) " check of " code { (m["target"].as_str().unwrap_or("")) } ", " (m["schedule"].as_str().unwrap_or("")) " · next " (m["next_check_at"].as_str().unwrap_or("–")) }
+                @if let Some(d) = m["tls_days_left"].as_i64() {
+                    p class=(if d < 14 { "err" } else { "muted" }) { "TLS certificate expires " (m["tls_expires_at"].as_str().unwrap_or("")) " (" (d) " days)" }
+                }
+            }
             @if let Some(e) = m["last_error"].as_str().filter(|e| !e.is_empty()) { p.err { (e) } }
             p { "Uptime: " (pct(&m["stats"]["uptime_24h"])) " (24h) · " (pct(&m["stats"]["uptime_7d"])) " (7d) · " (pct(&m["stats"]["uptime_30d"])) " (30d)" }
             p { "Last checks: " span.strip {
@@ -746,6 +753,7 @@ async fn monitor_page(State(s): State<AppState>, headers: HeaderMap, Path((slug,
             }
             @if can_write {
                 form.row method="post" {
+                    @if m["kind"] != "heartbeat" && state != "paused" { button type="submit" name="action" value="run" { "Check now" } }
                     @if state == "paused" { button type="submit" name="action" value="resume" { "Resume" } }
                     @else { button.ghost type="submit" name="action" value="pause" { "Pause for 2 hours" } }
                 }
@@ -777,7 +785,7 @@ async fn monitor_page(State(s): State<AppState>, headers: HeaderMap, Path((slug,
             @for c in checks.iter().take(20) {
                 tr {
                     td.muted { (c["timestamp"].as_str().unwrap_or("")) }
-                    td { (c["result"].as_str().unwrap_or("")) }
+                    td { (c["result"].as_str().unwrap_or("")) @if let Some(st) = c["http_status"].as_i64().filter(|s| *s > 0) { " (" (st) ")" } }
                     td { (c["duration_ms"].as_i64().filter(|d| *d > 0).map(|d| format!("{d} ms")).unwrap_or_default()) }
                     td { (c["release"].as_str().unwrap_or("")) }
                     td { (c["error"].as_str().unwrap_or("")) }
@@ -798,6 +806,16 @@ async fn monitor_action(State(s): State<AppState>, headers: HeaderMap, Path((slu
         return StatusCode::FORBIDDEN.into_response();
     }
     let to = format!("/ui/projects/{slug}/monitors/{monitor}");
+    if f.action == "run" {
+        return match crate::monitors::run_now(&s, &user, &slug, &monitor).await {
+            Ok(v) => {
+                let c = &v["check"];
+                let err = c["error"].as_str().unwrap_or("");
+                back(&to, &format!("Check: {}{}", c["result"].as_str().unwrap_or(""), if err.is_empty() { String::new() } else { format!(" ({err})") }))
+            }
+            Err(e) => back(&to, &format!("error:{}", e.1)),
+        };
+    }
     let paused_until = match f.action.as_str() {
         "pause" => Some(Some("2h".to_string())),
         "resume" => Some(None),

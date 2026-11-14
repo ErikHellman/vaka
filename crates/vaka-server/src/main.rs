@@ -23,6 +23,7 @@ mod migrate_db;
 mod models;
 mod netguard;
 mod monitors;
+mod probes;
 mod openapi;
 mod otel;
 mod otp;
