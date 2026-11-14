@@ -20,6 +20,8 @@ pub const TRIGGERS: &[&str] = &[
     "perf_regression",
     "digest",
     "new_feedback",
+    "monitor_down",
+    "monitor_up",
 ];
 pub const CHANNELS: &[&str] = &["webhook", "slack", "email", "sms", "github_dispatch", "github_issue"];
 const SPIKE_COOLDOWN_MS: i64 = 6 * 3_600_000;
@@ -65,7 +67,7 @@ pub fn rule_from_row(r: &sqlx::any::AnyRow) -> Rule {
 
 pub const RULE_COLS: &str = "id, project_id, name, trigger, channel, target, secret, threshold, enabled, filters, max_per_hour, schedule, created_at";
 
-pub const FILTER_KEYS: &[&str] = &["environment", "min_level", "release", "owner", "unhandled_only", "tags", "mention", "sentiment", "topic", "linked_to_issue", "has_screenshot"];
+pub const FILTER_KEYS: &[&str] = &["environment", "min_level", "release", "owner", "unhandled_only", "tags", "mention", "sentiment", "topic", "linked_to_issue", "has_screenshot", "monitors", "monitor_kind"];
 
 /// Check rule filters; returns a description of the problem for invalid filters.
 pub fn validate_filters(f: &Value) -> Result<(), String> {
@@ -89,6 +91,16 @@ pub fn validate_filters(f: &Value) -> Result<(), String> {
                         Some(s) if crate::feedback::SENTIMENTS.contains(&s) || s == "untagged" => {}
                         _ => return Err(format!("sentiment must be one or a list of {}, untagged", crate::feedback::SENTIMENTS.join(", "))),
                     }
+                }
+            }
+            "monitors" => {
+                let ok = match v {
+                    Value::String(s) => !s.is_empty(),
+                    Value::Array(a) => !a.is_empty() && a.iter().all(|x| x.as_str().map(|s| !s.is_empty()).unwrap_or(false)),
+                    _ => false,
+                };
+                if !ok {
+                    return Err("monitors must be a monitor slug or a list of slugs".into());
                 }
             }
             "unhandled_only" | "tags" | "min_level" | "linked_to_issue" | "has_screenshot" => {}
@@ -458,8 +470,8 @@ async fn insert_delivery(state: &AppState, id: &str, rule: &Rule, issue_id: &str
         body = serde_json::to_string(&slim)?;
     }
     sqlx::query(
-        "INSERT INTO alert_deliveries (id, rule_id, issue_id, trigger, status, detail, created_at, payload, attempts, next_attempt_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+        "INSERT INTO alert_deliveries (id, rule_id, issue_id, trigger, status, detail, created_at, payload, attempts, next_attempt_at, subject) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
     )
     .bind(id)
     .bind(&rule.id)
@@ -471,9 +483,98 @@ async fn insert_delivery(state: &AppState, id: &str, rule: &Rule, issue_id: &str
     .bind(body)
     .bind(attempts)
     .bind(next)
+    .bind(subject_of(trigger))
     .execute(&state.db)
     .await?;
     Ok(())
+}
+
+/// What a delivery's `issue_id` column refers to, by trigger.
+pub fn subject_of(trigger: &str) -> &'static str {
+    match trigger {
+        "monitor_down" | "monitor_up" | "tls_expiring" => "incident",
+        "new_feedback" => "feedback",
+        "digest" => "digest",
+        "release_created" => "release",
+        _ => "issue",
+    }
+}
+
+fn is_monitor_trigger(trigger: &str) -> bool {
+    subject_of(trigger) == "incident"
+}
+
+/// Does a monitor pass a monitor rule's filters?
+pub fn monitor_filters_match(filters: &Value, monitor: &crate::monitors::Monitor) -> bool {
+    let Some(f) = filters.as_object() else { return true };
+    if let Some(m) = f.get("monitors") {
+        let ok = match m {
+            Value::String(s) => s == &monitor.slug,
+            Value::Array(a) => a.iter().any(|x| x.as_str() == Some(monitor.slug.as_str())),
+            _ => true,
+        };
+        if !ok {
+            return false;
+        }
+    }
+    if let Some(k) = f.get("monitor_kind").and_then(|v| v.as_str()) {
+        if k != monitor.kind {
+            return false;
+        }
+    }
+    if let Some(e) = f.get("environment").and_then(|v| v.as_str()) {
+        if !e.is_empty() && !crate::ownership::glob(e, &monitor.environment) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Deliver a monitor event (`monitor_down`, `monitor_up`) to every matching rule. The
+/// incident id goes in the delivery's `issue_id` column.
+pub async fn notify_monitor(state: &AppState, project: &ProjectInfo, monitor: &crate::monitors::Monitor, trigger: &str, incident_id: &str, payload: Value) -> anyhow::Result<()> {
+    for (rule, secret) in rules_for(state, &project.id, trigger).await? {
+        if !monitor_filters_match(&rule.filters, monitor) {
+            continue;
+        }
+        if let Err(e) = deliver_new(state, &rule, &secret, trigger, incident_id, payload.clone()).await {
+            tracing::warn!("monitor alert via {} failed: {e:#}", rule.channel);
+        }
+    }
+    Ok(())
+}
+
+/// One-line summary of a monitor alert, for Slack, email subjects and SMS.
+pub fn monitor_text(trigger: &str, payload: &Value) -> String {
+    let m = &payload["monitor"];
+    let name = m["name"].as_str().unwrap_or("");
+    let project = payload["project"]["name"].as_str().unwrap_or("");
+    let d = &payload["details"];
+    let settled = d["settled_after_flapping"].as_bool().unwrap_or(false);
+    match trigger {
+        "monitor_down" if d["flapping"].as_bool().unwrap_or(false) => format!("{name} is flapping (up and down repeatedly) [{project}]; alerts are paused until it settles"),
+        "monitor_down" if settled => format!("{name} settled DOWN after flapping [{project}]: {}", m["last_error"].as_str().unwrap_or("")),
+        "monitor_down" => format!("{name} is DOWN [{project}]: {}", m["last_error"].as_str().unwrap_or("")),
+        "monitor_up" if settled => format!("{name} settled UP after flapping [{project}]"),
+        "monitor_up" => {
+            let mins = d["downtime_ms"].as_i64().map(|ms| format!(" after {}", human_duration(ms))).unwrap_or_default();
+            format!("{name} is UP again{mins} [{project}]")
+        }
+        _ => format!("{name}: {trigger} [{project}]"),
+    }
+}
+
+pub fn human_duration(ms: i64) -> String {
+    let s = ms / 1000;
+    if s < 60 {
+        format!("{s}s")
+    } else if s < 3600 {
+        format!("{}m", s / 60)
+    } else if s < 86_400 {
+        format!("{}h {}m", s / 3600, (s % 3600) / 60)
+    } else {
+        format!("{}d {}h", s / 86_400, (s % 86_400) / 3600)
+    }
 }
 
 /// Send one payload through a rule's channel.
@@ -484,6 +585,13 @@ async fn send(state: &AppState, rule: &Rule, secret: &str, trigger: &str, issue_
         ("slack", "release_created") => send_slack(state, &rule.target, &slack_release_message(payload)).await,
         ("slack", "new_feedback") => send_slack(state, &rule.target, &slack_feedback_message(payload)).await,
         ("email", "new_feedback") => send_feedback_email(state, &rule.target, payload).await,
+        ("github_issue", t) if is_monitor_trigger(t) => Err(anyhow::anyhow!("the github_issue channel does not support monitor alerts; use github_dispatch or a webhook")),
+        ("slack", t) if is_monitor_trigger(t) => send_slack(state, &rule.target, &json!({"text": format!("{} {}", slack_escape(&monitor_text(t, payload)), payload["url"].as_str().unwrap_or("")), "unfurl_links": false})).await,
+        ("email", t) if is_monitor_trigger(t) => {
+            let Some(key) = &state.config.resend_api_key else { anyhow::bail!("email alerts need VAKA_RESEND_API_KEY") };
+            let text = format!("{}\n\n{}\n", monitor_text(t, payload), payload["url"].as_str().unwrap_or(""));
+            resend(state, key, &rule.target, &format!("[Vaka] {}", monitor_text(t, payload)), &text).await
+        }
         ("github_issue", "new_feedback") => Err(anyhow::anyhow!("the github_issue channel does not support new_feedback; use github_dispatch or a webhook")),
         ("slack", "perf_regression") => send_slack(state, &rule.target, &json!({"text": perf_text(payload), "unfurl_links": false})).await,
         ("email", "perf_regression") => {
@@ -1322,6 +1430,18 @@ pub async fn test_rule(state: &AppState, rule_id: &str) -> anyhow::Result<String
         if !sent.is_empty() {
             return Ok(sent.join("; "));
         }
+    }
+    if is_monitor_trigger(&rule.trigger) {
+        let payload = json!({
+            "trigger": rule.trigger,
+            "project": {"id": rule.project_id, "slug": "", "name": "Vaka test"},
+            "monitor": {"id": "test", "slug": "nightly-backup", "name": "Nightly backup (test)", "kind": "heartbeat", "environment": "production", "schedule": "every 1d", "last_error": "no check-in for the run expected at 03:00 (test alert)"},
+            "incident": {"id": "test", "kind": "down", "open": rule.trigger == "monitor_down", "test": true},
+            "details": {"downtime_ms": 720_000, "test": true},
+            "url": state.config.public_url,
+            "sent_at": crate::util::iso_time(now_ms()),
+        });
+        return send(state, &rule, &row.s("secret"), &rule.trigger, "", &payload, &format!("test-{}", new_id())).await;
     }
     if rule.trigger == "new_feedback" {
         let payload = json!({

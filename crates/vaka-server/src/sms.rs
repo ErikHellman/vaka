@@ -183,6 +183,7 @@ pub fn message(trigger: &str, payload: &Value) -> String {
     match trigger {
         "release_created" => fit(&format!("Vaka: new release {} in ", s(&payload["release"]["version"])), project, ""),
         "perf_regression" => fit("Vaka: ", &crate::alerts::perf_text(payload), &tail),
+        "monitor_down" | "monitor_up" => fit("Vaka: ", &crate::alerts::monitor_text(trigger, payload), &tail),
         "new_feedback" => {
             let fb = &payload["feedback"];
             fit(&format!("Vaka feedback {} [{project}]: ", s(&fb["short_id"])), s(&fb["message"]), &tail)

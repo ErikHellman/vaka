@@ -18,6 +18,8 @@ tool `create_alert_rule`.
 | `release_created` | Vaka sees a release for the first time (first event or `set-commits`) |
 | `perf_regression` | The newest release with spans is slower than the previous one: a transaction's p95 grew by more than `threshold` percent (default 20) or a Web Vital got worse. Once per release, checked every 10 minutes. See [performance](performance.md) |
 | `new_feedback` | A user sends feedback. Sent once tagging and crash linking are done (at most 2 minutes later), so filters can use sentiment and topics. Not for `github_issue` |
+| `monitor_down` | A [monitor](monitoring.md) goes down: a heartbeat run was missed, failed or hung. Also sent once when a monitor starts flapping, and once when it settles |
+| `monitor_up` | A monitor that was down is up again; `details.downtime_ms` says for how long. Not for `github_issue` (nor `monitor_down`) |
 | `digest` | Daily or weekly on a `schedule` in your time zone (default: daily at `threshold` o'clock UTC): per project, errors and new issues with the change from the previous period, top issues, crash-free sessions, traffic and [detected anomalies](anomalies.md), opened by a short narrative. Quiet projects are left out |
 
 A rule without `project` applies to all projects. A spike rule notifies at most once per issue
@@ -39,6 +41,8 @@ every 6 hours.
 | `topic` | `new_feedback`: glob on any topic (`checkout*`) |
 | `linked_to_issue` | `new_feedback`: `true` only feedback about a crash, `false` only the rest |
 | `has_screenshot` | `new_feedback`: `true` or `false` |
+| `monitors` | `monitor_down` / `monitor_up`: a monitor slug or a list of slugs |
+| `monitor_kind` | `monitor_down` / `monitor_up`: `heartbeat` |
 | `mention` | `github_issue` only: first line of the issue body, e.g. a mention that starts an agent |
 
 `environment`, `unhandled_only` and `tags` apply to triggers caused by an error event
