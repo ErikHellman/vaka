@@ -29,6 +29,14 @@ type fakeServer struct {
 	otlp   map[string][][]byte
 	keys   []string
 	status int
+	// feedback requests and the status to answer them with (default 202)
+	feedback []feedbackReq
+	fbStatus int
+}
+
+type feedbackReq struct {
+	header http.Header
+	body   []byte
 }
 
 func newFake(t *testing.T) *fakeServer {
@@ -69,6 +77,15 @@ func newFake(t *testing.T) *fakeServer {
 				t.Errorf("flag request = %v", req)
 			}
 			fmt.Fprint(w, `{"flags": {"new_checkout": "one_page", "beta": false, "dark": true}, "details": {}}`)
+		case "/ingest/v1/feedback":
+			f.feedback = append(f.feedback, feedbackReq{r.Header.Clone(), b})
+			if f.fbStatus != 0 {
+				w.WriteHeader(f.fbStatus)
+				fmt.Fprint(w, `{"error": "too much feedback"}`)
+				return
+			}
+			w.WriteHeader(202)
+			fmt.Fprint(w, `{"id": "fb-1", "short_id": "API-F1"}`)
 		case "/ingest/otlp/v1/traces", "/ingest/otlp/v1/logs":
 			f.otlp[r.URL.Path] = append(f.otlp[r.URL.Path], b)
 			w.WriteHeader(200)

@@ -26,10 +26,12 @@ use std::sync::{Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod feedback;
 mod stack;
 #[cfg(feature = "tracing")]
 pub mod tracing_layer;
 
+pub use feedback::{capture_feedback, Attachment, Feedback, FeedbackError, FeedbackResult};
 pub use stack::{capture_backtrace, debug_images};
 
 const SDK_NAME: &str = "vaka-rust";
@@ -127,6 +129,12 @@ struct Session {
 }
 
 static CLIENT: OnceLock<Client> = OnceLock::new();
+static LAST_EVENT_ID: Mutex<Option<String>> = Mutex::new(None);
+
+/// Id of the last error, message or panic reported, e.g. to link user feedback to it.
+pub fn last_event_id() -> Option<String> {
+    LAST_EVENT_ID.lock().ok()?.clone()
+}
 
 /// Returned by [`init`]. Dropping it ends the session and flushes queued data.
 #[must_use = "dropping the guard immediately ends the Vaka session"]
@@ -405,8 +413,12 @@ pub fn track(name: &str, props: &[(&str, &str)]) {
 
 fn error_item(c: &Client, level: Level, handled: bool, exceptions: Vec<Value>, message: Option<String>) -> Value {
     let mut m = common(c);
+    let event_id = new_id();
+    if let Ok(mut last) = LAST_EVENT_ID.lock() {
+        *last = Some(event_id.clone());
+    }
     m.insert("type".into(), json!("error"));
-    m.insert("event_id".into(), json!(new_id()));
+    m.insert("event_id".into(), json!(event_id));
     m.insert("timestamp".into(), json!(now_ms()));
     m.insert("platform".into(), json!("rust"));
     m.insert("level".into(), json!(level.as_str()));

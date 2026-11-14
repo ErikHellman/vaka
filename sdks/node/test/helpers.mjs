@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 /** A fake Vaka server that records every request. */
-export async function fakeVaka({ status = 202, flags = { new_checkout: 'one_page', beta: false } } = {}) {
+export async function fakeVaka({ status = 202, feedbackStatus = 202, flags = { new_checkout: 'one_page', beta: false } } = {}) {
   const requests = [];
   const server = http.createServer((req, res) => {
     const chunks = [];
@@ -12,8 +12,12 @@ export async function fakeVaka({ status = 202, flags = { new_checkout: 'one_page
     req.on('end', () => {
       let buf = Buffer.concat(chunks);
       if (req.headers['content-encoding'] === 'gzip') buf = gunzipSync(buf);
-      const isJson = !req.url.startsWith('/ingest/otlp');
+      const isJson = !req.url.startsWith('/ingest/otlp') && !String(req.headers['content-type'] || '').startsWith('multipart/');
       requests.push({ method: req.method, url: req.url, headers: req.headers, body: isJson && buf.length ? JSON.parse(buf.toString()) : buf });
+      if (req.url === '/ingest/v1/feedback') {
+        res.writeHead(feedbackStatus, { 'content-type': 'application/json' });
+        return res.end(feedbackStatus === 202 ? JSON.stringify({ id: 'fb-1', short_id: 'API-F1' }) : JSON.stringify({ error: 'too much feedback' }));
+      }
       if (req.url === '/ingest/v1/flags') {
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ flags }));

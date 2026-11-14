@@ -345,6 +345,136 @@ export function captureMessage(message: string, level: Level = 'info', ctx: Capt
 }
 
 // ---------------------------------------------------------------------------
+// User feedback
+// ---------------------------------------------------------------------------
+
+/** A file attached to feedback: PNG, JPEG or WebP, at most 5 MB. */
+export interface FeedbackAttachment {
+  filename: string;
+  data: Uint8Array | ArrayBuffer;
+  /** Default: guessed from the file name. */
+  contentType?: string;
+}
+
+export interface Feedback {
+  /** What the user wrote (required). Longer than 5000 characters is cut. */
+  message: string;
+  /** Contact email, only when the user gave it. */
+  email?: string;
+  name?: string;
+  /** The error event this feedback is about (the id captureException returned). */
+  eventId?: string;
+  /** The issue this feedback is about: id or short id like `API-12`. */
+  issue?: string;
+  /** Default: the current scope's user. */
+  userId?: string;
+  /** The end user's session id, when your app has one. */
+  sessionId?: string;
+  /** Page or screen the feedback is about. Default: the current request's URL. */
+  url?: string;
+  /**
+   * The end user's IP address (e.g. `req.ip`). Feedback is rate limited per address, so without it
+   * all feedback from this server shares one limit.
+   */
+  ip?: string;
+  tags?: Record<string, string>;
+  /** Up to 3 images. */
+  attachments?: FeedbackAttachment[];
+}
+
+export interface FeedbackResult {
+  id: string;
+  /** e.g. `API-F12` */
+  shortId: string;
+}
+
+/** Thrown by captureFeedback when the server rejects the feedback or cannot be reached. */
+export class FeedbackError extends Error {
+  /** HTTP status, or 0 when nothing was sent. 429 means a rate limit was hit. */
+  status: number;
+  constructor(message: string, status = 0) {
+    super(message);
+    this.name = 'FeedbackError';
+    this.status = status;
+  }
+}
+
+function contentTypeOf(filename: string): string {
+  const ext = filename.toLowerCase().split('.').pop();
+  return ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+}
+
+/**
+ * Forward feedback your users wrote (a support form, in-app chat) to Vaka, with the current
+ * scope's user, release, environment, tags and flags. Sent right away, not batched.
+ * Rejects with a FeedbackError when the server refuses it (e.g. 429 for a rate limit).
+ */
+export async function captureFeedback(f: Feedback): Promise<FeedbackResult> {
+  if (!opts || !transport) throw new FeedbackError('vaka is not initialized');
+  const message = String(f?.message ?? '').trim();
+  if (!message) throw new FeedbackError('feedback needs a message');
+  const files = (f.attachments || []).filter(Boolean);
+  if (files.length > 3) throw new FeedbackError('at most 3 attachments per feedback');
+  const scope = currentScope();
+  const userId = f.userId || scope.user?.id;
+  const item: Record<string, unknown> = {
+    id: randomUUID(),
+    timestamp: new Date().toISOString(),
+    platform: 'node',
+    source: 'api',
+    message: message.slice(0, 5000),
+    email: f.email?.trim() || undefined,
+    name: f.name?.trim() || undefined,
+    event_id: f.eventId,
+    issue: f.issue,
+    user_id: userId,
+    anon_id: userId ? undefined : processId,
+    session_id: f.sessionId,
+    url: f.url || scope.request?.url,
+    release: opts.release,
+    environment: opts.environment,
+    tags: { ...scope.tags, ...(f.tags || {}) },
+    flags: Object.keys(scope.flags).length ? { ...scope.flags } : undefined,
+  };
+  for (const k of Object.keys(item)) if (item[k] === undefined) delete item[k];
+  const headers: Record<string, string> = { 'X-Vaka-Key': opts.key, 'X-Vaka-Sdk': `${SDK.name}/${SDK.version}` };
+  if (f.ip) headers['X-Forwarded-For'] = f.ip;
+  let body: string | FormData;
+  if (files.length) {
+    const form = new FormData();
+    form.append('feedback', JSON.stringify(item));
+    for (const a of files) {
+      const data = a.data instanceof ArrayBuffer ? new Uint8Array(a.data) : a.data;
+      form.append('attachment', new Blob([data as Uint8Array<ArrayBuffer>], { type: a.contentType || contentTypeOf(a.filename) }), a.filename);
+    }
+    body = form;
+  } else {
+    headers['Content-Type'] = 'application/json';
+    body = JSON.stringify(item);
+  }
+  const { context } = await import('@opentelemetry/api');
+  const { suppressTracing } = await import('@opentelemetry/core');
+  let r: Response;
+  try {
+    r = await context.with(suppressTracing(context.active()), () =>
+      fetch(`${opts!.endpoint}/ingest/v1/feedback`, { method: 'POST', headers, body, signal: AbortSignal.timeout(30000) }),
+    );
+  } catch (e) {
+    throw new FeedbackError(`vaka feedback: ${String((e as Error)?.message || e)}`);
+  }
+  const text = await r.text().catch(() => '');
+  let json: { id?: string; short_id?: string; error?: string } = {};
+  try {
+    json = text ? JSON.parse(text) : {};
+  } catch {
+    /* not JSON */
+  }
+  if (r.status < 200 || r.status >= 300) throw new FeedbackError(`vaka feedback: HTTP ${r.status}${json.error ? `: ${json.error}` : ''}`, r.status);
+  scope.addBreadcrumb({ category: 'feedback', message: 'user feedback sent' }, opts.maxBreadcrumbs);
+  return { id: json.id || String(item.id), shortId: json.short_id || '' };
+}
+
+// ---------------------------------------------------------------------------
 // Analytics events
 // ---------------------------------------------------------------------------
 

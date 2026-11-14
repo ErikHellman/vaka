@@ -27,10 +27,15 @@ public sealed class FakeIngest : HttpMessageHandler
             bytes = ms.ToArray();
         }
         var path = request.RequestUri!.AbsolutePath;
-        JsonNode body = path.StartsWith("/ingest/otlp") ? new JsonObject { ["bytes"] = bytes.Length } : JsonNode.Parse(bytes)!;
+        var multipart = request.Content?.Headers.ContentType?.MediaType == "multipart/form-data";
+        JsonNode body = path.StartsWith("/ingest/otlp") ? new JsonObject { ["bytes"] = bytes.Length }
+            : multipart ? new JsonObject { ["raw"] = System.Text.Encoding.Latin1.GetString(bytes) }
+            : JsonNode.Parse(bytes)!;
         lock (Requests) Requests.Add((path, body, request));
         var status = Status(request);
-        var text = path == "/ingest/v1/flags" ? FlagsResponse : """{"accepted": 1, "rejected": []}""";
+        var text = path == "/ingest/v1/flags" ? FlagsResponse
+            : path == "/ingest/v1/feedback" ? (status == HttpStatusCode.Accepted ? """{"id": "fb-1", "short_id": "API-F1"}""" : """{"error": "too much feedback"}""")
+            : """{"accepted": 1, "rejected": []}""";
         return new HttpResponseMessage(status) { Content = new StringContent(text) };
     }
 

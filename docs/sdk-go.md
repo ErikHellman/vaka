@@ -55,6 +55,29 @@ vaka.Go(ctx, func(ctx context.Context) { ... }) // goroutine that reports its pa
 Without `WithScope`, these use the client's global scope. Calls on a disabled (no key) or nil
 client are no-ops.
 
+## User feedback
+
+Forward what users wrote in your own forms (support, contact, in-app chat). It is sent right away
+with the user, tags and flags of the scope in `ctx`.
+
+```go
+r, err := vaka.CaptureFeedback(r.Context(), vaka.Feedback{
+	Message: form.Message,
+	Email:   form.Email,         // optional contact
+	Issue:   "API-12",           // or EventID: the id CaptureError returned
+	IP:      clientIP(r),
+	Attachments: []vaka.Attachment{{Filename: "screenshot.png", Data: png}},
+})
+var fe *vaka.FeedbackError
+if errors.As(err, &fe) && fe.StatusCode == 429 { /* rate limited */ }
+// r.ShortID == "API-F12"
+```
+
+Fields: `Message` (required), `Email`, `Name`, `EventID`, `Issue`, `UserID`, `SessionID`, `URL`,
+`IP`, `Tags`, `Attachments` (up to 3 PNG, JPEG or WebP images of 5 MB).
+
+Link it to a crash with the event id from a capture call, or to an issue by its short id (`API-12`). Pass the end user's IP address: feedback is rate limited per address (10 an hour by default), so without it all feedback from your server shares one limit. Rejected feedback raises an error with the HTTP status; 429 means a limit was hit. See [user feedback](feedback.md).
+
 ## HTTP, logs and traces
 
 - `vaka.Middleware(handler)`: per-request scope, a SERVER span that continues an incoming

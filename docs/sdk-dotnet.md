@@ -112,6 +112,31 @@ VakaSdk.Flush(TimeSpan.FromSeconds(2));
 Information and above become breadcrumbs; Error and Critical become Vaka errors with the logged
 exception's stack trace. The same exception is never reported twice (it is marked when captured).
 
+## User feedback
+
+Forward what users wrote in your own forms (support, contact, in-app chat). It is sent right away
+with the current scope's user, URL, tags and flags.
+
+```csharp
+app.MapPost("/support", async (SupportForm form, HttpContext http) =>
+{
+    var r = await VakaSdk.CaptureFeedbackAsync(new VakaFeedback(form.Message)
+    {
+        Email = form.Email,                  // optional contact
+        Issue = "API-12",                    // or EventId = VakaSdk.CaptureException(e)
+        IpAddress = http.Connection.RemoteIpAddress?.ToString(),
+        Attachments = { new VakaFeedbackAttachment("screenshot.png", png) },
+    });
+    return Results.Ok(new { ticket = r.ShortId }); // "API-F12"
+});
+```
+
+Properties: `Email`, `Name`, `EventId`, `Issue`, `UserId`, `SessionId`, `Url`, `IpAddress`,
+`Tags`, `Attachments` (up to 3 PNG, JPEG or WebP images of 5 MB). It throws
+`VakaFeedbackException` with `StatusCode` (429: rate limited).
+
+Link it to a crash with the event id from a capture call, or to an issue by its short id (`API-12`). Pass the end user's IP address: feedback is rate limited per address (10 an hour by default), so without it all feedback from your server shares one limit. Rejected feedback raises an error with the HTTP status; 429 means a limit was hit. See [user feedback](feedback.md).
+
 ## Feature flags
 
 ```csharp

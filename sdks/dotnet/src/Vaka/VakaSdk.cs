@@ -109,6 +109,22 @@ public static class VakaSdk
     public static string? CaptureMessage(string message, VakaLevel level = VakaLevel.Info, Action<Scope>? configure = null) =>
         _client?.SendError(null, message, level, handled: true, configure);
 
+    /// <summary>
+    /// Forward feedback a user wrote (a support form, in-app chat) to Vaka, with the release, environment and
+    /// the current scope's user, tags and flags. Sent right away, not batched.
+    /// </summary>
+    /// <exception cref="VakaFeedbackException">
+    /// The SDK is not initialised, the feedback is invalid, or the server refused it
+    /// (<see cref="VakaFeedbackException.StatusCode"/> 429 means a rate limit was hit).
+    /// </exception>
+    public static Task<VakaFeedbackResult> CaptureFeedbackAsync(VakaFeedback feedback, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(feedback);
+        var c = _client;
+        if (c is null) return Task.FromException<VakaFeedbackResult>(new VakaFeedbackException("vaka is not initialized"));
+        return FeedbackSender.SendAsync(c, Current, feedback, cancellationToken);
+    }
+
     /// <summary>Record a breadcrumb, sent with the next error from this scope.</summary>
     public static void AddBreadcrumb(string message, string category = "default", VakaLevel level = VakaLevel.Info, IReadOnlyDictionary<string, object?>? data = null)
     {

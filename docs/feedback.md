@@ -62,8 +62,31 @@ const r = await captureFeedback({ message: 'The export button does nothing', ema
 // r = { id, short_id: 'WEB-F12' }
 ```
 
-Backend services can send feedback their users wrote (support forms, in-app chat) the same way,
-over the [ingest protocol](ingest.md#feedback-item).
+### From a backend
+
+The server SDKs have no widget. They forward feedback your users wrote in your own forms
+(support, contact, in-app chat), right away, with the release, environment and the request
+scope's user, tags and flags:
+
+| SDK | Call |
+| --- | --- |
+| [Node.js](sdk-node.md#user-feedback) | `await Vaka.captureFeedback({ message, email, issue, ip })` |
+| [Python](sdk-python.md#user-feedback) | `vaka.capture_feedback(message, email=..., issue=..., ip=...)` |
+| [Go](sdk-go.md#user-feedback) | `vaka.CaptureFeedback(ctx, vaka.Feedback{Message: ..., IP: ...})` |
+| [Rust](sdk-rust.md#user-feedback) | `vaka_sdk::capture_feedback(vaka_sdk::Feedback { .. })` |
+| [JVM](sdk-jvm.md#user-feedback) | `Vaka.captureFeedback(Feedback.of(message).email(...).ip(...))` |
+| [.NET](sdk-dotnet.md#user-feedback) | `await VakaSdk.CaptureFeedbackAsync(new VakaFeedback(message) { ... })` |
+
+- Link feedback to a crash with `eventId` (the id the capture call returned) or to an issue
+  with `issue` (`API-12`).
+- Pass the end user's IP address. The SDK sends it as `X-Forwarded-For`, so the per-address
+  rate limit applies to each user instead of to your server. Without it, all feedback from one
+  server shares one limit; raise `VAKA_FEEDBACK_PER_IP_HOUR` if you can't pass it.
+- Up to 3 images go as a multipart upload.
+- The call returns `{ id, short_id }`, and fails with the HTTP status when the server refuses
+  the feedback (`429` for a rate limit), so your form can tell the user.
+
+Anything else can send it over the [ingest protocol](ingest.md#feedback-item).
 
 ## Limits
 

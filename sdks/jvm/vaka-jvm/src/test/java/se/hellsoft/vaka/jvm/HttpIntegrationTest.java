@@ -37,6 +37,8 @@ class HttpIntegrationTest {
     }
 
     private HttpServer server;
+    private volatile String forwardedFor;
+    private volatile String feedbackType;
     private final List<Received> received = new CopyOnWriteArrayList<>();
 
     @BeforeEach
@@ -54,9 +56,15 @@ class HttpIntegrationTest {
                 }
             }
             String key = ex.getRequestHeaders().getFirst("X-Vaka-Key");
+            if (ex.getRequestURI().getPath().equals("/ingest/v1/feedback")) {
+                forwardedFor = ex.getRequestHeaders().getFirst("X-Forwarded-For");
+                feedbackType = ex.getRequestHeaders().getFirst("Content-Type");
+            }
             received.add(new Received(ex.getRequestURI().getPath(), key, ex.getRequestHeaders().getFirst("X-Vaka-Sdk"), raw));
             String path = ex.getRequestURI().getPath();
-            byte[] res = path.equals("/ingest/v1/flags")
+            byte[] res = path.equals("/ingest/v1/feedback")
+                ? "{\"id\":\"fb-9\",\"short_id\":\"HTTP-F9\"}".getBytes(StandardCharsets.UTF_8)
+                : path.equals("/ingest/v1/flags")
                 ? "{\"flags\":{\"new_checkout\":\"one_page\"}}".getBytes(StandardCharsets.UTF_8)
                 : "{\"accepted\":1,\"rejected\":[]}".getBytes(StandardCharsets.UTF_8);
             int status = path.startsWith("/ingest/otlp") ? 200 : path.equals("/ingest/v1/flags") ? 200 : 202;
@@ -105,5 +113,18 @@ class HttpIntegrationTest {
         assertTrue(proto.contains("9.9.9"));
         assertTrue(proto.contains("vaka.error_captured"));
         assertTrue(received.stream().anyMatch(r -> r.path.equals("/ingest/v1/flags")));
+    }
+
+    @Test
+    void sendsFeedbackOverHttp() {
+        String endpoint = "http://127.0.0.1:" + server.getAddress().getPort();
+        Vaka.init(VakaOptions.builder().key("vk_http").endpoint(endpoint).openTelemetry(false)
+            .flushInterval(Duration.ofHours(1)).shutdownHook(false).captureUncaughtExceptions(false).build());
+        FeedbackResult r = Vaka.captureFeedback(Feedback.of("over http").ip("203.0.113.9").attachment("a.jpg", new byte[] {1, 2}));
+        assertEquals("HTTP-F9", r.shortId);
+        assertEquals("203.0.113.9", forwardedFor);
+        assertTrue(feedbackType.startsWith("multipart/form-data; boundary="));
+        Received fb = received.stream().filter(x -> x.path.equals("/ingest/v1/feedback")).findFirst().orElseThrow();
+        assertEquals("vk_http", fb.key);
     }
 }

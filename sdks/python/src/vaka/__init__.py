@@ -11,6 +11,7 @@ per process are reported automatically. Traces and logs go through OpenTelemetry
 from ._api import (
     add_breadcrumb,
     capture_exception,
+    capture_feedback,
     capture_message,
     evaluate_flags,
     flush,
@@ -31,6 +32,7 @@ from ._api import (
 )
 from ._client import Client, Options, Scope, current_scope, isolation_scope
 from ._version import __version__
+from .feedback import FeedbackError, FeedbackResult
 from .flags import Flags
 
 __all__ = [
@@ -40,6 +42,9 @@ __all__ = [
     "is_initialized",
     "capture_exception",
     "capture_message",
+    "capture_feedback",
+    "FeedbackError",
+    "FeedbackResult",
     "add_breadcrumb",
     "set_user",
     "identify",

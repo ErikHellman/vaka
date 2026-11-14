@@ -213,6 +213,93 @@ public final class VakaClient implements AutoCloseable {
         flush(Duration.ofSeconds(2));
     }
 
+    // ------------------------------------------------------------------ feedback
+
+    /**
+     * Sends user feedback right away (blocking) with the release, environment and the current
+     * scope's user, tags and flags.
+     *
+     * @throws FeedbackException when the feedback is invalid or the server refused it
+     */
+    public FeedbackResult captureFeedback(Feedback f) {
+        String message = f.message.trim();
+        if (message.isEmpty()) throw new FeedbackException("feedback needs a message", 0);
+        if (f.attachments.size() > Feedback.MAX_ATTACHMENTS) {
+            throw new FeedbackException("at most " + Feedback.MAX_ATTACHMENTS + " attachments per feedback", 0);
+        }
+        if (message.codePointCount(0, message.length()) > 5000) message = message.substring(0, message.offsetByCodePoints(0, 5000));
+        VakaScope.Snapshot s = snapshot();
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", UUID.randomUUID().toString());
+        item.put("timestamp", System.currentTimeMillis());
+        item.put("platform", "jvm");
+        item.put("source", "api");
+        item.put("message", message);
+        if (options.release != null) item.put("release", options.release);
+        item.put("environment", options.environment);
+        putIfSet(item, "email", f.email == null ? null : f.email.trim());
+        putIfSet(item, "name", f.name == null ? null : f.name.trim());
+        putIfSet(item, "event_id", f.eventId);
+        putIfSet(item, "issue", f.issue);
+        putIfSet(item, "user_id", f.userId != null ? f.userId : s.userId);
+        putIfSet(item, "session_id", f.sessionId);
+        putIfSet(item, "url", f.url);
+        item.put("anon_id", anonId);
+        Map<String, String> tags = new LinkedHashMap<>(s.tags);
+        tags.putAll(f.tags);
+        item.put("tags", tags);
+        if (!s.flags.isEmpty()) item.put("flags", s.flags);
+        String json = Json.write(item);
+        Map<String, String> headers = new LinkedHashMap<>();
+        if (f.ip != null && !f.ip.isEmpty()) headers.put("X-Forwarded-For", f.ip);
+        Transport.Response res;
+        if (f.attachments.isEmpty()) {
+            res = transport.post("/ingest/v1/feedback", "application/json", json.getBytes(StandardCharsets.UTF_8), headers, Duration.ofSeconds(30));
+        } else {
+            String boundary = "vaka-" + UUID.randomUUID().toString().replace("-", "");
+            res = transport.post("/ingest/v1/feedback", "multipart/form-data; boundary=" + boundary, multipart(boundary, json, f.attachments), headers, Duration.ofSeconds(30));
+        }
+        Map<?, ?> body = Collections.emptyMap();
+        try {
+            Object parsed = res.body.isEmpty() ? null : Json.parse(res.body);
+            if (parsed instanceof Map) body = (Map<?, ?>) parsed;
+        } catch (IllegalArgumentException ignored) {
+            // not JSON
+        }
+        if (res.status < 200 || res.status >= 300) {
+            Object err = body.get("error");
+            String detail = res.status == 0 ? ": " + res.body : err != null ? ": " + err : "";
+            throw new FeedbackException("vaka feedback: " + (res.status == 0 ? "request failed" : "HTTP " + res.status) + detail, res.status);
+        }
+        currentScope().addBreadcrumb("feedback", "user feedback sent");
+        Object id = body.get("id");
+        Object shortId = body.get("short_id");
+        return new FeedbackResult(id != null ? id.toString() : (String) item.get("id"), shortId != null ? shortId.toString() : "");
+    }
+
+    private static void putIfSet(Map<String, Object> m, String key, String value) {
+        if (value != null && !value.isEmpty()) m.put(key, value);
+    }
+
+    static byte[] multipart(String boundary, String json, java.util.List<Feedback.Attachment> files) {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        java.util.function.Consumer<String> w = str -> {
+            byte[] b = str.getBytes(StandardCharsets.UTF_8);
+            out.write(b, 0, b.length);
+        };
+        w.accept("--" + boundary + "\r\nContent-Disposition: form-data; name=\"feedback\"\r\nContent-Type: application/json\r\n\r\n");
+        w.accept(json);
+        w.accept("\r\n");
+        for (Feedback.Attachment a : files) {
+            String name = a.filename.replaceAll("[\"\r\n]", "");
+            w.accept("--" + boundary + "\r\nContent-Disposition: form-data; name=\"attachment\"; filename=\"" + name + "\"\r\nContent-Type: " + a.contentType + "\r\n\r\n");
+            out.write(a.data, 0, a.data.length);
+            w.accept("\r\n");
+        }
+        w.accept("--" + boundary + "--\r\n");
+        return out.toByteArray();
+    }
+
     // ------------------------------------------------------------------ flags
 
     /** Evaluates feature flags for {@code request}; never throws (returns empty flags on failure). */

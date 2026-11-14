@@ -52,6 +52,27 @@ public final class HttpTransport implements Transport {
         }
     }
 
+    @Override
+    public Response post(String path, String contentType, byte[] body, java.util.Map<String, String> headers, Duration timeout) {
+        try {
+            HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(endpoint + path))
+                .timeout(timeout)
+                .header("Content-Type", contentType)
+                .header("X-Vaka-Key", key)
+                .header("X-Vaka-Sdk", sdkHeader);
+            for (java.util.Map.Entry<String, String> h : headers.entrySet()) b.header(h.getKey(), h.getValue());
+            HttpResponse<String> res = http.send(b.POST(HttpRequest.BodyPublishers.ofByteArray(body)).build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            return new Response(res.statusCode(), res.body(), -1);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new Response(0, e.toString(), -1);
+        } catch (IOException | RuntimeException e) {
+            log.debug("request to " + path + " failed: " + e);
+            return new Response(0, e.toString(), -1);
+        }
+    }
+
     private static long seconds(String v) {
         try {
             return Long.parseLong(v.trim()) * 1000;

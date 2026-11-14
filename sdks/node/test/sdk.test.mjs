@@ -146,3 +146,41 @@ test('401 disables sending', async () => {
   assert.equal(r.code, 0);
   assert.equal(v.requests.filter((q) => q.url === '/ingest/v1/batch').length, 1);
 });
+
+test('captureFeedback: JSON and multipart, scope data, links, errors', async () => {
+  const v = await fakeVaka();
+  const r = await runFixture('feedback.mjs', v.endpoint);
+  await v.close();
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /result=\{"id":"fb-1","shortId":"API-F1"\}/);
+  assert.match(r.stdout, /empty=FeedbackError/);
+  assert.match(r.stdout, /many=at most 3 attachments/);
+  const fb = v.requests.filter((q) => q.url === '/ingest/v1/feedback');
+  assert.equal(fb.length, 2);
+  const [json, multi] = fb;
+  assert.equal(json.headers['x-vaka-key'], 'vk_test');
+  assert.equal(json.headers['x-forwarded-for'], '203.0.113.9');
+  const b = json.body;
+  assert.equal(b.message, 'The export button does nothing');
+  assert.equal(b.email, 'ann@example.com');
+  assert.equal(b.issue, 'API-12');
+  assert.equal(b.session_id, 's-1');
+  assert.equal(b.user_id, 'user-7');
+  assert.equal(b.source, 'api');
+  assert.equal(b.platform, 'node');
+  assert.equal(b.release, '1.2.3');
+  assert.deepEqual(b.tags, { tenant: 'acme', plan: 'pro' });
+  const err = v.items().find((i) => i.type === 'error');
+  assert.equal(b.event_id, err.event_id);
+  assert.match(multi.headers['content-type'], /^multipart\/form-data/);
+  const raw = multi.body.toString('latin1');
+  assert.match(raw, /name="feedback"\r\n\r\n\{[^\r]*"message":"with a screenshot"/);
+  assert.match(raw, /filename="shot.png"\r\nContent-Type: image\/png/);
+});
+
+test('captureFeedback: rejected feedback throws with the status', async () => {
+  const v = await fakeVaka({ feedbackStatus: 429 });
+  const r = await runFixture('feedback.mjs', v.endpoint, { env: { EXPECT_429: '1' } });
+  await v.close();
+  assert.match(r.stdout, /status=429 vaka feedback: HTTP 429: too much feedback/);
+});

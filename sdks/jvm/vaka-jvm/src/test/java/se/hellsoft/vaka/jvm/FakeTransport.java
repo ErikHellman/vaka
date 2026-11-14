@@ -14,8 +14,19 @@ final class FakeTransport implements Transport {
     static final class Request {
         final String path;
         final String json;
+        final String contentType;
+        final byte[] raw;
+        final Map<String, String> headers;
 
-        Request(String path, String json) { this.path = path; this.json = json; }
+        Request(String path, String json) { this(path, json, "application/json", null, Map.of()); }
+
+        Request(String path, String json, String contentType, byte[] raw, Map<String, String> headers) {
+            this.path = path;
+            this.json = json;
+            this.contentType = contentType;
+            this.raw = raw;
+            this.headers = headers;
+        }
 
         @SuppressWarnings("unchecked")
         Map<String, Object> body() { return (Map<String, Object>) Json.parse(json); }
@@ -33,6 +44,22 @@ final class FakeTransport implements Transport {
         if (path.equals("/ingest/v1/flags")) return new Response(200, flagsResponse, -1);
         Response r = responses.poll();
         return r != null ? r : new Response(202, "{\"accepted\":1,\"rejected\":[]}", -1);
+    }
+
+    @Override
+    public synchronized Response post(String path, String contentType, byte[] body, Map<String, String> headers, Duration timeout) {
+        String text = new String(body, java.nio.charset.StandardCharsets.UTF_8);
+        requests.add(new Request(path, contentType.equals("application/json") ? text : null, contentType, body, Map.copyOf(headers)));
+        Response r = responses.poll();
+        return r != null ? r : new Response(202, "{\"id\":\"fb-1\",\"short_id\":\"API-F1\"}", -1);
+    }
+
+    synchronized void respond(int status, String body) { responses.add(new Response(status, body, -1)); }
+
+    synchronized List<Request> feedback() {
+        List<Request> out = new ArrayList<>();
+        for (Request r : requests) if (r.path.equals("/ingest/v1/feedback")) out.add(r);
+        return out;
     }
 
     /** All items sent to the batch endpoint with a 2xx answer or not, in order. */

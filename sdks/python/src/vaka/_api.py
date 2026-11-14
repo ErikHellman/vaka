@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import sys
 import threading
-from typing import Any, Callable, Dict, Mapping, Optional, TypeVar
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence, TypeVar
 
+from . import feedback as _feedback
 from . import flags as _flags
-from ._client import Client, Options, Scope, current_scope, isolation_scope, now_ms, MAX_BREADCRUMBS
+from ._client import Client, Options, Scope, current_scope, isolation_scope, now_ms, MAX_BREADCRUMBS, _flag_str
 
 _client: Optional[Client] = None
 _lock = threading.Lock()
@@ -65,6 +66,51 @@ def capture_message(message: str, level: str = "info", **kwargs: Any) -> Optiona
     """Report a message with the current stack. Returns the event id."""
     c = _client
     return c.capture_message(message, level=level, **kwargs) if c else None
+
+
+def capture_feedback(
+    message: str,
+    *,
+    email: Optional[str] = None,
+    name: Optional[str] = None,
+    event_id: Optional[str] = None,
+    issue: Optional[str] = None,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    url: Optional[str] = None,
+    ip: Optional[str] = None,
+    tags: Optional[Mapping[str, Any]] = None,
+    attachments: Optional[Sequence[_feedback.Attachment]] = None,
+    timeout: float = 15.0,
+) -> _feedback.FeedbackResult:
+    """Forward feedback a user wrote (a support form, in-app chat) to Vaka. Sent right away.
+
+    ``event_id`` (from ``capture_exception``) or ``issue`` (id or short id like ``API-12``) link it
+    to a crash. ``user_id``, ``url`` and tags default to the current scope's. ``ip`` is the end
+    user's address: feedback is rate limited per address, so without it all feedback from this
+    server shares one limit. ``attachments``: up to 3 ``(filename, bytes[, content_type])`` images.
+
+    Returns ``FeedbackResult(id, short_id)``. Raises ``vaka.FeedbackError`` (with ``status``) when
+    the SDK is not initialized or the server refuses the feedback, e.g. 429 for a rate limit.
+    """
+    c = _client
+    if c is None:
+        raise _feedback.FeedbackError("vaka is not initialized")
+    scope = current_scope()
+    common = {"platform": "python", "environment": c.options.environment, "timestamp": now_ms(), "anon_id": c.distinct_id}
+    if c.options.release:
+        common["release"] = c.options.release
+    if scope.tags:
+        common["tags"] = dict(scope.tags)
+    if scope.flags:
+        common["flags"] = {k: _flag_str(v) for k, v in list(scope.flags.items())[:32]}
+    item = _feedback.build_item(
+        message, common, email=email, name=name, event_id=event_id, issue=issue,
+        user_id=user_id or scope.user_id, session_id=session_id, url=url or scope.url, tags=tags,
+    )
+    result = _feedback.send(c.options.endpoint, c.options.key, item, attachments, ip=ip, timeout=timeout)
+    add_breadcrumb("user feedback sent", category="feedback")
+    return result
 
 
 def add_breadcrumb(
@@ -248,7 +294,7 @@ def is_enabled(key: str, default: bool = False) -> bool:
 
 
 __all__ = [
-    "init", "get_client", "is_initialized", "capture_exception", "capture_message", "add_breadcrumb",
+    "init", "get_client", "is_initialized", "capture_exception", "capture_message", "capture_feedback", "add_breadcrumb",
     "set_user", "identify", "set_tag", "set_tags", "set_context", "track", "flush", "shutdown",
     "monitor", "load_flags", "evaluate_flags", "get_flag", "is_enabled", "isolation_scope", "Scope",
 ]
