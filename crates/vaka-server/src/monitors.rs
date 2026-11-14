@@ -1801,7 +1801,7 @@ mod tests {
         assert_eq!(pc.every_s, 300);
         assert_eq!(pc.target(), "GET https://example.com/health");
         assert!(ProbeConfig::from_config("http", &json!({})).is_err());
-        assert!(ProbeConfig::from_config("http", &json!({"url": "http://127.0.0.1/"})).is_err());
+        assert!(ProbeConfig::from_config("http", &json!({"url": "http://192.168.0.1/"})).is_err());
         assert!(ProbeConfig::from_config("http", &json!({"url": "https://example.com", "every": "10s"})).is_err());
         assert!(ProbeConfig::from_config("http", &json!({"url": "https://example.com", "method": "POST"})).is_err());
         assert!(ProbeConfig::from_config("http", &json!({"url": "https://example.com", "method": "HEAD", "body_contains": "ok"})).is_err());
