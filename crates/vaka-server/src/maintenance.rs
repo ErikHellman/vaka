@@ -41,7 +41,7 @@ pub fn spawn(state: AppState) {
 /// rows written earlier with a longer TTL are deleted here.
 pub async fn enforce_retention(state: &AppState) -> anyhow::Result<()> {
     for p in crate::projects::list(state).await? {
-        for (table, col) in [("errors", "timestamp"), ("events", "timestamp"), ("sessions", "started")] {
+        for (table, col) in [("errors", "timestamp"), ("events", "timestamp"), ("sessions", "started"), ("monitor_checks", "timestamp")] {
             state
                 .ch
                 .execute_with(

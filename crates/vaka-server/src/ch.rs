@@ -278,4 +278,23 @@ CREATE TABLE IF NOT EXISTS logs (
 PARTITION BY toYYYYMM(timestamp)
 ORDER BY (project_id, timestamp)
 TTL toDateTime(timestamp) + toIntervalDay(retention_days);
+
+CREATE TABLE IF NOT EXISTS monitor_checks (
+    project_id LowCardinality(String),
+    monitor_id String,
+    timestamp DateTime64(3, 'UTC'),
+    result LowCardinality(String),
+    duration_ms UInt32,
+    http_status UInt16,
+    error String,
+    tls_days_left Int32,
+    check_in_id String,
+    release String,
+    environment LowCardinality(String),
+    trace_id String,
+    retention_days UInt16
+) ENGINE = MergeTree
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (project_id, monitor_id, timestamp)
+TTL toDateTime(timestamp) + toIntervalDay(retention_days);
 "#;

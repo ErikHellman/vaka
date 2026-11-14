@@ -22,6 +22,8 @@ Vaka is a self-hosted crash reporting and analytics service built for coding age
   topics, linked to the crash it is about ([feedback](feedback.md)).
 - **Alerts and agent triggers**: webhooks, Slack, email, SMS, GitHub `repository_dispatch` or GitHub
   issues ([alerts](alerts.md)); anomaly detection and scheduled digests ([anomalies](anomalies.md)).
+- **Monitoring**: heartbeat monitors for cron jobs and scheduled work, with incidents and
+  down/up alerts ([monitoring](monitoring.md)).
 
 There is no dashboard. A small admin UI (`/ui`) handles setup: users, projects, keys and tokens.
 Everything else goes through the [REST API](api.md) or the [MCP server](mcp.md), so you can ask
@@ -40,6 +42,6 @@ an agent "what broke in yesterday's release and why?" and let it fix the bug.
 
 - [REST API](api.md) · [MCP tools](mcp.md) · [Ingest protocol](ingest.md)
 - [CLI](cli.md) · [Alerts](alerts.md) · [Privacy and data retention](privacy.md)
-- [Performance](performance.md) · [Feature flags](flags.md) · [Anomalies and digests](anomalies.md) · [User feedback](feedback.md) · [OpenTelemetry](opentelemetry.md)
+- [Performance](performance.md) · [Feature flags](flags.md) · [Anomalies and digests](anomalies.md) · [User feedback](feedback.md) · [Monitoring](monitoring.md) · [OpenTelemetry](opentelemetry.md)
 
 Vaka is open source under MIT or Apache-2.0: https://github.com/ErikHellman/vaka

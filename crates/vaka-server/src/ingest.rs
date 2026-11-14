@@ -25,6 +25,8 @@ pub fn router() -> Router<AppState> {
         .route("/ingest/v1/flags", post(flags))
         .route("/ingest/v1/feedback", post(feedback).layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024)))
         .route("/ingest/v1/{kind}", post(single_kind))
+        .route("/ingest/v1/monitors/{slug}/check-ins", post(monitor_check_in))
+        .route("/ingest/v1/monitors/{slug}/{status}", get(monitor_check_in_short).post(monitor_check_in_short))
         .route("/ingest/v1/ping", get(|| async { Json(json!({"ok": true})) }))
         // OTLP/HTTP: set OTEL_EXPORTER_OTLP_ENDPOINT to <vaka>/ingest/otlp (the SDK appends /v1/traces).
         .route("/ingest/otlp/v1/traces", post(otlp_traces).layer(axum::extract::DefaultBodyLimit::max(20 * 1024 * 1024)))
@@ -178,6 +180,68 @@ async fn flags(State(state): State<AppState>, Query(q): Query<KeyQuery>, headers
             Err(IngestError(StatusCode::INTERNAL_SERVER_ERROR, "flag evaluation failed".into()))
         }
     }
+}
+
+/// Query-string form of a check-in, for crontab one-liners (`curl .../ok?key=...`).
+#[derive(Deserialize)]
+pub struct CheckInQuery {
+    key: Option<String>,
+    check_in_id: Option<String>,
+    duration_ms: Option<i64>,
+    release: Option<String>,
+    environment: Option<String>,
+    message: Option<String>,
+}
+
+fn check_in_error(e: crate::monitors::CheckInError) -> IngestError {
+    use crate::monitors::CheckInError::*;
+    match e {
+        NotFound(m) => IngestError(StatusCode::NOT_FOUND, m),
+        Bad(m) => IngestError(StatusCode::BAD_REQUEST, m),
+        RateLimited => IngestError(StatusCode::TOO_MANY_REQUESTS, "at most one check-in per second per monitor and status".into()),
+        Internal(e) => {
+            tracing::error!("monitor check-in failed: {e:#}");
+            IngestError(StatusCode::SERVICE_UNAVAILABLE, "temporarily unavailable, retry later".into())
+        }
+    }
+}
+
+async fn monitor_check_in(State(state): State<AppState>, Path(slug): Path<String>, Query(q): Query<KeyQuery>, headers: HeaderMap, body: Bytes) -> Result<Response, IngestError> {
+    let project = authenticate(&state, &headers, &q).await?;
+    if crate::readonly::requested() {
+        return Err(read_only_error());
+    }
+    let ci: crate::monitors::CheckIn = if body.is_empty() {
+        Default::default()
+    } else {
+        serde_json::from_value(parse_body(&body)?).map_err(|e| IngestError(StatusCode::BAD_REQUEST, format!("invalid check-in: {e}")))?
+    };
+    let v = crate::monitors::check_in(&state, &project, &slug, ci).await.map_err(check_in_error)?;
+    Ok((StatusCode::ACCEPTED, Json(v)).into_response())
+}
+
+async fn monitor_check_in_short(State(state): State<AppState>, Path((slug, status)): Path<(String, String)>, Query(q): Query<CheckInQuery>, headers: HeaderMap) -> Result<Response, IngestError> {
+    let project = authenticate(&state, &headers, &KeyQuery { key: q.key.clone() }).await?;
+    if crate::readonly::requested() {
+        return Err(read_only_error());
+    }
+    let status = match status.as_str() {
+        "start" | "in_progress" => "in_progress",
+        "ok" | "success" => "ok",
+        "error" | "fail" => "error",
+        _ => return Err(IngestError(StatusCode::NOT_FOUND, "use /ok, /error or /start (or POST /check-ins with a JSON body)".into())),
+    };
+    let ci = crate::monitors::CheckIn {
+        status: Some(status.into()),
+        check_in_id: q.check_in_id,
+        duration_ms: q.duration_ms,
+        release: q.release,
+        environment: q.environment,
+        message: q.message,
+        monitor: None,
+    };
+    let v = crate::monitors::check_in(&state, &project, &slug, ci).await.map_err(check_in_error)?;
+    Ok((StatusCode::ACCEPTED, Json(v)).into_response())
 }
 
 async fn single_kind(

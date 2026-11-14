@@ -7,6 +7,7 @@ mod auth;
 mod ch;
 mod cohorts;
 mod config;
+mod cron;
 mod db;
 mod docs;
 mod feedback;
@@ -21,6 +22,7 @@ mod mcp;
 mod otp;
 mod ownership;
 mod models;
+mod monitors;
 mod openapi;
 mod otel;
 mod perf;
@@ -112,6 +114,7 @@ async fn main() -> anyhow::Result<()> {
     alerts::spawn_spike_detector(state.clone());
     alerts::spawn_digest_scheduler(state.clone());
     alerts::spawn_delivery_worker(state.clone());
+    monitors::spawn_scheduler(state.clone());
     feedback::spawn_worker(state.clone());
     s3::spawn_startup_sync(state.clone());
 
