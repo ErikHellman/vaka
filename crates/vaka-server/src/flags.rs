@@ -141,7 +141,12 @@ fn flag_value(flag: &Flag, v: &Option<String>) -> Value {
 }
 
 async fn flags_for(state: &AppState, project_id: &str) -> anyhow::Result<Vec<Flag>> {
-    let rows = sqlx::query(&format!("SELECT {COLS} FROM flags WHERE project_id = $1 ORDER BY key")).bind(project_id).fetch_all(&state.db).await?;
+    let rows = sqlx::query(&format!(
+        "SELECT {COLS} FROM flags WHERE project_id = $1 ORDER BY key"
+    ))
+    .bind(project_id)
+    .fetch_all(&state.db)
+    .await?;
     Ok(rows.iter().map(from_row).collect())
 }
 
@@ -232,12 +237,14 @@ fn validate(f: &FlagIn) -> QResult<()> {
 }
 
 async fn get_row(state: &AppState, project_id: &str, key: &str) -> QResult<Flag> {
-    let row = sqlx::query(&format!("SELECT {COLS} FROM flags WHERE project_id = $1 AND (key = $2 OR id = $2)"))
-        .bind(project_id)
-        .bind(key)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| ApiError::not_found("flag"))?;
+    let row = sqlx::query(&format!(
+        "SELECT {COLS} FROM flags WHERE project_id = $1 AND (key = $2 OR id = $2)"
+    ))
+    .bind(project_id)
+    .bind(key)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| ApiError::not_found("flag"))?;
     Ok(from_row(&row))
 }
 

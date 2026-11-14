@@ -4,7 +4,7 @@
 set -euo pipefail
 VAKA=${VAKA:-http://localhost:8080}
 EMAIL=${EMAIL:-erik@example.com}
-PASSWORD=${PASSWORD:-password123}
+PASSWORD=${PASSWORD:-ci-smoke-Passw0rd}
 JAR=$(mktemp)
 fail() { echo "FAIL: $*" >&2; exit 1; }
 j() { python3 -c "import sys,json; d=json.load(sys.stdin); print(eval(sys.argv[1]))" "$1"; }

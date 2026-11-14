@@ -71,7 +71,7 @@ All settings are environment variables.
 | --- | --- | --- |
 | `VAKA_PUBLIC_URL` | `http://localhost:8080` | Public URL, used in links, alerts and install guides |
 | `VAKA_LISTEN` | `0.0.0.0:8080` | Listen address |
-| `VAKA_ADMIN_EMAIL`, `VAKA_ADMIN_PASSWORD` | | First owner account, created on start when no users exist. With email configured the password is optional |
+| `VAKA_ADMIN_EMAIL`, `VAKA_ADMIN_PASSWORD` | | First owner account, created on start when no users exist. With email configured the password is optional. Passwords need at least 12 characters and can't be a known placeholder such as `change-me…` |
 | `VAKA_DB_URL` | `sqlite://$VAKA_DATA_DIR/vaka.db?mode=rwc` | `sqlite://...` or `postgres://user:pass@host/db` |
 | `VAKA_READ_ONLY` | `false` | Start in read-only maintenance mode (see [Moving from SQLite to Postgres](#moving-from-sqlite-to-postgres)) |
 | `VAKA_DATA_DIR` | `./data` (`/data` in Docker) | SQLite database and uploaded debug files |
@@ -83,7 +83,14 @@ All settings are environment variables.
 | `VAKA_LLM_MODEL` | | Model for digest narratives and feedback tagging (needed with `VAKA_LLM_BASE_URL`) |
 | `VAKA_LLM_API_KEY` | | Bearer key for that API (optional for local servers) |
 | `VAKA_FEEDBACK_PER_IP_HOUR` / `VAKA_FEEDBACK_PER_SESSION_HOUR` | `10` / `5` | Feedback rate limits per project |
-| `VAKA_TRUSTED_PROXIES` | loopback and private ranges | Comma-separated addresses or CIDRs whose `X-Forwarded-For` / `X-Real-IP` headers are believed (`none` for nobody). Requests from anywhere else are counted by their own address. Add your proxy's range when it reaches Vaka from a public address (e.g. Cloudflare in front of a public server), and the addresses of backends that forward their users' feedback |
+| `VAKA_TRUSTED_PROXIES` | loopback and RFC 1918 / unique-local ranges (not CGNAT or link-local) | Comma-separated addresses or CIDRs whose `X-Forwarded-For` / `X-Real-IP` headers are believed (`none` for nobody). Requests from anywhere else are counted by their own address. Add your proxy's range when it reaches Vaka from a public address (e.g. Cloudflare in front of a public server), and the addresses of backends that forward their users' feedback |
+| `VAKA_INGEST_PER_PROJECT_MINUTE` / `VAKA_INGEST_PER_IP_MINUTE` | `120000` / `60000` | Ingest items accepted per project, and per project and client address, each minute (`0` = unlimited). Over the limit the batch gets 429 |
+| `VAKA_NEW_ISSUES_PER_HOUR` | `500` | New issues per project per hour; past it, new fingerprints are grouped into one "new issue overflow" issue (`0` = unlimited) |
+| `VAKA_ARTIFACT_QUOTA_MB` | `20480` | Debug-file storage per project (source maps, ProGuard mappings, native symbols) |
+| `VAKA_SYMBOL_CACHE_MB` | `256` | Memory for parsed symbol files used during symbolication |
+| `VAKA_CH_MAX_EXECUTION_SECS` / `VAKA_CH_MAX_MEMORY_MB` | `60` / `4096` | Budget for each ClickHouse read (dashboards, API, MCP). Reads also run with `readonly=2` |
+| `VAKA_ALLOW_PRIVATE_ALERT_TARGETS` | `false` | Allow webhook and Slack alert targets on private, loopback or internal addresses. Off, Vaka refuses them and never follows redirects |
+| `VAKA_SECRET_KEY` | | Encrypts stored alert secrets (webhook signing secrets, GitHub tokens) at rest. Existing plaintext secrets are encrypted on start. Keep it stable: changing it breaks those rules until their secrets are set again |
 | `VAKA_SMS_PROVIDER` | `46elks` | SMS alert provider: `46elks`, `twilio` or `sinch` ([alerts.md](alerts.md#sms)) |
 | `VAKA_46ELKS_USERNAME`, `VAKA_46ELKS_PASSWORD` | | 46elks API credentials |
 | `VAKA_TWILIO_ACCOUNT_SID`, `VAKA_TWILIO_AUTH_TOKEN` | | Twilio credentials |

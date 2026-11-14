@@ -201,7 +201,12 @@ async fn schema_version(pool: &Pool) -> anyhow::Result<i64> {
 }
 
 async fn count(pool: &Pool, table: &str) -> anyhow::Result<i64> {
-    Ok(sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {}", quote(table))).fetch_one(pool).await?)
+    Ok(sqlx::query_scalar::<_, i64>(&format!(
+        "SELECT COUNT(*) FROM {}",
+        quote(table)
+    ))
+    .fetch_one(pool)
+    .await?)
 }
 
 /// Rows per INSERT statement: stay well under SQLite's 32766 and Postgres' 65535 bind limits.
@@ -261,10 +266,14 @@ async fn reset_sequences(tx: &mut Transaction<'_, Any>) -> anyhow::Result<()> {
     for r in rows {
         let (t, c, s): (String, String, Option<String>) = (r.get("t"), r.get("c"), r.get("s"));
         let Some(s) = s else { continue };
-        sqlx::query(&format!("SELECT setval($1, COALESCE((SELECT MAX({}) FROM {}), 0) + 1, false)", quote(&c), quote(&t)))
-            .bind(s)
-            .execute(&mut **tx)
-            .await?;
+        sqlx::query(&format!(
+            "SELECT setval($1, COALESCE((SELECT MAX({}) FROM {}), 0) + 1, false)",
+            quote(&c),
+            quote(&t)
+        ))
+        .bind(s)
+        .execute(&mut **tx)
+        .await?;
     }
     Ok(())
 }
@@ -320,17 +329,34 @@ pub async fn migrate(o: &Options) -> anyhow::Result<Vec<TableReport>> {
     let mut ttx = dst.begin().await?;
     if dst_sqlite {
         for (t, _) in &dst_schema {
-            sqlx::query(&format!("DELETE FROM {}", quote(t))).execute(&mut *ttx).await?;
+            sqlx::query(&format!("DELETE FROM {}", quote(t)))
+                .execute(&mut *ttx)
+                .await?;
         }
     } else if !dst_schema.is_empty() {
-        let all = dst_schema.iter().map(|(t, _)| quote(t)).collect::<Vec<_>>().join(", ");
-        sqlx::query(&format!("TRUNCATE TABLE {all}")).execute(&mut *ttx).await?;
+        let all = dst_schema
+            .iter()
+            .map(|(t, _)| quote(t))
+            .collect::<Vec<_>>()
+            .join(", ");
+        sqlx::query(&format!("TRUNCATE TABLE {all}"))
+            .execute(&mut *ttx)
+            .await?;
     }
 
     let mut copied = Vec::new();
     for (t, cols) in &dst_schema {
-        let names = cols.iter().map(|(c, _)| quote(c)).collect::<Vec<_>>().join(", ");
-        let rows = sqlx::query(&format!("SELECT {names} FROM {}", quote(t))).fetch_all(&mut *stx).await?;
+        let names = cols
+            .iter()
+            .map(|(c, _)| quote(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let rows = sqlx::query(&format!(
+            "SELECT {names} FROM {}",
+            quote(t)
+        ))
+        .fetch_all(&mut *stx)
+        .await?;
         let per = rows_per_insert(cols.len());
         let mut n = 0i64;
         for chunk in rows.chunks(per) {
@@ -403,8 +429,18 @@ mod tests {
     async fn dump(pool: &Pool, sqlite: bool) -> Vec<(String, Vec<String>)> {
         let mut out = Vec::new();
         for (t, cols) in schema(pool, sqlite).await.unwrap() {
-            let names = cols.iter().map(|(c, _)| quote(c)).collect::<Vec<_>>().join(", ");
-            let rows = sqlx::query(&format!("SELECT {names} FROM {}", quote(&t))).fetch_all(pool).await.unwrap();
+            let names = cols
+                .iter()
+                .map(|(c, _)| quote(c))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let rows = sqlx::query(&format!(
+                "SELECT {names} FROM {}",
+                quote(&t)
+            ))
+            .fetch_all(pool)
+            .await
+            .unwrap();
             let mut lines: Vec<String> = rows
                 .iter()
                 .map(|r| format!("{:?}", cols.iter().enumerate().map(|(i, (_, k))| read(r, i, *k)).collect::<Vec<_>>()))
@@ -464,11 +500,19 @@ mod tests {
         let _serial = crate::readonly::TEST_LOCK.lock().await;
         let admin = db::open(&base).await.unwrap();
         let name = format!("vaka_migrate_{}", uuid::Uuid::new_v4().simple());
-        sqlx::query(&format!("CREATE DATABASE {name}")).execute(&admin).await.unwrap();
+        sqlx::query(&format!("CREATE DATABASE {name}"))
+            .execute(&admin)
+            .await
+            .unwrap();
         let mut url = url::Url::parse(&base).unwrap();
         url.set_path(&name);
         round_trip(url.as_str()).await;
-        sqlx::query(&format!("DROP DATABASE {name} WITH (FORCE)")).execute(&admin).await.unwrap();
+        sqlx::query(&format!(
+            "DROP DATABASE {name} WITH (FORCE)"
+        ))
+        .execute(&admin)
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

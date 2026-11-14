@@ -34,6 +34,13 @@ pub struct Config {
     pub feedback_session_limit: u32,
     /// Peers whose `X-Forwarded-For` / `X-Real-IP` headers are believed (`VAKA_TRUSTED_PROXIES`).
     pub trusted_proxies: Vec<Cidr>,
+    /// Let webhook and Slack alert targets point at private or loopback addresses
+    /// (`VAKA_ALLOW_PRIVATE_ALERT_TARGETS`). Off by default: it would allow SSRF.
+    pub allow_private_alert_targets: bool,
+    /// Ingest items accepted per project per minute, and per project and client address per
+    /// minute (`VAKA_INGEST_PER_PROJECT_MINUTE`, `VAKA_INGEST_PER_IP_MINUTE`; 0 = unlimited).
+    pub ingest_per_project_minute: u32,
+    pub ingest_per_ip_minute: u32,
 }
 
 /// An IP network such as `10.0.0.0/8` or `203.0.113.7` (a single address).
@@ -76,9 +83,13 @@ impl Cidr {
     }
 }
 
-/// Loopback, private (RFC 1918), CGNAT, link-local and unique-local ranges: where reverse proxies,
-/// Docker networks and platform load balancers usually connect from.
-pub const DEFAULT_TRUSTED_PROXIES: &str = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16,fc00::/7,fe80::/10";
+/// Loopback, private (RFC 1918) and unique-local ranges: where platform load balancers (Fly,
+/// Render, Kubernetes ingress) usually connect from. CGNAT (100.64.0.0/10, also used by Tailscale)
+/// and link-local are not trusted: real clients can come from there. Deployments that publish
+/// Vaka's port directly should set `VAKA_TRUSTED_PROXIES` to their proxy only, or `none`; the
+/// docker-compose file pins it to the bundled Caddy container.
+pub const DEFAULT_TRUSTED_PROXIES: &str =
+    "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7";
 
 /// Parse a comma-separated list; `none` (or an empty value) trusts nobody.
 pub fn parse_trusted_proxies(s: &str) -> Vec<Cidr> {
@@ -92,6 +103,14 @@ pub fn parse_trusted_proxies(s: &str) -> Vec<Cidr> {
         }
         c
     }).collect()
+}
+
+/// A boolean environment variable: 1, true, yes or on.
+pub fn flag(name: &str) -> bool {
+    matches!(
+        var(name).map(|v| v.trim().to_lowercase()).as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
 }
 
 fn var(name: &str) -> Option<String> {
@@ -125,10 +144,27 @@ impl Config {
             default_retention_days: var("VAKA_DEFAULT_RETENTION_DAYS")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(90),
-            github_api_url: var("VAKA_GITHUB_API_URL").unwrap_or_else(|| "https://api.github.com".into()).trim_end_matches('/').to_string(),
-            feedback_ip_limit: var("VAKA_FEEDBACK_PER_IP_HOUR").and_then(|v| v.parse().ok()).unwrap_or(10),
-            feedback_session_limit: var("VAKA_FEEDBACK_PER_SESSION_HOUR").and_then(|v| v.parse().ok()).unwrap_or(5),
-            trusted_proxies: parse_trusted_proxies(&std::env::var("VAKA_TRUSTED_PROXIES").unwrap_or_else(|_| DEFAULT_TRUSTED_PROXIES.into())),
+            github_api_url: var("VAKA_GITHUB_API_URL")
+                .unwrap_or_else(|| "https://api.github.com".into())
+                .trim_end_matches('/')
+                .to_string(),
+            feedback_ip_limit: var("VAKA_FEEDBACK_PER_IP_HOUR")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10),
+            feedback_session_limit: var("VAKA_FEEDBACK_PER_SESSION_HOUR")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5),
+            trusted_proxies: parse_trusted_proxies(
+                &std::env::var("VAKA_TRUSTED_PROXIES")
+                    .unwrap_or_else(|_| DEFAULT_TRUSTED_PROXIES.into()),
+            ),
+            allow_private_alert_targets: flag("VAKA_ALLOW_PRIVATE_ALERT_TARGETS"),
+            ingest_per_project_minute: var("VAKA_INGEST_PER_PROJECT_MINUTE")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(120_000),
+            ingest_per_ip_minute: var("VAKA_INGEST_PER_IP_MINUTE")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(60_000),
             data_dir,
         })
     }

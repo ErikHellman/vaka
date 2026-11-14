@@ -14,17 +14,106 @@ use symbolic::debuginfo::Archive;
 use symbolic::demangle::{Demangle, DemangleOptions};
 use symbolic::symcache::{SymCache, SymCacheConverter};
 
-/// Parsed artifacts are expensive to build, so they are cached by artifact id.
-/// ProGuard mappers and SymCaches borrow their bytes; those buffers are leaked
-/// intentionally and the cache is bounded, which keeps memory predictable.
-#[derive(Default)]
-pub struct SymbolCache {
-    sourcemaps: Mutex<HashMap<String, Arc<SourceMap>>>,
-    proguard: Mutex<HashMap<String, &'static ProguardMapper<'static>>>,
-    symcaches: Mutex<HashMap<String, &'static SymCache<'static>>>,
+self_cell::self_cell!(
+    /// A ProGuard mapper together with the mapping bytes it borrows.
+    pub struct OwnedProguard {
+        owner: Vec<u8>,
+        #[covariant]
+        dependent: ProguardMapper,
+    }
+);
+
+self_cell::self_cell!(
+    /// A SymCache together with the buffer it borrows.
+    pub struct OwnedSymCache {
+        owner: Vec<u8>,
+        #[covariant]
+        dependent: SymCache,
+    }
+);
+
+/// A small LRU cache bounded by the bytes of the cached artifacts.
+struct Lru<V> {
+    map: HashMap<String, (Arc<V>, usize, u64)>,
+    bytes: usize,
+    tick: u64,
+    budget: usize,
 }
 
-const MAX_CACHED: usize = 256;
+impl<V> Lru<V> {
+    fn new(budget: usize) -> Self {
+        Lru {
+            map: HashMap::new(),
+            bytes: 0,
+            tick: 0,
+            budget,
+        }
+    }
+
+    fn get(&mut self, key: &str) -> Option<Arc<V>> {
+        self.tick += 1;
+        let tick = self.tick;
+        self.map.get_mut(key).map(|e| {
+            e.2 = tick;
+            e.0.clone()
+        })
+    }
+
+    fn insert(&mut self, key: String, value: Arc<V>, size: usize) {
+        if size > self.budget {
+            return; // Too big to keep; the caller still uses it once and then drops it.
+        }
+        if let Some((_, old, _)) = self.map.remove(&key) {
+            self.bytes -= old;
+        }
+        while self.bytes + size > self.budget {
+            let Some(oldest) = self
+                .map
+                .iter()
+                .min_by_key(|(_, e)| e.2)
+                .map(|(k, _)| k.clone())
+            else {
+                break;
+            };
+            if let Some((_, n, _)) = self.map.remove(&oldest) {
+                self.bytes -= n;
+            }
+        }
+        self.tick += 1;
+        self.bytes += size;
+        self.map.insert(key, (value, size, self.tick));
+    }
+}
+
+/// Parsed artifacts are expensive to build, so they are cached by artifact id in LRU caches
+/// bounded by bytes (`VAKA_SYMBOL_CACHE_MB`, default 256, split between the three kinds).
+/// Artifacts that fail to parse are remembered for a while so they aren't re-read per event.
+pub struct SymbolCache {
+    sourcemaps: Mutex<Lru<SourceMap>>,
+    proguard: Mutex<Lru<OwnedProguard>>,
+    symcaches: Mutex<Lru<OwnedSymCache>>,
+    failed: Mutex<HashMap<String, i64>>,
+}
+
+impl Default for SymbolCache {
+    fn default() -> Self {
+        let mb: usize = std::env::var("VAKA_SYMBOL_CACHE_MB")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(256);
+        let each = mb * 1024 * 1024 / 3;
+        SymbolCache {
+            sourcemaps: Mutex::new(Lru::new(each)),
+            proguard: Mutex::new(Lru::new(each)),
+            symcaches: Mutex::new(Lru::new(each)),
+            failed: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+/// How long an artifact that failed to load is skipped.
+const FAILED_TTL_MS: i64 = 10 * 60 * 1000;
 
 #[derive(Clone, Debug)]
 struct ArtifactRef {
@@ -164,7 +253,11 @@ fn symbolicate_sync(
     images: &[DebugImage],
 ) -> bool {
     let mut changed = false;
-    let proguard = artifacts.iter().find(|a| a.kind == "proguard").and_then(|a| cache.proguard(a));
+    let proguard_owned = artifacts
+        .iter()
+        .find(|a| a.kind == "proguard")
+        .and_then(|a| cache.proguard(a));
+    let proguard = proguard_owned.as_ref().map(|p| p.borrow_dependent());
     for exc in exceptions.iter_mut() {
         if let Some(mapper) = proguard {
             if let Some(orig) = mapper.remap_class(&exc.ty) {
@@ -221,54 +314,111 @@ fn symbolicate_sync(
 }
 
 impl SymbolCache {
+    fn recently_failed(&self, id: &str) -> bool {
+        let now = crate::util::now_ms();
+        self.failed
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_some_and(|t| now - t < FAILED_TTL_MS)
+    }
+
+    fn mark_failed(&self, id: &str) {
+        let now = crate::util::now_ms();
+        let mut f = self.failed.lock().unwrap();
+        if f.len() > 10_000 {
+            f.retain(|_, t| now - *t < FAILED_TTL_MS);
+        }
+        f.insert(id.to_string(), now);
+    }
+
     fn sourcemap(&self, a: &ArtifactRef) -> Option<Arc<SourceMap>> {
         if let Some(sm) = self.sourcemaps.lock().unwrap().get(&a.id) {
-            return Some(sm.clone());
+            return Some(sm);
         }
-        let bytes = std::fs::read(&a.path).ok()?;
-        let sm = match SourceMap::from_slice(&bytes) {
-            Ok(sm) => sm,
-            Err(_) => sourcemap::SourceMapIndex::from_slice(&bytes).ok()?.flatten().ok()?,
+        if self.recently_failed(&a.id) {
+            return None;
+        }
+        let parsed = std::fs::read(&a.path).ok().and_then(|bytes| {
+            let sm = match SourceMap::from_slice(&bytes) {
+                Ok(sm) => sm,
+                Err(_) => sourcemap::SourceMapIndex::from_slice(&bytes)
+                    .ok()?
+                    .flatten()
+                    .ok()?,
+            };
+            Some((Arc::new(sm), bytes.len()))
+        });
+        let Some((sm, size)) = parsed else {
+            self.mark_failed(&a.id);
+            return None;
         };
-        let sm = Arc::new(sm);
-        let mut c = self.sourcemaps.lock().unwrap();
-        if c.len() >= MAX_CACHED {
-            c.clear();
-        }
-        c.insert(a.id.clone(), sm.clone());
+        self.sourcemaps
+            .lock()
+            .unwrap()
+            .insert(a.id.clone(), sm.clone(), size);
         Some(sm)
     }
 
-    fn proguard(&self, a: &ArtifactRef) -> Option<&'static ProguardMapper<'static>> {
+    fn proguard(&self, a: &ArtifactRef) -> Option<Arc<OwnedProguard>> {
         if let Some(m) = self.proguard.lock().unwrap().get(&a.id) {
-            return Some(*m);
+            return Some(m);
         }
-        let bytes: &'static [u8] = Box::leak(std::fs::read(&a.path).ok()?.into_boxed_slice());
-        let mapping = ProguardMapping::new(bytes);
-        if !mapping.is_valid() {
+        if self.recently_failed(&a.id) {
             return None;
         }
-        let mapper: &'static ProguardMapper<'static> = Box::leak(Box::new(ProguardMapper::new(mapping)));
-        let mut c = self.proguard.lock().unwrap();
-        if c.len() < MAX_CACHED {
-            c.insert(a.id.clone(), mapper);
-        }
+        let loaded = std::fs::read(&a.path).ok().and_then(|bytes| {
+            let size = bytes.len();
+            OwnedProguard::try_new(bytes, |b| {
+                let mapping = ProguardMapping::new(b);
+                if mapping.is_valid() {
+                    Ok(ProguardMapper::new(mapping))
+                } else {
+                    Err(())
+                }
+            })
+            .ok()
+            .map(|m| (Arc::new(m), size))
+        });
+        let Some((mapper, size)) = loaded else {
+            self.mark_failed(&a.id);
+            return None;
+        };
+        self.proguard
+            .lock()
+            .unwrap()
+            .insert(a.id.clone(), mapper.clone(), size);
         Some(mapper)
     }
 
-    fn symcache(&self, a: &ArtifactRef) -> Option<&'static SymCache<'static>> {
+    fn symcache(&self, a: &ArtifactRef) -> Option<Arc<OwnedSymCache>> {
         if let Some(s) = self.symcaches.lock().unwrap().get(&a.id) {
-            return Some(*s);
+            return Some(s);
         }
-        let buf = build_symcache(&a.path, &a.debug_id).ok()?;
-        let buf: &'static [u8] = Box::leak(buf.into_boxed_slice());
-        let sc: &'static SymCache<'static> = Box::leak(Box::new(SymCache::parse(buf).ok()?));
-        let mut c = self.symcaches.lock().unwrap();
-        if c.len() < MAX_CACHED {
-            c.insert(a.id.clone(), sc);
+        if self.recently_failed(&a.id) {
+            return None;
         }
+        let loaded = build_symcache(&a.path, &a.debug_id).ok().and_then(|buf| {
+            let size = buf.len();
+            OwnedSymCache::try_new(buf, |b| SymCache::parse(b))
+                .ok()
+                .map(|s| (Arc::new(s), size))
+        });
+        let Some((sc, size)) = loaded else {
+            self.mark_failed(&a.id);
+            return None;
+        };
+        self.symcaches
+            .lock()
+            .unwrap()
+            .insert(a.id.clone(), sc.clone(), size);
         Some(sc)
     }
+}
+
+/// Whether bytes look like a ProGuard/R8 mapping file (used to validate uploads).
+pub fn is_valid_proguard(bytes: &[u8]) -> bool {
+    ProguardMapping::new(bytes).is_valid()
 }
 
 /// Build a SymCache for the object with `debug_id` inside the debug file at `path`.
@@ -295,8 +445,8 @@ pub fn build_symcache(path: &str, debug_id: &str) -> anyhow::Result<Vec<u8>> {
 }
 
 /// List debug ids (and architectures) contained in a debug file.
-pub fn inspect_debug_file(bytes: Vec<u8>) -> anyhow::Result<Vec<(String, String, bool)>> {
-    let view = ByteView::from_vec(bytes);
+pub fn inspect_debug_file(path: &str) -> anyhow::Result<Vec<(String, String, bool)>> {
+    let view = ByteView::open(path)?;
     let archive = Archive::parse(&view)?;
     let mut out = Vec::new();
     for object in archive.objects() {
@@ -335,8 +485,11 @@ fn symbolicate_native(
             images.iter().find(|i| i.image_addr.as_deref().and_then(parse_addr) == Some(base)).map(|i| (i, base))
         })?;
     let debug_id = image.0.debug_id.as_deref()?;
-    let artifact = artifacts.iter().find(|a| a.kind == "native" && a.debug_id == debug_id)?;
-    let sc = cache.symcache(artifact)?;
+    let artifact = artifacts
+        .iter()
+        .find(|a| a.kind == "native" && a.debug_id == debug_id)?;
+    let sc_owned = cache.symcache(artifact)?;
+    let sc = sc_owned.borrow_dependent();
     // Return addresses point after the call; look up the call instruction instead.
     let rel = (addr - image.1).saturating_sub(if crashing { 0 } else { 1 });
     let mut out = Vec::new();
@@ -359,7 +512,7 @@ fn symbolicate_native(
     if out.is_empty() { None } else { Some(out) }
 }
 
-fn remap_jvm(mapper: &ProguardMapper<'static>, frame: &Frame) -> Option<Vec<Frame>> {
+fn remap_jvm(mapper: &ProguardMapper<'_>, frame: &Frame) -> Option<Vec<Frame>> {
     let class = frame.module.as_deref()?;
     let method = frame.function.as_deref().unwrap_or("");
     let line = frame.lineno.unwrap_or(0) as usize;
@@ -470,12 +623,30 @@ mod tests {
     }
 
     #[test]
+    fn lru_is_bounded_by_bytes() {
+        let mut l: Lru<u8> = Lru::new(100);
+        l.insert("a".into(), Arc::new(1), 40);
+        l.insert("b".into(), Arc::new(2), 40);
+        assert!(l.get("a").is_some()); // a is now newer than b
+        l.insert("c".into(), Arc::new(3), 40);
+        assert!(l.get("b").is_none());
+        assert!(l.get("a").is_some() && l.get("c").is_some());
+        assert!(l.bytes <= 100);
+        l.insert("huge".into(), Arc::new(4), 1000);
+        assert!(l.get("huge").is_none());
+    }
+
+    #[test]
     fn proguard_remap() {
         let mapping = "com.example.MainActivity -> a.a:\n    void onCreate(android.os.Bundle) -> a\n    1:1:void crash():42:42 -> b\n";
-        let bytes: &'static [u8] = Box::leak(mapping.as_bytes().to_vec().into_boxed_slice());
-        let mapper: &'static ProguardMapper<'static> = Box::leak(Box::new(ProguardMapper::new(ProguardMapping::new(bytes))));
-        let frame = Frame { function: Some("b".into()), module: Some("a.a".into()), lineno: Some(1), ..Default::default() };
-        let out = remap_jvm(mapper, &frame).unwrap();
+        let mapper = ProguardMapper::new(ProguardMapping::new(mapping.as_bytes()));
+        let frame = Frame {
+            function: Some("b".into()),
+            module: Some("a.a".into()),
+            lineno: Some(1),
+            ..Default::default()
+        };
+        let out = remap_jvm(&mapper, &frame).unwrap();
         assert_eq!(out[0].module.as_deref(), Some("com.example.MainActivity"));
         assert_eq!(out[0].function.as_deref(), Some("crash"));
         assert_eq!(out[0].lineno, Some(42));

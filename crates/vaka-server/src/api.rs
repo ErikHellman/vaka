@@ -875,7 +875,18 @@ async fn upload_artifact(State(s): State<AppState>, p: Principal, Path(project):
     let mut kind = String::new();
     let mut release = String::new();
     let mut name = String::new();
-    let mut saved: Option<(String, i64)> = None;
+    let mut saved: Option<(String, i64, TempFile)> = None;
+    let quota: i64 = std::env::var("VAKA_ARTIFACT_QUOTA_MB")
+        .ok()
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(20_480)
+        * 1_048_576;
+    let used = sqlx::query("SELECT CAST(COALESCE(SUM(size), 0) AS BIGINT) AS n FROM (SELECT DISTINCT path, size FROM artifacts WHERE project_id = $1) t")
+        .bind(&proj.id)
+        .fetch_one(&s.db)
+        .await?
+        .i("n");
     let dir = format!("{}/{}", s.config.artifact_dir(), proj.id);
     tokio::fs::create_dir_all(&dir).await.map_err(anyhow::Error::from)?;
     while let Some(mut field) = mp.next_field().await.map_err(|e| ApiError::bad(format!("bad multipart body: {e}")))? {
@@ -888,36 +899,51 @@ async fn upload_artifact(State(s): State<AppState>, p: Principal, Path(project):
                     name = field.file_name().unwrap_or("upload").to_string();
                 }
                 let path = format!("{dir}/{}", new_id());
-                let mut f = tokio::fs::File::create(&path).await.map_err(anyhow::Error::from)?;
+                let guard = TempFile(Some(path.clone()));
+                let mut f = tokio::fs::File::create(&path)
+                    .await
+                    .map_err(anyhow::Error::from)?;
                 let mut size = 0i64;
                 while let Some(chunk) = field.chunk().await.map_err(|e| ApiError::bad(format!("upload interrupted: {e}")))? {
                     size += chunk.len() as i64;
+                    if used + size > quota {
+                        return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, format!("project artifact storage is over its quota of {} MB (VAKA_ARTIFACT_QUOTA_MB); delete old artifacts first", quota / 1_048_576)));
+                    }
                     f.write_all(&chunk).await.map_err(anyhow::Error::from)?;
                 }
                 f.flush().await.map_err(anyhow::Error::from)?;
-                saved = Some((path, size));
+                saved = Some((path, size, guard));
             }
             _ => {}
         }
     }
-    let (path, size) = saved.ok_or_else(|| ApiError::bad("missing `file` field"))?;
+    // The guard deletes the file on every error return below; it is disarmed once stored.
+    let (path, size, mut guard) = saved.ok_or_else(|| ApiError::bad("missing `file` field"))?;
     if !ARTIFACT_KINDS.contains(&kind.as_str()) {
-        let _ = tokio::fs::remove_file(&path).await;
-        return Err(ApiError::bad(format!("`kind` must be one of {} (send it before `file`)", ARTIFACT_KINDS.join(", "))));
+        return Err(ApiError::bad(format!(
+            "`kind` must be one of {} (send it before `file`)",
+            ARTIFACT_KINDS.join(", ")
+        )));
     }
     if kind != "native" && release.is_empty() {
-        let _ = tokio::fs::remove_file(&path).await;
-        return Err(ApiError::bad("`release` is required for sourcemap and proguard uploads"));
+        return Err(ApiError::bad(
+            "`release` is required for sourcemap and proguard uploads",
+        ));
     }
     let now = now_ms();
     let mut created = Vec::new();
     match kind.as_str() {
         "native" => {
-            let bytes = tokio::fs::read(&path).await.map_err(anyhow::Error::from)?;
-            let objects = tokio::task::spawn_blocking(move || crate::symbolicate::inspect_debug_file(bytes))
-                .await
-                .map_err(|e| anyhow::anyhow!(e))?
-                .map_err(|e| ApiError::bad(format!("not a supported debug file (Mach-O/dSYM, ELF, PE/PDB): {e}")))?;
+            let p2 = path.clone();
+            let objects =
+                tokio::task::spawn_blocking(move || crate::symbolicate::inspect_debug_file(&p2))
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?
+                    .map_err(|e| {
+                        ApiError::bad(format!(
+                            "not a supported debug file (Mach-O/dSYM, ELF, PE/PDB): {e}"
+                        ))
+                    })?;
             if objects.is_empty() {
                 return Err(ApiError::bad("no objects found in debug file"));
             }
@@ -933,10 +959,15 @@ async fn upload_artifact(State(s): State<AppState>, p: Principal, Path(project):
             if kind == "sourcemap" {
                 let bytes = tokio::fs::read(&path).await.map_err(anyhow::Error::from)?;
                 if sourcemap::decode_slice(&bytes).is_err() {
-                    let _ = tokio::fs::remove_file(&path).await;
                     return Err(ApiError::bad("file is not a valid source map"));
                 }
                 name = crate::symbolicate::sourcemap_key(&name);
+            }
+            if kind == "proguard" {
+                let bytes = tokio::fs::read(&path).await.map_err(anyhow::Error::from)?;
+                if !crate::symbolicate::is_valid_proguard(&bytes) {
+                    return Err(ApiError::bad("file is not a valid ProGuard/R8 mapping"));
+                }
             }
             let id = new_id();
             sqlx::query("INSERT INTO artifacts (id, project_id, release, kind, name, debug_id, path, size, created_at) VALUES ($1, $2, $3, $4, $5, '', $6, $7, $8)")
@@ -947,10 +978,16 @@ async fn upload_artifact(State(s): State<AppState>, p: Principal, Path(project):
     }
     if let Err(e) = crate::s3::store_artifact(&s, &path).await {
         tracing::error!("storing debug file in S3 failed: {e:#}");
-        sqlx::query("DELETE FROM artifacts WHERE path = $1").bind(&path).execute(&s.db).await?;
-        let _ = tokio::fs::remove_file(&path).await;
-        return Err(ApiError(StatusCode::BAD_GATEWAY, "could not store the file in S3 storage; see the server log".into()));
+        sqlx::query("DELETE FROM artifacts WHERE path = $1")
+            .bind(&path)
+            .execute(&s.db)
+            .await?;
+        return Err(ApiError(
+            StatusCode::BAD_GATEWAY,
+            "could not store the file in S3 storage; see the server log".into(),
+        ));
     }
+    guard.0 = None;
     if !release.is_empty() {
         sqlx::query("INSERT INTO releases (project_id, version, created_at) VALUES ($1, $2, $3) ON CONFLICT (project_id, version) DO NOTHING")
             .bind(&proj.id).bind(&release).bind(now).execute(&s.db).await?;
@@ -958,7 +995,22 @@ async fn upload_artifact(State(s): State<AppState>, p: Principal, Path(project):
     Ok((StatusCode::CREATED, Json(json!({"kind": kind, "release": release, "size": size, "artifacts": created}))))
 }
 
-async fn delete_artifact(State(s): State<AppState>, p: Principal, Path((project, id)): Path<(String, String)>) -> J {
+/// Removes an uploaded file when the upload fails part-way.
+struct TempFile(Option<String>);
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        if let Some(p) = self.0.take() {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
+async fn delete_artifact(
+    State(s): State<AppState>,
+    p: Principal,
+    Path((project, id)): Path<(String, String)>,
+) -> J {
     let proj = query::project_for(&s, &p, &project).await?;
     if !p.can_write(&proj.id) {
         return Err(ApiError::forbidden());
@@ -1024,12 +1076,27 @@ fn schedule_str(trigger: &str, v: &Option<Value>) -> QResult<Option<String>> {
 }
 
 pub async fn list_rules_inner(s: &AppState, p: &Principal) -> QResult<Value> {
-    let rows = sqlx::query(&format!("SELECT {} FROM alert_rules ORDER BY created_at", crate::alerts::RULE_COLS)).fetch_all(&s.db).await?;
+    let rows = sqlx::query(&format!(
+        "SELECT {} FROM alert_rules ORDER BY created_at",
+        crate::alerts::RULE_COLS
+    ))
+    .fetch_all(&s.db)
+    .await?;
     let rules: Vec<Value> = rows
         .iter()
         .map(crate::alerts::rule_from_row)
-        .filter(|r| r.project_id.as_deref().map(|pid| p.can_read(pid)).unwrap_or(p.project_scope().is_none()))
-        .map(|r| json!(r))
+        .filter(|r| {
+            r.project_id
+                .as_deref()
+                .map(|pid| p.can_read(pid))
+                .unwrap_or(p.project_scope().is_none())
+        })
+        .map(|mut r| {
+            if !can_write_rule(p, &r) {
+                r.target = crate::alerts::redact_target(&r.channel, &r.target);
+            }
+            json!(r)
+        })
         .collect();
     Ok(json!({"rules": rules, "triggers": crate::alerts::TRIGGERS, "channels": crate::alerts::CHANNELS, "filters": crate::alerts::FILTER_KEYS}))
 }
@@ -1038,17 +1105,45 @@ async fn list_rules(State(s): State<AppState>, p: Principal) -> J {
     Ok(Json(list_rules_inner(&s, &p).await?))
 }
 
-fn validate_target(channel: &str, target: &str) -> QResult<()> {
+fn validate_target(s: &AppState, channel: &str, target: &str) -> QResult<()> {
+    let allow_private = s.config.allow_private_alert_targets;
     match channel {
-        "webhook" if !(target.starts_with("https://") || target.starts_with("http://")) => Err(ApiError::bad("webhook target must be an http(s) URL")),
-        "slack" if !(target.starts_with("https://") || target.starts_with("http://")) => {
-            Err(ApiError::bad("slack target must be an incoming webhook URL (https://hooks.slack.com/services/...)"))
+        "webhook" => {
+            crate::netguard::check_url(target, allow_private)
+                .map_err(|e| ApiError::bad(format!("webhook target: {e}")))?;
+            Ok(())
         }
-        "email" if !target.contains('@') => Err(ApiError::bad("email target must be one or more comma-separated email addresses")),
+        "slack" => {
+            let u = crate::netguard::check_url(target, allow_private)
+                .map_err(|e| ApiError::bad(format!("slack target: {e}")))?;
+            if !allow_private && (u.scheme() != "https" || u.host_str() != Some("hooks.slack.com"))
+            {
+                return Err(ApiError::bad("slack target must be an incoming webhook URL (https://hooks.slack.com/services/...)"));
+            }
+            Ok(())
+        }
+        "email" if !target.contains('@') => Err(ApiError::bad(
+            "email target must be one or more comma-separated email addresses",
+        )),
         "sms" => crate::sms::parse_numbers(target).map(|_| ()).map_err(ApiError::bad),
-        "github_dispatch" | "github_issue" if crate::github::repo_slug(target).is_none() => Err(ApiError::bad("GitHub target must be owner/repo or https://github.com/owner/repo")),
+        "github_dispatch" | "github_issue" if crate::github::repo_slug(target).is_none() => Err(
+            ApiError::bad("GitHub target must be owner/repo or https://github.com/owner/repo"),
+        ),
         _ => Ok(()),
     }
+}
+
+/// Webhook and Slack targets send event data (with fix context) to an arbitrary URL, so a token
+/// scoped to one project (typically CI or an agent) can't set them: that would let a leaked or
+/// prompt-injected token exfiltrate every future crash. Users and all-project tokens can.
+fn ensure_may_use_url_target(p: &Principal, channel: &str) -> QResult<()> {
+    if matches!(channel, "webhook" | "slack") && p.project_scope().is_some() {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "project-scoped tokens can't set webhook or Slack targets; use an all-project token or the admin UI".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_filters(f: &Option<Value>) -> QResult<()> {
@@ -1079,7 +1174,8 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
         return Err(ApiError::bad(format!("channel must be one of {}", crate::alerts::CHANNELS.join(", "))));
     }
     let target = b.target.unwrap_or_default();
-    validate_target(&channel, &target)?;
+    validate_target(s, &channel, &target)?;
+    ensure_may_use_url_target(p, &channel)?;
     validate_filters(&b.filters)?;
     if trigger == "digest" && !(0..=23).contains(&b.threshold.unwrap_or(8)) {
         return Err(ApiError::bad("for digests, threshold is the UTC hour to send at (0 to 23, default 8)"));
@@ -1108,7 +1204,7 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
     .bind(&trigger)
     .bind(&channel)
     .bind(&target)
-    .bind(b.secret.unwrap_or_default())
+    .bind(crate::secretbox::seal(&b.secret.unwrap_or_default()))
     .bind(b.threshold.unwrap_or(match trigger.as_str() {
         "spike" => 50,
         "digest" => 8,
@@ -1119,12 +1215,19 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
     .bind(b.enabled.unwrap_or(true) as i64)
     .bind(now_ms())
     .bind(b.filters.filter(|f| !f.is_null()).map(|f| f.to_string()).unwrap_or_default())
-    .bind(b.max_per_hour.unwrap_or(if channel.starts_with("github_") || channel == "sms" { 10 } else { 0 }).max(0))
+    // Alerts can be triggered by anyone with the public ingest key, so every channel gets a cap.
+    .bind(b.max_per_hour.unwrap_or(if channel.starts_with("github_") || channel == "sms" { 10 } else { 60 }).max(0))
     .bind(schedule)
     .execute(&s.db)
     .await?;
     crate::auth::audit(s, &p.label(), "create_alert_rule", &id, &trigger).await;
-    let row = sqlx::query(&format!("SELECT {} FROM alert_rules WHERE id = $1", crate::alerts::RULE_COLS)).bind(&id).fetch_one(&s.db).await?;
+    let row = sqlx::query(&format!(
+        "SELECT {} FROM alert_rules WHERE id = $1",
+        crate::alerts::RULE_COLS
+    ))
+    .bind(&id)
+    .fetch_one(&s.db)
+    .await?;
     Ok(json!(crate::alerts::rule_from_row(&row)))
 }
 
@@ -1132,18 +1235,35 @@ async fn create_rule(State(s): State<AppState>, p: Principal, Json(b): Json<Rule
     Ok((StatusCode::CREATED, Json(create_rule_inner(&s, &p, b).await?)))
 }
 
-async fn rule_for_write(s: &AppState, p: &Principal, id: &str) -> QResult<crate::alerts::Rule> {
-    let row = sqlx::query(&format!("SELECT {} FROM alert_rules WHERE id = $1", crate::alerts::RULE_COLS))
-        .bind(id)
-        .fetch_optional(&s.db)
-        .await?
-        .ok_or_else(|| ApiError::not_found("alert rule"))?;
-    let rule = crate::alerts::rule_from_row(&row);
-    let ok = match &rule.project_id {
+/// Whether `p` may change (and see the full target of) an alert rule.
+pub fn can_write_rule(p: &Principal, rule: &crate::alerts::Rule) -> bool {
+    match &rule.project_id {
         Some(pid) => p.can_write(pid),
-        None => p.is_admin() || matches!(p, Principal::Token { write: true, project_id: None, .. }),
-    };
-    if !ok {
+        None => {
+            p.is_admin()
+                || matches!(
+                    p,
+                    Principal::Token {
+                        write: true,
+                        project_id: None,
+                        ..
+                    }
+                )
+        }
+    }
+}
+
+async fn rule_for_write(s: &AppState, p: &Principal, id: &str) -> QResult<crate::alerts::Rule> {
+    let row = sqlx::query(&format!(
+        "SELECT {} FROM alert_rules WHERE id = $1",
+        crate::alerts::RULE_COLS
+    ))
+    .bind(id)
+    .fetch_optional(&s.db)
+    .await?
+    .ok_or_else(|| ApiError::not_found("alert rule"))?;
+    let rule = crate::alerts::rule_from_row(&row);
+    if !can_write_rule(p, &rule) {
         return Err(ApiError::forbidden());
     }
     Ok(rule)
@@ -1152,7 +1272,8 @@ async fn rule_for_write(s: &AppState, p: &Principal, id: &str) -> QResult<crate:
 pub async fn update_rule_inner(s: &AppState, p: &Principal, id: &str, b: RuleBody) -> QResult<Value> {
     let rule = rule_for_write(s, p, id).await?;
     if let Some(t) = &b.target {
-        validate_target(&rule.channel, t)?;
+        validate_target(s, &rule.channel, t)?;
+        ensure_may_use_url_target(p, &rule.channel)?;
     }
     validate_filters(&b.filters)?;
     let schedule = schedule_str(&rule.trigger, &b.schedule)?;
@@ -1162,7 +1283,7 @@ pub async fn update_rule_inner(s: &AppState, p: &Principal, id: &str, b: RuleBod
     )
     .bind(b.name)
     .bind(b.target)
-    .bind(b.secret)
+    .bind(b.secret.as_deref().map(crate::secretbox::seal))
     .bind(b.threshold)
     .bind(b.enabled.map(|e| e as i64))
     .bind(b.filters.map(|f| if f.is_null() { String::new() } else { f.to_string() }))
@@ -1171,7 +1292,13 @@ pub async fn update_rule_inner(s: &AppState, p: &Principal, id: &str, b: RuleBod
     .bind(id)
     .execute(&s.db)
     .await?;
-    let row = sqlx::query(&format!("SELECT {} FROM alert_rules WHERE id = $1", crate::alerts::RULE_COLS)).bind(id).fetch_one(&s.db).await?;
+    let row = sqlx::query(&format!(
+        "SELECT {} FROM alert_rules WHERE id = $1",
+        crate::alerts::RULE_COLS
+    ))
+    .bind(id)
+    .fetch_one(&s.db)
+    .await?;
     Ok(json!(crate::alerts::rule_from_row(&row)))
 }
 
@@ -1279,6 +1406,10 @@ async fn put_read_only(State(s): State<AppState>, p: Principal, Json(b): Json<Re
     require_operator(&p)?;
     let mut out = if b.enabled {
         let drain = std::time::Duration::from_secs(b.drain_seconds.unwrap_or(30).min(600));
+        // Audit first: once read-only is on, the audit insert itself would be refused.
+        if !crate::readonly::requested() {
+            crate::auth::audit(&s, &p.label(), "read_only.enable", "", "").await;
+        }
         let drained = crate::readonly::enable(&s.db, drain).await?;
         tracing::warn!(actor = %p.label(), drained, "read-only mode enabled");
         let mut v = crate::readonly::status_json();
@@ -1387,8 +1518,31 @@ struct UserUpdate {
     disabled: Option<bool>,
 }
 
-async fn update_user(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Json(b): Json<UserUpdate>) -> J {
+/// The target user's current role, refusing when `p` may not manage them.
+async fn require_may_manage(s: &AppState, p: &Principal, user_id: &str) -> QResult<Role> {
+    let row = sqlx::query("SELECT role FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(&s.db)
+        .await?
+        .ok_or_else(|| ApiError::not_found("user"))?;
+    let role = Role::parse(&row.s("role")).unwrap_or(Role::Viewer);
+    if !p.may_manage(role) {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            "only an owner can change owners or other admins".into(),
+        ));
+    }
+    Ok(role)
+}
+
+async fn update_user(
+    State(s): State<AppState>,
+    p: Principal,
+    Path(id): Path<String>,
+    Json(b): Json<UserUpdate>,
+) -> J {
     require_admin(&p)?;
+    require_may_manage(&s, &p, &id).await?;
     if let Some(r) = &b.role {
         let role = Role::parse(r).ok_or_else(|| ApiError::bad("role must be viewer, member, admin or owner"))?;
         if let Principal::User { role: my, .. } = &p {
@@ -1404,6 +1558,12 @@ async fn update_user(State(s): State<AppState>, p: Principal, Path(id): Path<Str
         .bind(&id)
         .execute(&s.db)
         .await?;
+    if b.disabled == Some(true) {
+        sqlx::query("DELETE FROM web_sessions WHERE user_id = $1")
+            .bind(&id)
+            .execute(&s.db)
+            .await?;
+    }
     crate::auth::audit(&s, &p.label(), "update_user", &id, "").await;
     Ok(Json(json!({"updated": id})))
 }
@@ -1422,6 +1582,7 @@ async fn ensure_not_last_owner(s: &AppState, user_id: &str, new_role: Option<&st
 
 async fn delete_user(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {
     require_admin(&p)?;
+    require_may_manage(&s, &p, &id).await?;
     ensure_not_last_owner(&s, &id, Some("removed"), Some(true)).await?;
     sqlx::query("DELETE FROM web_sessions WHERE user_id = $1").bind(&id).execute(&s.db).await?;
     sqlx::query("UPDATE issues SET assignee_id = NULL WHERE assignee_id = $1").bind(&id).execute(&s.db).await?;

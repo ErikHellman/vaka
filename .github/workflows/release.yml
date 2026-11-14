@@ -10,9 +10,9 @@ on:
         required: false
         default: ""
 
+# Least privilege per job: only the jobs that push tags, images or the release get write access.
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/vaka
@@ -24,6 +24,8 @@ jobs:
   # Swift Package Manager). Tags pushed by GITHUB_TOKEN don't trigger workflows, so the
   # rest of this run builds the release itself.
   tag:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     outputs:
       ref: ${{ steps.ref.outputs.ref }}
@@ -45,6 +47,9 @@ jobs:
           fi
 
   image:
+    permissions:
+      contents: read
+      packages: write
     needs: tag
     strategy:
       matrix:
@@ -87,6 +92,8 @@ jobs:
           retention-days: 1
 
   manifest:
+    permissions:
+      packages: write
     needs: image
     runs-on: ubuntu-latest
     steps:
@@ -155,6 +162,8 @@ jobs:
           path: vaka-${{ matrix.target }}.tar.gz
 
   github-release:
+    permissions:
+      contents: write
     if: startsWith(inputs.tag || github.ref_name, 'v')
     needs: [tag, manifest, cli]
     runs-on: ubuntu-latest

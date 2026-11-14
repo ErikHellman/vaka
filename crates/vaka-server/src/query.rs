@@ -93,15 +93,27 @@ fn issue_select() -> String {
 
 /// Fetch one issue by id or short id ("WEB-12") without permission checks.
 pub async fn get_issue_row(state: &AppState, id: &str) -> anyhow::Result<Option<Value>> {
-    let row = if let Some((slug, n)) = id.rsplit_once('-').and_then(|(s, n)| Some((s.to_lowercase(), n.parse::<i64>().ok()?))) {
-        sqlx::query(&format!("{} WHERE (p.slug = $1 AND i.short_id = $2) OR i.id = $3", issue_select()))
-            .bind(slug)
-            .bind(n)
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await?
+    let row = if let Some((slug, n)) = id
+        .rsplit_once('-')
+        .and_then(|(s, n)| Some((s.to_lowercase(), n.parse::<i64>().ok()?)))
+    {
+        sqlx::query(&format!(
+            "{} WHERE (p.slug = $1 AND i.short_id = $2) OR i.id = $3",
+            issue_select()
+        ))
+        .bind(slug)
+        .bind(n)
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?
     } else {
-        sqlx::query(&format!("{} WHERE i.id = $1", issue_select())).bind(id).fetch_optional(&state.db).await?
+        sqlx::query(&format!(
+            "{} WHERE i.id = $1",
+            issue_select()
+        ))
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?
     };
     Ok(row.map(|r| issue_json(state, &r)))
 }

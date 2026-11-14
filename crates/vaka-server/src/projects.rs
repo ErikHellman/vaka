@@ -45,17 +45,21 @@ pub async fn by_ingest_key(state: &AppState, key: &str) -> anyhow::Result<Option
 
 /// Find a project by id or slug.
 pub async fn find(state: &AppState, id_or_slug: &str) -> anyhow::Result<Option<ProjectInfo>> {
-    let row = sqlx::query(&format!("SELECT {COLS} FROM projects WHERE id = $1 OR slug = $1"))
-        .bind(id_or_slug)
-        .fetch_optional(&state.db)
-        .await?;
+    let row = sqlx::query(&format!(
+        "SELECT {COLS} FROM projects WHERE id = $1 OR slug = $1"
+    ))
+    .bind(id_or_slug)
+    .fetch_optional(&state.db)
+    .await?;
     Ok(row.as_ref().map(from_row))
 }
 
 pub async fn list(state: &AppState) -> anyhow::Result<Vec<ProjectInfo>> {
-    let rows = sqlx::query(&format!("SELECT {COLS} FROM projects ORDER BY name"))
-        .fetch_all(&state.db)
-        .await?;
+    let rows = sqlx::query(&format!(
+        "SELECT {COLS} FROM projects ORDER BY name"
+    ))
+    .fetch_all(&state.db)
+    .await?;
     Ok(rows.iter().map(from_row).collect())
 }
 

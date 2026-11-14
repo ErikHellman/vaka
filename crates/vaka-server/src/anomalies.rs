@@ -739,7 +739,7 @@ async fn llm_narrative(state: &AppState, base: &str, model: &str, payload: &Valu
         let msg = v["error"]["message"].as_str().map(str::to_string).unwrap_or_else(|| v["error"].to_string());
         anyhow::bail!("LLM API returned {status}: {msg}");
     }
-    narrative_text(&v)
+    Ok(crate::util::defang_llm_text(&narrative_text(&v)?))
 }
 
 #[cfg(test)]
