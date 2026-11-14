@@ -4,6 +4,10 @@
  *   import * as Vaka from '@hellsoft/vaka-browser';
  *   Vaka.init({ key: 'vk_...', endpoint: 'https://vaka.example.com', release: '1.2.3' });
  *   Vaka.track('signup', { plan: 'pro' });
+ *   Vaka.captureFeedback({ message: 'The export button does nothing' });
+ *
+ * The feedback widget (button, dialog, screenshots, crash prompt) is a separate import:
+ * `@hellsoft/vaka-browser/feedback`.
  */
 import { parseStack, Frame } from './stack';
 
@@ -96,6 +100,8 @@ let tags: Record<string, string> = {};
 let lastUrl = '';
 let backoffUntil = 0;
 let disabled = false;
+let lastEvent: string | undefined;
+let unhandledListeners: ((eventId: string, error: unknown) => void)[] = [];
 
 function log(...a: unknown[]) {
   if (opts && opts.debug && typeof console !== 'undefined') console.log('[vaka]', ...a);
@@ -201,7 +207,99 @@ export function captureError(error: unknown, ctx: CaptureContext = {}): string |
     ...common(),
   });
   addBreadcrumb({ category: 'error', message: String((error as Error)?.message || error), level: 'error' });
+  lastEvent = eventId;
+  if (ctx.handled === false) {
+    for (const cb of unhandledListeners) {
+      try {
+        cb(eventId, error);
+      } catch {
+        /* listener failed */
+      }
+    }
+  }
   return eventId;
+}
+
+/** Id of the last error or message sent, e.g. to attach user feedback to it. */
+export function lastEventId(): string | undefined {
+  return lastEvent;
+}
+
+/** Called after an uncaught error or unhandled rejection was captured (used by the feedback widget's crash prompt). */
+export function onUnhandledError(cb: (eventId: string, error: unknown) => void): () => void {
+  unhandledListeners.push(cb);
+  return () => {
+    unhandledListeners = unhandledListeners.filter((x) => x !== cb);
+  };
+}
+
+export interface Feedback {
+  /** What the user wrote (required, at most 5000 characters). */
+  message: string;
+  /** Contact email, only when the user typed it. */
+  email?: string;
+  name?: string;
+  /** The error event this feedback is about (see lastEventId()). */
+  eventId?: string;
+  /** widget, crash_prompt or api (default api). */
+  source?: 'widget' | 'crash_prompt' | 'api';
+  tags?: Record<string, string>;
+  /** Up to 3 PNG, JPEG or WebP images, 5 MB each. */
+  attachments?: Blob[];
+}
+
+export interface FeedbackResult {
+  id: string;
+  short_id: string;
+}
+
+/**
+ * Send user feedback right away, with the current session, user, release, page and feature flags.
+ * Resolves to the stored item's ids, or undefined when it could not be sent.
+ */
+export function captureFeedback(f: Feedback): Promise<FeedbackResult | undefined> {
+  if (!started || disabled || typeof fetch === 'undefined' || !f || !f.message || !String(f.message).trim()) return Promise.resolve(undefined);
+  const item: Record<string, unknown> = {
+    type: 'feedback',
+    id: uuid(),
+    timestamp: now(),
+    platform: 'javascript',
+    message: String(f.message).slice(0, 5000),
+    email: f.email && f.email.trim() ? f.email.trim() : undefined,
+    name: f.name && f.name.trim() ? f.name.trim() : undefined,
+    event_id: f.eventId,
+    source: f.source || 'api',
+    url: hasWindow ? location.href : undefined,
+    tags: { ...tags, ...(f.tags || {}) },
+    ...common(),
+  };
+  for (const k of Object.keys(item)) if (item[k] === undefined) delete item[k];
+  const headers: Record<string, string> = { 'X-Vaka-Key': opts.key, 'X-Vaka-SDK': `${SDK.name}/${SDK.version}` };
+  let body: BodyInit;
+  const files = (f.attachments || []).filter(Boolean).slice(0, 3);
+  if (files.length && typeof FormData !== 'undefined') {
+    const form = new FormData();
+    form.append('feedback', JSON.stringify(item));
+    files.forEach((b, i) => {
+      const ext = b.type === 'image/png' ? 'png' : b.type === 'image/webp' ? 'webp' : 'jpg';
+      form.append('screenshot', b, `screenshot-${i + 1}.${ext}`);
+    });
+    body = form;
+  } else {
+    headers['Content-Type'] = 'text/plain';
+    body = JSON.stringify(item);
+  }
+  addBreadcrumb({ category: 'feedback', message: 'user feedback sent' });
+  return origFetch(`${opts.endpoint}/ingest/v1/feedback`, { method: 'POST', headers, body })
+    .then((r) => {
+      if (r.status === 202) return r.json() as Promise<FeedbackResult>;
+      log('feedback rejected', r.status);
+      return undefined;
+    })
+    .catch((e: unknown) => {
+      log('feedback failed', e);
+      return undefined;
+    });
 }
 
 /** Report a message as an error-like event. */
@@ -209,6 +307,7 @@ export function captureMessage(message: string, level: Level = 'info'): string |
   if (!started) return;
   const eventId = uuid();
   enqueue({ type: 'error', event_id: eventId, timestamp: now(), platform: 'javascript', level, message, breadcrumbs: crumbs.slice(), tags: { ...tags }, url: hasWindow ? location.href : undefined, ...common() });
+  lastEvent = eventId;
   return eventId;
 }
 
@@ -640,6 +739,11 @@ function installTracing() {
   window.addEventListener('pagehide', sendVitals);
 }
 
+/** Whether init() ran and the SDK is sending (false on ignored localhost or a rejected key). */
+export function isActive(): boolean {
+  return started && !disabled;
+}
+
 /** For tests: reset all state. */
 export function _reset(): void {
   started = false;
@@ -654,6 +758,8 @@ export function _reset(): void {
   userId = undefined;
   tags = {};
   lastUrl = '';
+  lastEvent = undefined;
+  unhandledListeners = [];
   backoffUntil = 0;
   if (timer) clearTimeout(timer);
   timer = undefined;

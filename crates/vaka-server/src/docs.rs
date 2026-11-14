@@ -88,7 +88,8 @@ pub fn router() -> Router<AppState> {
         .route("/docs/", get(|State(s): State<AppState>| async move { markdown(&s, "index.md") }))
         .route("/docs/{name}", get(doc_page))
         .route("/docs/install/{name}", get(install_page))
-        .route("/sdk/vaka.js", get(js_sdk))
+        .route("/sdk/vaka.js", get(|| async { js(JS_SDK) }))
+        .route("/sdk/vaka-feedback.js", get(|| async { js(JS_FEEDBACK) }))
 }
 
 async fn llms(State(s): State<AppState>) -> Response {
@@ -120,15 +121,16 @@ async fn install_page(State(s): State<AppState>, Path(name): Path<String>) -> Re
 }
 
 const JS_SDK: &str = include_str!("../../../sdks/js/dist/vaka.min.js");
+const JS_FEEDBACK: &str = include_str!("../../../sdks/js/dist/vaka-feedback.min.js");
 
-async fn js_sdk() -> Response {
+fn js(body: &'static str) -> Response {
     (
         [
             (header::CONTENT_TYPE, "application/javascript; charset=utf-8"),
             (header::CACHE_CONTROL, "public, max-age=3600"),
             (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
         ],
-        JS_SDK,
+        body,
     )
         .into_response()
 }
