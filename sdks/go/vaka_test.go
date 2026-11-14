@@ -32,6 +32,13 @@ type fakeServer struct {
 	// feedback requests and the status to answer them with (default 202)
 	feedback []feedbackReq
 	fbStatus int
+	// monitor check-ins (path, body)
+	checkIns []checkInReq
+}
+
+type checkInReq struct {
+	path string
+	body map[string]any
 }
 
 type feedbackReq struct {
@@ -90,6 +97,19 @@ func newFake(t *testing.T) *fakeServer {
 			f.otlp[r.URL.Path] = append(f.otlp[r.URL.Path], b)
 			w.WriteHeader(200)
 		default:
+			if strings.HasPrefix(r.URL.Path, "/ingest/v1/monitors/") {
+				var m map[string]any
+				_ = json.Unmarshal(b, &m)
+				f.checkIns = append(f.checkIns, checkInReq{r.URL.Path, m})
+				if strings.Contains(r.URL.Path, "/missing/") {
+					w.WriteHeader(404)
+					fmt.Fprint(w, `{"error": "no monitor"}`)
+					return
+				}
+				w.WriteHeader(202)
+				fmt.Fprint(w, `{"ok": true}`)
+				return
+			}
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(404)
 		}

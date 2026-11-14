@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Sequence, TypeVar
 
 from . import feedback as _feedback
 from . import flags as _flags
+from . import monitors as _monitors
 from ._client import Client, Options, Scope, current_scope, isolation_scope, now_ms, MAX_BREADCRUMBS, _flag_str
 
 _client: Optional[Client] = None
@@ -183,11 +184,60 @@ def shutdown(timeout: float = 5.0) -> None:
         c.close(timeout)
 
 
-def monitor(fn: F) -> F:
-    """Decorator: report exceptions escaping ``fn`` (re-raised) inside an isolation scope.
+def check_in(
+    slug: str,
+    status: str = "ok",
+    *,
+    check_in_id: Optional[str] = None,
+    duration_ms: Optional[int] = None,
+    message: Optional[str] = None,
+    monitor: Optional[Mapping[str, Any]] = None,
+    timeout: float = 10.0,
+) -> bool:
+    """Report a heartbeat check-in for the monitor ``slug``: ``in_progress``, ``ok`` or ``error``.
 
-    Handy for background jobs, task-queue workers and serverless handlers; also flushes.
+    ``monitor`` (see ``vaka.monitors.monitor_config``) creates the monitor on its first
+    check-in. Never raises: returns False (and logs a warning) when the SDK is not initialized
+    or the server refuses the check-in.
     """
+    c = _client
+    if c is None:
+        return False
+    if status not in _monitors.STATUSES:
+        raise ValueError(f"status must be one of {', '.join(_monitors.STATUSES)}")
+    body: Dict[str, Any] = {"status": status, "environment": c.options.environment}
+    if c.options.release:
+        body["release"] = c.options.release
+    if check_in_id:
+        body["check_in_id"] = check_in_id
+    if duration_ms is not None:
+        body["duration_ms"] = int(duration_ms)
+    if message:
+        body["message"] = message[:500]
+    if monitor:
+        body["monitor"] = dict(monitor)
+    return _monitors.send(c.options.endpoint, c.options.key, slug, body, timeout=timeout)
+
+
+def monitor(fn: Any = None, *, schedule: Any = None, every: Any = None, timezone: Optional[str] = None,
+            grace_s: Optional[int] = None, max_runtime_s: Optional[int] = None, name: Optional[str] = None) -> Any:
+    """Decorator for jobs.
+
+    ``@vaka.monitor`` reports exceptions escaping the function (re-raised) inside an isolation
+    scope. ``@vaka.monitor("nightly-backup", schedule="0 3 * * *")`` (or ``with
+    vaka.monitor("nightly-backup"):``) also reports each run to a heartbeat monitor: Vaka alerts
+    when a run is missed, fails or exceeds ``max_runtime_s``. With a schedule the monitor is
+    created on first use.
+    """
+    if isinstance(fn, str):
+        return _monitors.Monitor(fn, _monitors.monitor_config(schedule, every=every, timezone=timezone, grace_s=grace_s, max_runtime_s=max_runtime_s, name=name))
+    if fn is None:
+        return _report_exceptions
+    return _report_exceptions(fn)
+
+
+def _report_exceptions(fn: F) -> F:
+    """Report exceptions escaping ``fn`` (re-raised) inside an isolation scope; also flushes."""
     import functools
     import inspect
 

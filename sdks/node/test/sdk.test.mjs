@@ -178,6 +178,32 @@ test('captureFeedback: JSON and multipart, scope data, links, errors', async () 
   assert.match(raw, /filename="shot.png"\r\nContent-Type: image\/png/);
 });
 
+test('withMonitor and checkIn: run lifecycle, error capture, upsert config', async () => {
+  const v = await fakeVaka();
+  const r = await runFixture('monitor.mjs', v.endpoint);
+  await v.close();
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /result=42/);
+  assert.match(r.stdout, /rethrown=sync broke/);
+  assert.match(r.stdout, /plain=true/);
+  assert.match(r.stdout, /refused=false/);
+  const cis = v.requests.filter((q) => q.url.startsWith('/ingest/v1/monitors/'));
+  const backup = cis.filter((q) => q.url === '/ingest/v1/monitors/nightly-backup/check-ins');
+  assert.deepEqual(backup.map((q) => q.body.status), ['in_progress', 'ok']);
+  assert.equal(backup[0].headers['x-vaka-key'], 'vk_test');
+  assert.deepEqual(backup[0].body.monitor, { schedule: { cron: '0 3 * * *', timezone: 'Europe/Stockholm' }, grace_s: 600, max_runtime_s: 3600 });
+  assert.equal(backup[0].body.check_in_id, backup[1].body.check_in_id);
+  assert.equal(backup[1].body.release, '1.2.3');
+  assert.ok(backup[1].body.duration_ms >= 0);
+  const sync = cis.filter((q) => q.url === '/ingest/v1/monitors/sync/check-ins');
+  assert.deepEqual(sync.map((q) => q.body.status), ['in_progress', 'error']);
+  assert.equal(sync[1].body.message, 'sync broke');
+  const err = v.items().find((i) => i.type === 'error');
+  assert.equal(err.tags['monitor.check_in_id'], sync[0].body.check_in_id);
+  assert.equal(err.tags['monitor.slug'], 'sync');
+  assert.match(r.stderr, /check-in for missing failed: HTTP 404/);
+});
+
 test('captureFeedback: rejected feedback throws with the status', async () => {
   const v = await fakeVaka({ feedbackStatus: 429 });
   const r = await runFixture('feedback.mjs', v.endpoint, { env: { EXPECT_429: '1' } });

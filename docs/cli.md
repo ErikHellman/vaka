@@ -83,6 +83,21 @@ vaka resolve WEB-12 --release 1.4.1
 vaka health -p web --release 1.4.0              # crash-free sessions and users
 ```
 
+## Monitor a cron job
+
+Wrap a command so each run reports to a [heartbeat monitor](monitoring.md). The command's exit
+code decides `ok` or `error`, and `vaka` exits with it. A failed check-in only prints a warning.
+
+```sh
+# crontab
+0 3 * * * VAKA_URL=https://vaka.example.com VAKA_KEY=vk_... vaka monitor run nightly-backup --cron "0 3 * * *" --timezone Europe/Stockholm -- /usr/local/bin/backup.sh
+```
+
+`--every 1h` or `--cron` (with `--timezone`, `--grace` and `--max-runtime` in seconds) creates the
+monitor on its first check-in. `--release` and `--environment` (or `VAKA_RELEASE`,
+`VAKA_ENVIRONMENT`) are stored with each check. Send one check-in with
+`vaka monitor check-in hourly-sync [--status error --message "..."]`.
+
 ## Verify an installation
 
 ```sh

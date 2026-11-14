@@ -37,6 +37,9 @@ class FakeVaka:
                 elif self.path.startswith("/ingest/v1/feedback"):
                     st = fake.feedback_status
                     self._reply(st, {"id": "fb-1", "short_id": "API-F1"} if st == 202 else {"error": "too much feedback"})
+                elif self.path.startswith("/ingest/v1/monitors/"):
+                    missing = "/missing/" in self.path
+                    self._reply(404 if missing else 202, {"error": "no monitor"} if missing else {"ok": True, "state": "up"})
                 elif self.path.startswith("/ingest/otlp"):
                     self._reply(200, {}, content_type=self.headers.get("Content-Type", "application/json"), raw=b"")
                 elif status:

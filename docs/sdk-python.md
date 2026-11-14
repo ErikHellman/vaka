@@ -81,6 +81,28 @@ def handle(event, context): ...
 Scopes follow `contextvars`, so each asyncio task keeps its own. A new thread starts on the
 global scope; use `contextvars.copy_context().run` to carry a request scope into one.
 
+## Cron jobs (heartbeat monitors)
+
+Report each run of a job to a [heartbeat monitor](monitoring.md). Vaka alerts when a run is
+missed, fails or runs too long.
+
+```python
+@vaka.monitor("nightly-backup", schedule="0 3 * * *", timezone="Europe/Stockholm")
+def backup(): ...
+
+with vaka.monitor("hourly-sync", every="1h"):   # also `async with`
+    sync()
+
+vaka.check_in("hourly-sync")                     # a single ok
+vaka.check_in("hourly-sync", "error", message="upstream down")
+```
+
+A monitored run reports `in_progress`, then `ok` with the duration, or `error` when an exception
+escapes (it is captured and re-raised). With a schedule, the monitor is created on first use.
+Errors captured during the run carry the tag `monitor.check_in_id`. `check_in` returns `False`
+instead of raising when the check-in fails. Plain `@vaka.monitor` without a slug still only
+reports exceptions.
+
 ## User feedback
 
 Forward what users wrote in your own forms (support, contact, in-app chat). It is sent right away
