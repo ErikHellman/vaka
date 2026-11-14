@@ -6,6 +6,9 @@ its identity to PyPI with OIDC, so no API token is stored anywhere.
 
 ## One-time setup
 
+Done: `vaka-sdk` 0.2.0 was published on 2026-11-14 and the trusted publisher is now active on the
+project, so these steps only matter if the setup ever has to be redone.
+
 1. **PyPI account.** Sign in at <https://pypi.org> (enable 2FA, PyPI requires it). Do the same on
    <https://test.pypi.org> if you want dry runs; it is a separate account.
 2. **Pending trusted publisher.** The project doesn't exist on PyPI yet, so register a *pending*
