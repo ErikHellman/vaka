@@ -43,7 +43,9 @@ jobs:
         run: cargo build --workspace --all-targets --features vaka-sdk/tracing
       - name: Unit tests
         run: cargo test --workspace
-      - name: Smoke test (SQLite)
+        env:
+          VAKA_TEST_POSTGRES_URL: postgres://vaka:vaka@localhost:5432/vaka
+      - name: Smoke test (SQLite, then cutover to Postgres)
         run: |
           mkdir -p /tmp/vaka-sqlite
           VAKA_DATA_DIR=/tmp/vaka-sqlite VAKA_LISTEN=127.0.0.1:8080 \
@@ -54,6 +56,12 @@ jobs:
           SERVER_PID=$!
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8080/health && break; sleep 1; done
           VAKA=http://127.0.0.1:8080 EMAIL=ci@example.com PASSWORD=password123 bash scripts/smoke.sh
+          PGPASSWORD=vaka psql -h localhost -U vaka -d vaka -c 'CREATE DATABASE vaka_cutover'
+          VAKA=http://127.0.0.1:8080 EMAIL=ci@example.com PASSWORD=password123 \
+          SQLITE_URL=sqlite:///tmp/vaka-sqlite/vaka.db PG_URL=postgres://vaka:vaka@localhost:5432/vaka_cutover \
+          VAKA_CLICKHOUSE_URL=http://localhost:8123 VAKA_CLICKHOUSE_USER=vaka VAKA_CLICKHOUSE_PASSWORD=vaka \
+          VAKA_CLICKHOUSE_DATABASE=vaka_sqlite VAKA_GITHUB_API_URL=http://127.0.0.1:18099/gh \
+            bash scripts/cutover-smoke.sh
           kill $SERVER_PID
       - name: Smoke test (Postgres, debug files in S3)
         run: |

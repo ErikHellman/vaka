@@ -97,6 +97,7 @@ pub fn spec() -> Value {
             "/api/v1/alert-rules/{id}/deliveries/{delivery}/redeliver": {"post": op("Send a stored delivery again", &[id, ("delivery", "path", true)], None)},
             "/api/v1/tokens": {"get": op("List API tokens (admin)", &[], None), "post": op("Create API token (admin)", &[], Some("{name, project?, scope: read|write, expires_in_days?}"))},
             "/api/v1/tokens/{id}": {"delete": op("Revoke API token (admin)", &[id], None)},
+            "/api/v1/admin/read-only": {"get": op("Read-only maintenance mode status (admin)", &[], None), "put": op("Turn read-only maintenance mode on or off (admin)", &[], Some("{enabled: bool, drain_seconds?}"))},
             "/api/v1/users": {"get": op("List users (admin)", &[], None)},
             "/api/v1/users/invite": {"post": op("Invite a user (admin)", &[], Some("{email, role: viewer|member|admin|owner}"))},
             "/api/v1/users/{id}": {"patch": op("Update user role or disable (admin)", &[id], Some("{role?, disabled?}")), "delete": op("Delete user (admin)", &[id], None)},

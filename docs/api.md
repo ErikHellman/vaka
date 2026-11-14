@@ -302,6 +302,7 @@ See [feedback](feedback.md). Contact emails are returned to write tokens only.
 | `GET /users` | Users |
 | `POST /users/invite` | `{"email", "role": "viewer"\|"member"\|"admin"\|"owner"}`; returns an invite link (also emailed if Resend is set up) |
 | `PATCH /users/{id}` / `DELETE /users/{id}` | `{"role"?, "disabled"?}` |
+| `GET /admin/read-only`, `PUT /admin/read-only` | Read-only maintenance mode for a metadata database move: `{"enabled": true\|false, "drain_seconds"?}`. Admins and write tokens for all projects. While on, metadata writes return 503 ([self-hosting](self-hosting.md#moving-from-sqlite-to-postgres)) |
 
 Roles: **viewer** reads everything, **member** can also triage issues and upload debug files,
 **admin** manages projects, tokens, users and alerts, **owner** is an admin who can manage other owners.

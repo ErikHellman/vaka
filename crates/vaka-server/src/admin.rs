@@ -84,6 +84,9 @@ fn page(title: &str, user: Option<&Principal>, flash: Option<&str>, body: Markup
                     }
                 }
                 main {
+                    @if crate::readonly::requested() {
+                        div.flash.err { (crate::readonly::MESSAGE) "." }
+                    }
                     @if let Some(f) = flash {
                         @if let Some(e) = f.strip_prefix("error:") { div.flash.err { (e) } } @else { div.flash { (f) } }
                     }

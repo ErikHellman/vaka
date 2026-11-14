@@ -128,6 +128,9 @@ impl IntoResponse for ApiError {
 
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
+        if crate::readonly::requested() && crate::readonly::is_read_only_error(&format!("{e:#}")) {
+            return ApiError(StatusCode::SERVICE_UNAVAILABLE, crate::readonly::MESSAGE.into());
+        }
         tracing::error!("internal error: {e:#}");
         ApiError(StatusCode::INTERNAL_SERVER_ERROR, format!("internal error: {e}"))
     }

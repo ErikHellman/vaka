@@ -1045,6 +1045,9 @@ pub fn spawn_worker(state: AppState) {
         let mut tick = tokio::time::interval(Duration::from_secs(10));
         loop {
             tick.tick().await;
+            if crate::readonly::requested() {
+                continue; // metadata database migration in progress
+            }
             if let Err(e) = link_pending(&state).await {
                 tracing::warn!("feedback issue links failed: {e:#}");
             }

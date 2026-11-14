@@ -47,8 +47,20 @@ pub struct IngestError(StatusCode, String);
 
 impl IntoResponse for IngestError {
     fn into_response(self) -> Response {
-        (self.0, Json(json!({"error": self.1, "docs": "/docs/ingest.md"}))).into_response()
+        let retry = self.0 == StatusCode::SERVICE_UNAVAILABLE || self.0 == StatusCode::TOO_MANY_REQUESTS;
+        let mut r = (self.0, Json(json!({"error": self.1, "docs": "/docs/ingest.md"}))).into_response();
+        if retry {
+            r.headers_mut().insert(axum::http::header::RETRY_AFTER, axum::http::HeaderValue::from_static("30"));
+        }
+        r
     }
+}
+
+fn read_only_error() -> IngestError {
+    IngestError(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Vaka is in read-only maintenance mode: error and feedback items are paused, retry later (events, sessions and spans are accepted)".into(),
+    )
 }
 
 fn extract_key(headers: &HeaderMap, q: &KeyQuery) -> Option<String> {
@@ -233,6 +245,7 @@ async fn feedback(
     use axum::extract::FromRequest;
     let headers = req.headers().clone();
     let project = authenticate(&state, &headers, &q).await?;
+    let _slot = crate::readonly::Pending::try_acquire(1).ok_or_else(read_only_error)?;
     let ct = headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_lowercase();
     let mut item: Option<crate::feedback::FeedbackItem> = None;
     let mut uploads = Vec::new();
@@ -313,6 +326,17 @@ async fn accept_items(
     if state.work_tx.capacity() < items.len() {
         return Err(IngestError(StatusCode::TOO_MANY_REQUESTS, "ingest queue is full, retry with backoff".into()));
     }
+    // Error and feedback items write metadata (issues, releases, feedback rows). Reserve a
+    // slot for each before accepting anything, so read-only mode refuses the whole batch
+    // (and the SDK retries it later) instead of half of it.
+    let meta_items = items
+        .iter()
+        .filter(|v| {
+            let t = v.get("type").and_then(|t| t.as_str()).or(forced_type);
+            matches!(t, Some("error" | "feedback"))
+        })
+        .count() as i64;
+    let mut slots = crate::readonly::Pending::try_acquire(meta_items).ok_or_else(read_only_error)?;
     let mut accepted = 0usize;
     let mut rejected = Vec::new();
     let salt = current_salt(state).await;
@@ -341,6 +365,7 @@ async fn accept_items(
                 continue;
             }
         };
+        let is_error = matches!(item, Item::Error(_));
         let work = match item {
             Item::Error(e) => {
                 if e.exceptions.is_empty() && e.exception.is_none() && e.message.as_deref().unwrap_or("").is_empty() {
@@ -390,6 +415,10 @@ async fn accept_items(
             if tokio::time::timeout(std::time::Duration::from_secs(5), state.work_tx.send(work)).await.map(|r| r.is_err()).unwrap_or(true) {
                 return Err(IngestError(StatusCode::SERVICE_UNAVAILABLE, "ingest queue is full, retry with backoff".into()));
             }
+        }
+        if is_error {
+            // The processor releases this slot once the error event is stored.
+            slots.transfer_one();
         }
         accepted += 1;
     }
@@ -490,6 +519,21 @@ pub async fn current_salt(state: &AppState) -> String {
         if s.0 == today {
             return s.1.clone();
         }
+    }
+    if crate::readonly::requested() {
+        // Read-only maintenance: use today's salt if it exists, but never create one. The
+        // stand-in keeps the old day, so the real salt is loaded once writes are back.
+        use crate::db::RowExt;
+        if let Ok(Some(r)) = sqlx::query("SELECT salt FROM daily_salts WHERE day = $1").bind(&today).fetch_optional(&state.db).await {
+            let salt = r.s("salt");
+            *state.salt.write().await = (today, salt.clone());
+            return salt;
+        }
+        let mut w = state.salt.write().await;
+        if w.1.is_empty() {
+            w.1 = crate::util::random_token(32);
+        }
+        return w.1.clone();
     }
     let salt = match crate::maintenance::salt_for_day(state, &today).await {
         Ok(s) => s,

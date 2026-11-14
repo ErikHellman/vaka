@@ -99,6 +99,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/alert-rules/{id}/deliveries/{delivery}/redeliver", post(redeliver))
         .route("/api/v1/tokens", get(list_tokens).post(create_token))
         .route("/api/v1/tokens/{id}", delete(revoke_token))
+        .route("/api/v1/admin/read-only", get(get_read_only).put(put_read_only))
         .route("/api/v1/users", get(list_users))
         .route("/api/v1/users/invite", post(invite_user))
         .route("/api/v1/users/{id}", patch(update_user).delete(delete_user))
@@ -1203,6 +1204,49 @@ async fn redeliver(State(s): State<AppState>, p: Principal, Path((id, delivery))
 // ---------------------------------------------------------------------------
 // Tokens and users (admin only)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Read-only maintenance mode (metadata database migration)
+// ---------------------------------------------------------------------------
+
+/// Admins, and write tokens for all projects (so an operator script can drive the cutover).
+fn require_operator(p: &Principal) -> QResult<()> {
+    if p.is_admin() || matches!(p, Principal::Token { write: true, project_id: None, .. }) {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden())
+    }
+}
+
+async fn get_read_only(p: Principal) -> J {
+    require_operator(&p)?;
+    Ok(Json(crate::readonly::status_json()))
+}
+
+#[derive(Deserialize)]
+struct ReadOnlyBody {
+    enabled: bool,
+    /// Seconds to wait for queued error events to be stored before switching (default 30).
+    drain_seconds: Option<u64>,
+}
+
+async fn put_read_only(State(s): State<AppState>, p: Principal, Json(b): Json<ReadOnlyBody>) -> J {
+    require_operator(&p)?;
+    let mut out = if b.enabled {
+        let drain = std::time::Duration::from_secs(b.drain_seconds.unwrap_or(30).min(600));
+        let drained = crate::readonly::enable(&s.db, drain).await?;
+        tracing::warn!(actor = %p.label(), drained, "read-only mode enabled");
+        let mut v = crate::readonly::status_json();
+        v["drained"] = json!(drained);
+        v
+    } else {
+        crate::readonly::disable(&s.db).await?;
+        crate::auth::audit(&s, &p.label(), "read_only.disable", "", "").await;
+        crate::readonly::status_json()
+    };
+    out["message"] = json!(if b.enabled { crate::readonly::MESSAGE } else { "metadata writes are enabled" });
+    Ok(Json(out))
+}
 
 fn require_admin(p: &Principal) -> QResult<()> {
     if p.is_admin() { Ok(()) } else { Err(ApiError::forbidden()) }
