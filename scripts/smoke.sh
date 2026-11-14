@@ -231,6 +231,16 @@ for i in $(seq 1 10); do grep -q '^/slack ' "$HOOKS" && break; sleep 0.5; done
 grep '^/slack ' "$HOOKS" | grep -q 'New issue' || fail "slack alert: $(cat "$HOOKS")"
 grep '^/slack ' "$HOOKS" | grep -q "owners $EMAIL" || fail "slack owners: $(cat "$HOOKS")"
 
+# SMS alerts (CI points VAKA_SMS_API_URL at the receiver and sets SMS_PATH)
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d '{"trigger":"new_issue","channel":"sms","target":"0701234567"}' >/dev/null && fail "sms accepted a non-E.164 number"
+SMS=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d "{\"project\":\"$SLUG\",\"trigger\":\"new_issue\",\"channel\":\"sms\",\"target\":\"+46 70 123 45 67\"}") || fail "sms rule"
+[ "$(echo "$SMS" | j 'd["max_per_hour"]')" = "10" ] || fail "sms default max_per_hour: $SMS"
+if [ -n "${SMS_PATH:-}" ]; then
+  curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules/$(echo "$SMS" | j 'd["id"]')/test" >/dev/null || fail "sms test"
+  grep "^$SMS_PATH " "$HOOKS" | grep -q 'Vaka+Test+alert' || fail "sms delivery: $(grep -v '^/digest' "$HOOKS" | tail -c 600)"
+  grep "^$SMS_PATH " "$HOOKS" | grep -q '%2B46701234567' || fail "sms number"
+fi
+
 # Anomaly detection and digests (own project): three quiet weeks, then a burst today
 APROJ=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects" -d "{\"name\":\"$SLUG-anomaly\",\"platform\":\"javascript\"}")
 AKEY=$(echo "$APROJ" | j 'd["ingest_key"]'); ASLUG=$(echo "$APROJ" | j 'd["slug"]')

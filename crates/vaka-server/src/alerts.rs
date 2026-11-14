@@ -1,4 +1,4 @@
-//! Alerts: webhooks, Slack and email (Resend) on new issues, regressions and spikes, plus
+//! Alerts: webhooks, Slack, email (Resend) and SMS (46elks, Twilio, Sinch) on new issues, regressions and spikes, plus
 //! daily digests.
 
 use crate::db::RowExt;
@@ -21,7 +21,7 @@ pub const TRIGGERS: &[&str] = &[
     "digest",
     "new_feedback",
 ];
-pub const CHANNELS: &[&str] = &["webhook", "slack", "email", "github_dispatch", "github_issue"];
+pub const CHANNELS: &[&str] = &["webhook", "slack", "email", "sms", "github_dispatch", "github_issue"];
 const SPIKE_COOLDOWN_MS: i64 = 6 * 3_600_000;
 /// Retry schedule after a failed delivery (attempt 1 is the first try).
 const BACKOFF_MS: &[i64] = &[60_000, 5 * 60_000, 30 * 60_000, 2 * 3_600_000, 6 * 3_600_000];
@@ -446,7 +446,7 @@ pub async fn deliver_new(state: &AppState, rule: &Rule, secret: &str, trigger: &
 
 fn retryable(channel: &str, e: &anyhow::Error) -> bool {
     let msg = e.to_string();
-    !(channel == "email" && msg.contains("VAKA_RESEND_API_KEY")) && !msg.contains("needs a GitHub token")
+    !(channel == "email" && msg.contains("VAKA_RESEND_API_KEY")) && !msg.contains("needs a GitHub token") && !msg.contains(crate::sms::NO_RETRY)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -493,6 +493,7 @@ async fn send(state: &AppState, rule: &Rule, secret: &str, trigger: &str, issue_
         ("slack", _) => send_slack(state, &rule.target, &slack_issue_message(trigger, payload)).await,
         ("email", "digest") => send_digest_email(state, &rule.target, payload).await,
         ("email", _) => send_email(state, &rule.target, trigger, payload).await,
+        ("sms", _) => crate::sms::send(state, &rule.target, trigger, payload).await,
         ("github_dispatch", _) => crate::github::dispatch(state, &rule.target, secret, trigger, payload).await,
         ("github_issue", _) => crate::github::issue(state, &rule.target, secret, trigger, issue_id, payload, &rule.filters).await,
         (other, _) => Err(anyhow::anyhow!("unknown channel {other}")),
@@ -621,7 +622,7 @@ async fn check_thresholds(state: &AppState) -> anyhow::Result<()> {
 }
 
 /// One-line summary of a perf_regression payload for Slack and email.
-fn perf_text(payload: &Value) -> String {
+pub fn perf_text(payload: &Value) -> String {
     let mut parts: Vec<String> = payload["regressions"]
         .as_array()
         .into_iter()

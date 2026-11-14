@@ -84,6 +84,12 @@ All settings are environment variables.
 | `VAKA_LLM_API_KEY` | | Bearer key for that API (optional for local servers) |
 | `VAKA_FEEDBACK_PER_IP_HOUR` / `VAKA_FEEDBACK_PER_SESSION_HOUR` | `10` / `5` | Feedback rate limits per project |
 | `VAKA_TRUSTED_PROXIES` | loopback and private ranges | Comma-separated addresses or CIDRs whose `X-Forwarded-For` / `X-Real-IP` headers are believed (`none` for nobody). Requests from anywhere else are counted by their own address. Add your proxy's range when it reaches Vaka from a public address (e.g. Cloudflare in front of a public server), and the addresses of backends that forward their users' feedback |
+| `VAKA_SMS_PROVIDER` | `46elks` | SMS alert provider: `46elks`, `twilio` or `sinch` ([alerts.md](alerts.md#sms)) |
+| `VAKA_46ELKS_USERNAME`, `VAKA_46ELKS_PASSWORD` | | 46elks API credentials |
+| `VAKA_TWILIO_ACCOUNT_SID`, `VAKA_TWILIO_AUTH_TOKEN` | | Twilio credentials |
+| `VAKA_SINCH_SERVICE_PLAN_ID`, `VAKA_SINCH_API_TOKEN`, `VAKA_SINCH_REGION` | `us` | Sinch credentials and region |
+| `VAKA_SMS_FROM` | `Vaka` | SMS sender (a number, or up to 11 letters where the provider allows it) |
+| `VAKA_SMS_MAX_PER_DAY` | `100` | SMS deliveries allowed per 24 hours across the server (0 = unlimited) |
 | `VAKA_EMAIL_FROM` | `Vaka <vaka@localhost>` | Sender for emails |
 | `VAKA_PASSWORD_LOGIN` | `true` | Set to `false` to allow only email-code login (needs `VAKA_RESEND_API_KEY`) |
 | `VAKA_GEOIP_DB` | | Optional MaxMind/DB-IP country `.mmdb` file |

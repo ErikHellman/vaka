@@ -77,6 +77,33 @@ Testing a digest rule sends today's digest right away. For weekly digests or a l
 For email, set `"channel": "email"` and `"target"` to one or more comma-separated addresses.
 Email needs `VAKA_RESEND_API_KEY` and `VAKA_EMAIL_FROM` on the server.
 
+### SMS
+
+For SMS, set `"channel": "sms"` and `"target"` to one or more comma-separated phone numbers in
+E.164 format (`+46701234567`, up to 10). Each alert is one short text message that fits a single
+SMS segment (160 characters, or 70 with emoji or other non-GSM characters): the trigger, project,
+issue id, a shortened title and the issue link. Digests become a one-line summary. SMS rules default
+to `max_per_hour: 10`, and the server sends at most `VAKA_SMS_MAX_PER_DAY` SMS deliveries per 24 hours
+(default 100); deliveries over the cap are marked `failed` and not retried.
+
+```sh
+curl -X POST {{ENDPOINT}}/api/v1/alert-rules -H "Authorization: Bearer $VAKA_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"project": "web", "trigger": "new_issue", "channel": "sms", "target": "+46701234567",
+       "filters": {"environment": "production", "min_level": "fatal"}}'
+```
+
+The SMS provider is configured once per server:
+
+| Provider | `VAKA_SMS_PROVIDER` | Credentials |
+|---|---|---|
+| [46elks](https://46elks.com) (default) | `46elks` | `VAKA_46ELKS_USERNAME`, `VAKA_46ELKS_PASSWORD` (API username and password) |
+| [Twilio](https://www.twilio.com) | `twilio` | `VAKA_TWILIO_ACCOUNT_SID`, `VAKA_TWILIO_AUTH_TOKEN` |
+| [Sinch](https://sinch.com) | `sinch` | `VAKA_SINCH_SERVICE_PLAN_ID`, `VAKA_SINCH_API_TOKEN`, optional `VAKA_SINCH_REGION` (`us` default, `eu`, `au`, `br`, `ca`) |
+
+`VAKA_SMS_FROM` is the sender (default `Vaka`). 46elks accepts an alphanumeric sender of up to 11
+characters; Twilio needs one of your Twilio numbers, and Sinch usually a number too.
+
 Test a rule with `POST /api/v1/alert-rules/{id}/test` and see results with
 `GET /api/v1/alert-rules/{id}/deliveries` (`?payload=true` includes what was sent).
 

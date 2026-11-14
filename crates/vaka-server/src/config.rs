@@ -15,6 +15,8 @@ pub struct Config {
     pub geoip_db: Option<String>,
     pub resend_api_key: Option<String>,
     pub resend_api_url: String,
+    /// SMS alert channel provider and credentials (`VAKA_SMS_*`).
+    pub sms: crate::sms::SmsConfig,
     /// Optional: write digest narratives with any OpenAI-compatible chat completions API.
     /// Enabled when both base URL and model are set; the key is optional (local servers).
     pub llm_base_url: Option<String>,
@@ -114,6 +116,7 @@ impl Config {
             geoip_db: var("VAKA_GEOIP_DB"),
             resend_api_key: var("VAKA_RESEND_API_KEY"),
             resend_api_url: var("VAKA_RESEND_API_URL").unwrap_or_else(|| "https://api.resend.com".into()).trim_end_matches('/').to_string(),
+            sms: crate::sms::SmsConfig::from_env(),
             llm_base_url: var("VAKA_LLM_BASE_URL").map(|u| u.trim_end_matches('/').to_string()),
             llm_model: var("VAKA_LLM_MODEL"),
             llm_api_key: var("VAKA_LLM_API_KEY"),

@@ -32,6 +32,7 @@ mod migrate_db;
 mod readonly;
 mod s3;
 mod scrub;
+mod sms;
 mod state;
 mod symbolicate;
 mod timeline;
