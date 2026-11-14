@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "se.hellsoft.vaka"
-version = "0.2.0"
+version = "0.3.0"
 
 dependencies {
     compileOnly("com.android.tools.build:gradle-api:8.7.3")

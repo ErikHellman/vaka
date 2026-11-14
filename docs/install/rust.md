@@ -8,7 +8,7 @@ These steps are written to be followed by a coding agent. Do them in order and v
 
 ```toml
 [dependencies]
-vaka-sdk = { version = "0.2", features = ["tracing"] }
+vaka-sdk = { version = "0.3", features = ["tracing"] }
 ```
 
 Drop `features = ["tracing"]` if the app does not use the `tracing` crate.

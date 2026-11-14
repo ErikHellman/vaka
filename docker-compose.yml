@@ -6,7 +6,7 @@
 # Everything is configured in .env (see .env.example and docs/self-hosting.md):
 #   - COMPOSE_PROFILES=caddy      adds Caddy with automatic HTTPS for VAKA_DOMAIN
 #   - COMPOSE_PROFILES=postgres   adds Postgres for metadata (also set VAKA_DB_URL)
-#   - VAKA_VERSION=0.2.0          pins the server image (default: latest)
+#   - VAKA_VERSION=0.3.0          pins the server image (default: latest)
 #   - VAKA_PORT=127.0.0.1:8080    keeps the plain HTTP port off the network behind a proxy
 
 services:

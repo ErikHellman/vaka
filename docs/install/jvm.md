@@ -11,7 +11,7 @@ Gradle (Kotlin DSL):
 
 ```kotlin
 dependencies {
-    implementation("se.hellsoft.vaka:vaka-jvm:0.2.0")
+    implementation("se.hellsoft.vaka:vaka-jvm:0.3.0")
 }
 ```
 
@@ -21,7 +21,7 @@ Maven:
 <dependency>
   <groupId>se.hellsoft.vaka</groupId>
   <artifactId>vaka-jvm</artifactId>
-  <version>0.2.0</version>
+  <version>0.3.0</version>
 </dependency>
 ```
 

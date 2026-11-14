@@ -9,7 +9,13 @@ namespace Vaka.Tests;
 /// <summary>Records requests the SDK makes and answers them like a Vaka server.</summary>
 public sealed class FakeIngest : HttpMessageHandler
 {
-    public readonly List<(string Path, JsonNode Body, HttpRequestMessage Request)> Requests = new();
+    private readonly List<(string Path, JsonNode Body, HttpRequestMessage Request)> _requests = new();
+
+    /// <summary>A snapshot of the requests so far; the SDK's background flush can add more at any time.</summary>
+    public List<(string Path, JsonNode Body, HttpRequestMessage Request)> Requests
+    {
+        get { lock (_requests) return _requests.ToList(); }
+    }
     public Func<HttpRequestMessage, HttpStatusCode> Status = _ => HttpStatusCode.Accepted;
     public string FlagsResponse = """{"flags": {"new_checkout": "one_page", "dark_mode": true, "beta": false}}""";
 
@@ -31,7 +37,7 @@ public sealed class FakeIngest : HttpMessageHandler
         JsonNode body = path.StartsWith("/ingest/otlp") ? new JsonObject { ["bytes"] = bytes.Length }
             : multipart ? new JsonObject { ["raw"] = System.Text.Encoding.Latin1.GetString(bytes) }
             : JsonNode.Parse(bytes)!;
-        lock (Requests) Requests.Add((path, body, request));
+        lock (_requests) _requests.Add((path, body, request));
         var status = Status(request);
         var text = path == "/ingest/v1/flags" ? FlagsResponse
             : path == "/ingest/v1/feedback" ? (status == HttpStatusCode.Accepted ? """{"id": "fb-1", "short_id": "API-F1"}""" : """{"error": "too much feedback"}""")
@@ -41,9 +47,9 @@ public sealed class FakeIngest : HttpMessageHandler
 
     public List<JsonObject> Items(string? type = null)
     {
-        lock (Requests)
+        lock (_requests)
         {
-            return Requests.Where(r => r.Path == "/ingest/v1/batch")
+            return _requests.Where(r => r.Path == "/ingest/v1/batch")
                 .SelectMany(r => r.Body["items"]!.AsArray().Select(i => i!.AsObject()))
                 .Where(i => type is null || (string?)i["type"] == type)
                 .ToList();

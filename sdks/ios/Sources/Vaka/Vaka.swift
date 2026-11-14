@@ -12,7 +12,7 @@ import Foundation
 /// All methods are thread-safe and do nothing until `start` has been called.
 public enum Vaka {
     public static let sdkName = "vaka-ios"
-    public static let sdkVersion = "0.2.0"
+    public static let sdkVersion = "0.3.0"
 
     public struct Options {
         /// Project ingest key (`vk_...`). Write-only, safe to embed in the app.

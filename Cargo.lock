@@ -3466,7 +3466,7 @@ dependencies = [
 
 [[package]]
 name = "vaka"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3478,7 +3478,7 @@ dependencies = [
 
 [[package]]
 name = "vaka-sdk"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "backtrace",
  "findshlibs",
@@ -3491,7 +3491,7 @@ dependencies = [
 
 [[package]]
 name = "vaka-server"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "argon2",
