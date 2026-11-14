@@ -217,6 +217,160 @@ final class HangTests: XCTestCase {
     }
 }
 
+final class FeedbackTests: XCTestCase {
+    func tmpDir() -> URL {
+        let d = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("vaka-fb-\(UUID().uuidString)")
+        try! FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }
+
+    func options(_ dir: URL) -> Vaka.Options {
+        Vaka.Options(key: "vk_test", endpoint: URL(string: "http://127.0.0.1:9")!, release: "1.0.0", environment: "test",
+                     crashReporting: false, appHangDetection: false, flushInterval: 3600, storageDirectory: dir)
+    }
+
+    func testFeedbackItemCarriesScope() throws {
+        let client = Client(options: options(tmpDir()))
+        client.start()
+        client.identify("u-1")
+        client.setTag("plan", "pro")
+        client.screen("Checkout", props: [:])
+        enum E: Error { case boom }
+        client.capture(error: E.boom, level: .error, tags: [:], skipFrames: 0)
+        let eventId = try XCTUnwrap(client.lastEventId)
+        let f = Vaka.Feedback(message: "  It broke  ", email: " ann@example.com ", eventId: eventId, source: .widget, tags: ["k": "v"])
+        let item = client.feedbackItem(f, message: "It broke", timestamp: Date())
+        XCTAssertEqual(item["type"] as? String, "feedback")
+        XCTAssertEqual(item["message"] as? String, "It broke")
+        XCTAssertEqual(item["email"] as? String, "ann@example.com")
+        XCTAssertEqual(item["event_id"] as? String, eventId)
+        XCTAssertEqual(item["source"] as? String, "widget")
+        XCTAssertEqual(item["screen"] as? String, "Checkout")
+        XCTAssertEqual(item["user_id"] as? String, "u-1")
+        XCTAssertEqual(item["release"] as? String, "1.0.0")
+        XCTAssertEqual(item["tags"] as? [String: String], ["plan": "pro", "k": "v"])
+        XCTAssertNotNil(item["session_id"])
+        XCTAssertNotNil(item["id"])
+        XCTAssertNil(item["name"])
+    }
+
+    func testMultipartBody() throws {
+        let png = Data([0x89, 0x50, 0x4e, 0x47, 1, 2, 3])
+        let body = FeedbackSender.multipart(item: Data(#"{"message":"hi"}"#.utf8), attachments: [.png(png), .jpeg(Data([0xff, 0xd8]))], boundary: "B")
+        let text = String(decoding: body, as: UTF8.self)
+        XCTAssertTrue(text.hasPrefix("--B\r\nContent-Disposition: form-data; name=\"feedback\"\r\nContent-Type: application/json\r\n\r\n{\"message\":\"hi\"}\r\n"), text)
+        XCTAssertTrue(text.contains("name=\"screenshot\"; filename=\"screenshot.png\"\r\nContent-Type: image/png\r\n\r\n"))
+        XCTAssertTrue(text.contains("filename=\"screenshot.jpg\"\r\nContent-Type: image/jpeg"))
+        XCTAssertTrue(text.hasSuffix("\r\n--B--\r\n"))
+    }
+
+    func testAttachmentLimits() {
+        let big = Vaka.Attachment.jpeg(Data(count: Vaka.Attachment.maxSize + 1))
+        let ok = Vaka.Attachment.jpeg(Data([1]))
+        let heic = Vaka.Attachment(data: Data([1]), contentType: "image/heic")
+        let out = FeedbackSender.validAttachments([big, ok, heic, ok, ok, ok], log: { _ in })
+        XCTAssertEqual(out.count, 3)
+    }
+
+    func testEmptyMessageIsRejected() {
+        let client = Client(options: options(tmpDir()))
+        let done = expectation(description: "completion")
+        client.captureFeedback(Vaka.Feedback(message: " \n ")) { r in
+            if case .failure(.emptyMessage) = r {} else { XCTFail("\(r)") }
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+    }
+
+    func testOfflineFeedbackIsQueuedWithAttachments() throws {
+        let dir = tmpDir()
+        let client = Client(options: options(dir))
+        client.start()
+        let done = expectation(description: "completion")
+        var result: Vaka.FeedbackResult?
+        client.captureFeedback(Vaka.Feedback(message: "offline", attachments: [.jpeg(Data([0xff, 0xd8, 0xff]))])) { r in
+            result = try? r.get()
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 30)
+        XCTAssertEqual(result?.queued, true)
+        XCTAssertNil(result?.shortId)
+        XCTAssertEqual(client.feedback.pendingCount, 1)
+        let saved = try XCTUnwrap(try FileManager.default.contentsOfDirectory(at: dir.appendingPathComponent("feedback"), includingPropertiesForKeys: nil).first)
+        let item = try JSONSerialization.jsonObject(with: Data(contentsOf: saved.appendingPathComponent("item.json"))) as? [String: Any]
+        XCTAssertEqual(item?["message"] as? String, "offline")
+        XCTAssertEqual(try Data(contentsOf: saved.appendingPathComponent("0.bin")), Data([0xff, 0xd8, 0xff]))
+
+        // Still offline: a retry keeps it.
+        let retried = expectation(description: "retry")
+        client.feedback.sendPending { retried.fulfill() }
+        wait(for: [retried], timeout: 30)
+        XCTAssertEqual(client.feedback.pendingCount, 1)
+    }
+
+    func testPreviousCrashIsOfferedForFeedback() throws {
+        let dir = tmpDir()
+        _ = vaka_test_fork_crash(dir.appendingPathComponent("crash.txt").path, SIGSEGV)
+        let client = Client(options: options(dir))
+        client.start()
+        let got = expectation(description: "crash report")
+        client.addCrashHandler { r in
+            XCTAssertEqual(r.kind, .crash)
+            XCTAssertTrue(r.previousRun)
+            XCTAssertFalse(r.eventId.isEmpty)
+            got.fulfill()
+        }
+        wait(for: [got], timeout: 5)
+    }
+
+    func testKilledWhileHungIsOfferedAsHang() throws {
+        let dir = tmpDir()
+        let scope: [String: Any] = [
+            "release": "1.0.0", "environment": "test", "breadcrumbs": [], "tags": [:],
+            "session": ["id": "s", "started": Client.ms(Date().addingTimeInterval(-60)), "errors": 1],
+            "hang_since": Client.ms(Date().addingTimeInterval(-5)), "hang_event_id": "hang-event",
+        ]
+        try JSONSerialization.data(withJSONObject: scope).write(to: dir.appendingPathComponent("scope.json"))
+        let client = Client(options: options(dir))
+        client.start()
+        let got = expectation(description: "hang report")
+        client.addCrashHandler { r in
+            XCTAssertEqual(r.kind, .hang)
+            XCTAssertEqual(r.eventId, "hang-event")
+            got.fulfill()
+        }
+        wait(for: [got], timeout: 5)
+    }
+}
+
+final class FeedbackMockServerTests: XCTestCase {
+    /// Run with VAKA_TEST_MOCK=http://127.0.0.1:8765 and a server that answers 503 once, then 202.
+    func testQueuedThenSent() throws {
+        guard let ep = ProcessInfo.processInfo.environment["VAKA_TEST_MOCK"] else { throw XCTSkip("VAKA_TEST_MOCK not set") }
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("vaka-mock-\(UUID().uuidString)")
+        let client = Client(options: Vaka.Options(key: "vk_mock", endpoint: URL(string: ep)!, release: "1.0.0", crashReporting: false,
+                                                  appHangDetection: false, flushInterval: 3600, storageDirectory: dir))
+        let first = expectation(description: "first")
+        client.captureFeedback(Vaka.Feedback(message: "with image", attachments: [.png(Data([0x89, 0x50, 0x4e, 0x47]))])) { r in
+            XCTAssertEqual(try? r.get().queued, true)
+            first.fulfill()
+        }
+        wait(for: [first], timeout: 30)
+        let resent = expectation(description: "resent")
+        client.feedback.sendPending { resent.fulfill() }
+        wait(for: [resent], timeout: 30)
+        XCTAssertEqual(client.feedback.pendingCount, 0)
+        let second = expectation(description: "second")
+        client.captureFeedback(Vaka.Feedback(message: "plain")) { r in
+            let res = try? r.get()
+            XCTAssertEqual(res?.shortId, "IOS-F1")
+            XCTAssertEqual(res?.id, "srv-1")
+            second.fulfill()
+        }
+        wait(for: [second], timeout: 30)
+    }
+}
+
 final class IntegrationTests: XCTestCase {
     func testSendsToServer() throws {
         let env = ProcessInfo.processInfo.environment

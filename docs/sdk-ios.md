@@ -30,6 +30,53 @@ Vaka.flush()                                 // send now
 `maxBatchSize` (50), `debug` (console logging), `enabled` (false = no-op), `tags` and `storageDirectory`.
 All calls are thread-safe and do nothing before `start`.
 
+## User feedback
+
+Users can tell you what went wrong in their own words, with a screenshot. Feedback is linked to the crash
+or hang it is about. See [feedback](feedback.md).
+
+```swift
+// After Vaka.start: options for the form, and ask about crashes and hangs.
+Vaka.installFeedback(Vaka.FeedbackOptions(crashPrompt: true, email: currentUser?.email))
+
+// UIKit, or anywhere: open the form over the current screen, with a screenshot of it.
+Vaka.showFeedback()
+
+// SwiftUI
+VakaFeedbackButton()                              // "Send feedback" button
+Button("Report a problem") { show = true }
+    .vakaFeedback(isPresented: $show)
+
+// From code (support forms, your own UI). Completion runs on the main queue.
+let r = try await Vaka.captureFeedback(Vaka.Feedback(message: text, email: email, eventId: Vaka.lastEventId))
+// r.shortId == "IOS-F12", or r.queued == true when offline (sent later)
+```
+
+| `FeedbackOptions` | Default | Meaning |
+| --- | --- | --- |
+| `screenshot` | `true` | Attach a screenshot of the key window; the user can remove it |
+| `askEmail` | `true` | Show the optional email field |
+| `email` | | Prefill the email, e.g. for signed-in users |
+| `crashPrompt` | `false` | With `installFeedback`: after a crash, ask on the next launch what the user was doing |
+| `hangPrompt` | `true` | With `crashPrompt`: also ask when the app recovers from a hang (or was killed while hung) |
+| `tags` | | Tags added to feedback sent from the form |
+| `strings` | English | `Vaka.FeedbackStrings`: every text in the form, for localization |
+
+- The form is SwiftUI on every platform: a sheet on iOS and tvOS, a sheet on the key window on macOS.
+  UIKit apps can present `VakaFeedbackViewController` themselves; SwiftUI apps can embed `VakaFeedbackView`.
+- Screenshots: `Vaka.screenshot()` renders the key window to a JPEG (at most 2x, 4096 px, 5 MB) before the form
+  opens. Secure text fields are blacked out, and so are views marked with `.vakaMask()` (SwiftUI) or
+  `view.vakaMask = true` (UIKit, AppKit). Metal and video content may come out blank.
+- Up to 3 images. On iOS 16+ and macOS 13+ users can add photos from their library; `Vaka.Attachment.image(data)`
+  converts any image (HEIC included) to a JPEG within the limits, with metadata removed.
+- Crash prompt: shown at most once per app run, when the app is active and has a window. Feedback from it has
+  `source` `crash_prompt` and the crash's `event_id`. Build your own prompt with `Vaka.onCrashOrHang { report in ... }`
+  (`report.kind`, `report.eventId`, `report.previousRun`) and `VakaFeedbackView(crash: report)`.
+- Offline: feedback that can't be sent (no network, 5xx) is saved under `Application Support/Vaka/feedback/` and sent
+  on the next launch, foreground or `flush()`; the server stores retries once. 429 (hourly limit) and other 4xx
+  are not retried. At most 20 are kept.
+- The UI APIs are unavailable in app extensions; `captureFeedback` works everywhere.
+
 ## Behaviour
 
 - Crashes: POSIX signal handlers (SIGSEGV, SIGBUS, SIGILL, SIGTRAP, SIGABRT, SIGFPE, SIGSYS, on an alternate stack)
