@@ -523,6 +523,36 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
             .await?
         }
         "list_alert_rules" => crate::api::list_rules_inner(state, p).await?,
+        "list_monitors" => crate::monitors::list(state, p, &req(&a, "project")?).await?,
+        "get_monitor" => crate::monitors::get(state, p, &req(&a, "project")?, &req(&a, "monitor")?).await?,
+        "create_monitor" | "update_monitor" => {
+            let input = crate::monitors::MonitorIn {
+                slug: s(&a, "slug"),
+                name: s(&a, "name"),
+                kind: s(&a, "kind"),
+                enabled: a.get("enabled").and_then(|v| v.as_bool()),
+                environment: s(&a, "environment"),
+                config: a.get("config").cloned().filter(|v| !v.is_null()),
+                fail_threshold: i(&a, "fail_threshold"),
+                recover_threshold: i(&a, "recover_threshold"),
+                paused_until: match a.get("paused_until") {
+                    None => None,
+                    Some(Value::Null) => Some(None),
+                    Some(v) => Some(Some(v.as_str().map(String::from).unwrap_or_else(|| v.to_string()))),
+                },
+            };
+            if name == "create_monitor" {
+                crate::monitors::create(state, p, &req(&a, "project")?, input).await?
+            } else {
+                crate::monitors::update(state, p, &req(&a, "project")?, &req(&a, "monitor")?, input).await?
+            }
+        }
+        "delete_monitor" => crate::monitors::delete(state, p, &req(&a, "project")?, &req(&a, "monitor")?).await?,
+        "list_incidents" => {
+            let q = crate::monitors::IncidentQuery { monitor: s(&a, "monitor"), status: s(&a, "status"), since: s(&a, "since"), limit: i(&a, "limit") };
+            crate::monitors::list_incidents(state, p, &req(&a, "project")?, q).await?
+        }
+        "get_incident" => crate::monitors::get_incident(state, p, &req(&a, "incident")?).await?,
         "search_logs" => crate::otel::search_logs(
             state,
             p,
@@ -1229,7 +1259,7 @@ pub fn tools() -> Vec<Value> {
             "Notify or wake an agent when something happens. Triggers: new_issue, regression, spike, threshold (issue reaches N events), issue_resolved, issue_assigned, issue_commented, release_created, perf_regression (newest release slower than the previous one; threshold = p95 increase in percent, default 20), digest (daily or weekly summary with detected anomalies and a written narrative; see `schedule`). Channels: webhook (signed JSON with the full fix context), slack, email, sms (one short text message per alert via the server's SMS provider: 46elks, Twilio or Sinch; default max_per_hour 10), github_dispatch (repository_dispatch `vaka.<trigger>` to start a GitHub Actions workflow, e.g. a coding agent), github_issue (opens one GitHub issue per Vaka issue; later alerts comment). Failed deliveries are retried with backoff. Needs a write token.",
             vec![
                 ("project", prop("string", "Project slug; omit for all projects")),
-                ("trigger", prop("string", "new_issue, regression, spike, threshold, issue_resolved, issue_assigned, issue_commented, release_created, perf_regression or digest")),
+                ("trigger", prop("string", "new_issue, regression, spike, threshold, issue_resolved, issue_assigned, issue_commented, release_created, perf_regression, digest, new_feedback, monitor_down or monitor_up")),
                 ("channel", prop("string", "webhook, slack, email, sms, github_dispatch or github_issue")),
                 ("target", prop("string", "Webhook URL, Slack incoming webhook URL, comma-separated emails, comma-separated E.164 phone numbers for sms (+46701234567), or owner/repo for GitHub channels")),
                 ("secret", prop("string", "Webhook signing secret (HMAC-SHA256 in X-Vaka-Signature), or the GitHub token for GitHub channels")),
@@ -1278,6 +1308,80 @@ pub fn tools() -> Vec<Value> {
             "Build the digest a digest alert rule would send now, without sending it: totals, new and top issues, anomalies, the narrative (written by an LLM when the server has VAKA_LLM_BASE_URL and VAKA_LLM_MODEL, otherwise from templates) and the plain-text rendering.",
             vec![("project", project()), ("frequency", prop("string", "daily (24h, default) or weekly (7d)")), ("narrative", prop("boolean", "Write the narrative (default true)"))],
             &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "list_monitors",
+            "List monitors",
+            "Health monitors in a project (heartbeat/cron jobs) with state (up, down, paused, unknown), flapping, last result and error, next expected check-in, and uptime for 24 h, 7 d and 30 d. `down` counts monitors that are down now.",
+            vec![("project", project())],
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "get_monitor",
+            "Get monitor",
+            "One monitor with config, its last 50 check results (ok, missed, timeout, error, in_progress) and its last 10 incidents with their correlation context.",
+            vec![("project", project()), ("monitor", prop("string", "Monitor slug or id"))],
+            &["project", "monitor"],
+            true,
+            false,
+        ),
+        tool(
+            "create_monitor",
+            "Create monitor",
+            "Create a heartbeat monitor for a cron job or scheduled task. The job then reports to the returned check_in_url with the project ingest key (POST {status: in_progress|ok|error}, or GET .../ok?key=). Missed, failed or hung runs take it down and fire monitor_down alerts (create an alert rule for those). Needs a write token.",
+            vec![
+                ("project", project()),
+                ("slug", prop("string", "Lowercase id used in the check-in URL, e.g. nightly-backup (default: from name)")),
+                ("name", prop("string", "Human-readable name")),
+                ("kind", prop("string", "heartbeat (default)")),
+                ("environment", prop("string", "Environment the job runs in, e.g. production")),
+                ("config", json!({"type": "object", "description": "{schedule: {every: \"15m\"} or {cron: \"0 3 * * *\", timezone: \"Europe/Stockholm\"}, grace_s?: seconds a check-in may be late (default 120), max_runtime_s?: seconds a started run may take (default 1800, 0 = no limit)}"})),
+                ("fail_threshold", prop("integer", "Failed checks in a row before down (default 1)")),
+                ("recover_threshold", prop("integer", "Successful checks in a row before up (default 1)")),
+            ],
+            &["project", "config"],
+            false,
+            false,
+        ),
+        tool(
+            "update_monitor",
+            "Update monitor",
+            "Change a monitor's name, environment, config, thresholds or enabled flag, or pause it: paused_until = a duration (2h), an RFC 3339 time or \"forever\"; null resumes. Needs a write token.",
+            vec![
+                ("project", project()),
+                ("monitor", prop("string", "Monitor slug or id")),
+                ("name", prop("string", "New name")),
+                ("environment", prop("string", "New environment")),
+                ("config", json!({"type": "object", "description": "Replacement config (see create_monitor)"})),
+                ("fail_threshold", prop("integer", "1 to 10")),
+                ("recover_threshold", prop("integer", "1 to 10")),
+                ("enabled", prop("boolean", "false stops checking")),
+                ("paused_until", json!({"type": ["string", "null"], "description": "Pause until (2h, RFC 3339, forever); null resumes"})),
+            ],
+            &["project", "monitor"],
+            false,
+            false,
+        ),
+        tool("delete_monitor", "Delete monitor", "Delete a monitor and its incidents. Check history ages out with project retention. Needs a write token.", vec![("project", project()), ("monitor", prop("string", "Monitor slug or id"))], &["project", "monitor"], false, true),
+        tool(
+            "list_incidents",
+            "List incidents",
+            "Monitor incidents (periods a monitor was down), newest first, with duration, first error and correlation context.",
+            vec![("project", project()), ("monitor", prop("string", "Only this monitor (slug)")), ("status", prop("string", "open, closed or all (default)")), ("since", since()), ("limit", prop("integer", "Max incidents (default 50)"))],
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "get_incident",
+            "Get incident",
+            "Why is it down? An incident with its correlation context: releases created in the 2 hours before, the issues with the most errors around the start (new and regressed flagged), the error rate against its 24 h baseline, top error logs, errors tagged with the failed run, and hints. Recomputed while the incident is open. Follow up with get_fix_context on a flagged issue or compare_releases on a flagged release.",
+            vec![("incident", prop("string", "Incident id (from list_incidents, get_monitor or a monitor_down alert)"))],
+            &["incident"],
             true,
             false,
         ),

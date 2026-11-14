@@ -30,6 +30,8 @@ pub fn router() -> Router<AppState> {
         .route("/ui/projects/{slug}/keys", post(project_keys))
         .route("/ui/projects/{slug}/issues/{id}", get(issue_page).post(issue_action))
         .route("/ui/projects/{slug}/feedback", get(feedback_page))
+        .route("/ui/projects/{slug}/monitors", get(monitors_page))
+        .route("/ui/projects/{slug}/monitors/{monitor}", get(monitor_page).post(monitor_action))
         .route("/ui/projects/{slug}/feedback/{id}", get(feedback_detail).post(feedback_action))
         .route("/ui/tokens", get(tokens_page).post(tokens_action))
         .route("/ui/users", get(users_page).post(users_action))
@@ -54,6 +56,8 @@ code,pre{font:13px ui-monospace,SFMono-Regular,Menlo,monospace}pre{background:va
 .badge{display:inline-block;padding:1px 8px;border-radius:999px;border:1px solid var(--line);font-size:12px}
 .frame{padding:4px 0;border-bottom:1px dashed var(--line)}.frame.app{font-weight:600}
 .thumb{width:72px;height:48px;object-fit:cover;border:1px solid var(--line);border-radius:4px}.shot{max-width:100%;border:1px solid var(--line);border-radius:6px;margin:8px 0}
+.st-up{border-color:var(--ok);color:var(--ok)}.st-down{border-color:var(--bad);color:var(--bad)}
+.strip{display:inline-flex;gap:2px;vertical-align:middle}.strip i{display:inline-block;width:5px;height:14px;border-radius:1px;background:var(--line)}.strip i.ok{background:var(--ok)}.strip i.bad{background:var(--bad)}
 .s-negative{border-color:var(--bad);color:var(--bad)}.s-positive{border-color:var(--ok);color:var(--ok)}.msg{white-space:pre-wrap}
 "#;
 
@@ -457,7 +461,7 @@ async fn project_page(State(s): State<AppState>, headers: HeaderMap, Path(slug):
     let install = crate::docs::install_markdown(&p.platform, &s.config.public_url, keys.first().map(|s| s.as_str()).unwrap_or(""), &p.slug);
     page(&p.name, Some(&user), flash_of(&q).as_deref(), html! {
         h1 { (p.name) " " span.badge { (p.platform) } }
-        p { a href=(format!("/ui/projects/{}/feedback", p.slug)) { "User feedback →" } }
+        p { a href=(format!("/ui/projects/{}/feedback", p.slug)) { "User feedback →" } " · " a href=(format!("/ui/projects/{}/monitors", p.slug)) { "Monitors →" } }
         h2 { "Open issues (last 7 days)" }
         div.card {
             @if issues.is_empty() { p.muted { "No open issues. " } }
@@ -671,6 +675,138 @@ async fn feedback_page(State(s): State<AppState>, headers: HeaderMap, Path(slug)
         }
         p.muted { "Agents read and triage feedback with the MCP tools list_feedback, get_feedback, update_feedback and feedback_summary." }
     })
+}
+
+fn state_badge(state: &str) -> Markup {
+    html! { span class=(format!("badge st-{state}")) { (state) } }
+}
+
+fn pct(v: &serde_json::Value) -> String {
+    v.as_f64().map(|f| format!("{f}%")).unwrap_or_else(|| "–".into())
+}
+
+async fn monitors_page(State(s): State<AppState>, headers: HeaderMap, Path(slug): Path<String>, axum::extract::Query(q): Q) -> Response {
+    let user = require_user!(s, headers);
+    let v = match crate::monitors::list(&s, &user, &slug).await {
+        Ok(v) => v,
+        Err(e) => return back("/ui", &format!("error:{}", e.1)),
+    };
+    let monitors = v["monitors"].as_array().cloned().unwrap_or_default();
+    page(&format!("Monitors · {slug}"), Some(&user), flash_of(&q).as_deref(), html! {
+        p { a href=(format!("/ui/projects/{slug}")) { "← " (slug) } }
+        h1 { "Monitors" }
+        div.card {
+            @if monitors.is_empty() { p.muted { "No monitors yet. Create one with the API or MCP (create_monitor), or send a check-in with a schedule. See " a href="/docs/monitoring.md" { "monitoring" } "." } }
+            @else { table {
+                tr { th { "Monitor" } th { "State" } th { "Schedule" } th { "Last check" } th { "Uptime 24h" } th { "30d" } }
+                @for m in &monitors {
+                    @let ms = m["slug"].as_str().unwrap_or("");
+                    tr {
+                        td { a href=(format!("/ui/projects/{slug}/monitors/{ms}")) { (m["name"].as_str().unwrap_or(ms)) } br; span.muted { code { (ms) } " " (m["environment"].as_str().unwrap_or("")) } }
+                        td { (state_badge(m["state"].as_str().unwrap_or(""))) @if m["flapping"] == true { " " span.badge { "flapping" } } }
+                        td { (m["schedule"].as_str().unwrap_or("")) }
+                        td.muted { (m["last_result"].as_str().unwrap_or("")) " " (m["last_check_at"].as_str().unwrap_or("never")) }
+                        td { (pct(&m["stats"]["uptime_24h"])) }
+                        td { (pct(&m["stats"]["uptime_30d"])) }
+                    }
+                }
+            } }
+        }
+        p.muted { "Agents manage monitors with the MCP tools list_monitors, create_monitor and update_monitor, and ask get_incident why something went down." }
+    })
+}
+
+async fn monitor_page(State(s): State<AppState>, headers: HeaderMap, Path((slug, monitor)): Path<(String, String)>, axum::extract::Query(q): Q) -> Response {
+    let user = require_user!(s, headers);
+    let v = match crate::monitors::get(&s, &user, &slug, &monitor).await {
+        Ok(v) => v,
+        Err(e) => return back(&format!("/ui/projects/{slug}/monitors"), &format!("error:{}", e.1)),
+    };
+    let m = &v["monitor"];
+    let checks = v["recent_checks"].as_array().cloned().unwrap_or_default();
+    let incidents = v["incidents"].as_array().cloned().unwrap_or_default();
+    let state = m["state"].as_str().unwrap_or("");
+    let can_write = crate::projects::find(&s, &slug).await.ok().flatten().map(|p| user.can_write(&p.id)).unwrap_or(false);
+    page(&format!("Monitor {}", m["name"].as_str().unwrap_or("")), Some(&user), flash_of(&q).as_deref(), html! {
+        p { a href=(format!("/ui/projects/{slug}/monitors")) { "← Monitors" } }
+        h1 { (m["name"].as_str().unwrap_or("")) " " (state_badge(state)) @if m["flapping"] == true { " " span.badge { "flapping" } } }
+        div.card {
+            p { "Schedule: " (m["schedule"].as_str().unwrap_or("")) " · next expected " (m["next_expected_at"].as_str().unwrap_or("–")) " · deadline " (m["deadline"].as_str().unwrap_or("–")) }
+            @if let Some(e) = m["last_error"].as_str().filter(|e| !e.is_empty()) { p.err { (e) } }
+            p { "Uptime: " (pct(&m["stats"]["uptime_24h"])) " (24h) · " (pct(&m["stats"]["uptime_7d"])) " (7d) · " (pct(&m["stats"]["uptime_30d"])) " (30d)" }
+            p { "Last checks: " span.strip {
+                @for c in checks.iter().take(60).rev() {
+                    @let r = c["result"].as_str().unwrap_or("");
+                    i class=(if r == "ok" { "ok" } else if matches!(r, "fail" | "timeout" | "missed" | "error") { "bad" } else { "" }) title=(format!("{r} {}", c["timestamp"].as_str().unwrap_or(""))) {}
+                }
+            } }
+            @if let Some(url) = m["check_in_url"].as_str() {
+                p.muted { "Check in from the job (ingest key):" }
+                pre { "curl -fsS \"" (url.trim_end_matches("/check-ins")) "/ok?key=$VAKA_KEY\"" }
+            }
+            @if can_write {
+                form.row method="post" {
+                    @if state == "paused" { button type="submit" name="action" value="resume" { "Resume" } }
+                    @else { button.ghost type="submit" name="action" value="pause" { "Pause for 2 hours" } }
+                }
+            }
+        }
+        h2 { "Incidents" }
+        div.card {
+            @if incidents.is_empty() { p.muted { "No incidents." } }
+            @else { table {
+                tr { th { "Started" } th { "Duration" } th { "First error" } th { "Context" } }
+                @for i in &incidents {
+                    tr {
+                        td { (i["started_at"].as_str().unwrap_or("")) @if i["open"] == true { " " span.badge.st-down { "open" } } }
+                        td { (crate::alerts::human_duration(i["duration_ms"].as_i64().unwrap_or(0))) }
+                        td { (i["first_error"].as_str().unwrap_or("")) }
+                        td {
+                            @for h in i["context"]["hints"].as_array().into_iter().flatten() { (h.as_str().unwrap_or("")) br; }
+                            @for iss in i["context"]["issues"].as_array().into_iter().flatten().take(3) {
+                                a href=(format!("/ui/projects/{slug}/issues/{}", iss["id"].as_str().unwrap_or(""))) { (iss["short_id"].as_str().unwrap_or("")) } " "
+                            }
+                        }
+                    }
+                }
+            } }
+        }
+        h2 { "Recent checks" }
+        div.card { table {
+            tr { th { "Time" } th { "Result" } th { "Duration" } th { "Release" } th { "Message" } }
+            @for c in checks.iter().take(20) {
+                tr {
+                    td.muted { (c["timestamp"].as_str().unwrap_or("")) }
+                    td { (c["result"].as_str().unwrap_or("")) }
+                    td { (c["duration_ms"].as_i64().filter(|d| *d > 0).map(|d| format!("{d} ms")).unwrap_or_default()) }
+                    td { (c["release"].as_str().unwrap_or("")) }
+                    td { (c["error"].as_str().unwrap_or("")) }
+                }
+            }
+        } }
+    })
+}
+
+#[derive(Deserialize)]
+struct MonitorForm {
+    action: String,
+}
+
+async fn monitor_action(State(s): State<AppState>, headers: HeaderMap, Path((slug, monitor)): Path<(String, String)>, Form(f): Form<MonitorForm>) -> Response {
+    let user = require_user!(s, headers);
+    if !same_origin(&s, &headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let to = format!("/ui/projects/{slug}/monitors/{monitor}");
+    let paused_until = match f.action.as_str() {
+        "pause" => Some(Some("2h".to_string())),
+        "resume" => Some(None),
+        _ => return back(&to, "error:Unknown action"),
+    };
+    match crate::monitors::update(&s, &user, &slug, &monitor, crate::monitors::MonitorIn { paused_until, ..Default::default() }).await {
+        Ok(_) => back(&to, if f.action == "pause" { "Paused for 2 hours" } else { "Resumed" }),
+        Err(e) => back(&to, &format!("error:{}", e.1)),
+    }
 }
 
 async fn feedback_detail(State(s): State<AppState>, headers: HeaderMap, Path((slug, id)): Path<(String, String)>, axum::extract::Query(q): Q) -> Response {

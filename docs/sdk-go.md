@@ -55,6 +55,26 @@ vaka.Go(ctx, func(ctx context.Context) { ... }) // goroutine that reports its pa
 Without `WithScope`, these use the client's global scope. Calls on a disabled (no key) or nil
 client are no-ops.
 
+## Cron jobs (heartbeat monitors)
+
+Report each run of a job to a [heartbeat monitor](monitoring.md). Vaka alerts when a run is
+missed, fails or runs too long.
+
+```go
+cfg := &vaka.MonitorConfig{Schedule: vaka.MonitorSchedule{Cron: "0 3 * * *", Timezone: "Europe/Stockholm"}}
+err := vaka.WithMonitor(ctx, "nightly-backup", cfg, func(ctx context.Context) error {
+	return backup(ctx)
+})
+
+_ = vaka.SendCheckIn(ctx, "hourly-sync", vaka.CheckIn{}) // a single ok
+```
+
+`WithMonitor` reports `in_progress`, then `ok` with the duration, or `error` when `fn` returns
+an error (captured, then returned) or panics (reported, then re-panicked). Pass a config to create
+the monitor on first use, or `nil`. Errors captured with the `ctx` passed to `fn` carry the tag
+`monitor.check_in_id`. Check-in failures from `WithMonitor` go to stderr; `SendCheckIn` returns
+them.
+
 ## User feedback
 
 Forward what users wrote in your own forms (support, contact, in-app chat). It is sent right away

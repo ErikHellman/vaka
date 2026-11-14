@@ -109,6 +109,7 @@ Write:
 | `set_code_mappings` | Replace the stack path → repository path mappings |
 | `apply_ownership_rules` | Re-apply ownership rules to open issues |
 | `comment_issue` | Add a Markdown comment, e.g. root cause and a link to the fix |
+| `create_monitor` / `update_monitor` / `delete_monitor` | Manage heartbeat monitors for cron jobs; `update_monitor` with `paused_until` pauses or resumes ([monitoring](monitoring.md)) |
 | `create_alert_rule` | Webhook, Slack, email, SMS, GitHub repository_dispatch or GitHub issue on new issues, regressions, spikes, thresholds, resolves, assignments, comments, new releases, or a daily or weekly digest (`schedule` with a time zone); with filters and rate limits |
 | `list_alert_rules` | Rules with triggers, channels and filters |
 | `update_alert_rule` / `delete_alert_rule` | Change or delete a rule |
@@ -117,6 +118,10 @@ Write:
 | `redeliver_alert` | Send a stored delivery again |
 | `update_feedback` | Set a feedback item's status, assignee, sentiment, topics or linked issue |
 | `delete_user_data` | Delete all data for a user id in a project, including feedback (cannot be undone) |
+
+Read-only monitoring tools: `list_monitors` (state and uptime), `get_monitor` (recent checks and
+incidents), `list_incidents`, and `get_incident`, which answers "why is it down?" with the
+releases, issues, error rate and logs around the incident's start.
 
 ## Resources
 
@@ -137,6 +142,8 @@ Write:
 - "How much revenue did each campaign bring in last month?"
 - "How far has 2.4.0 rolled out? Is anyone still on 2.2?"
 - "Who probably broke checkout in 2.4.0? Look at the suspect commits on the top new issue."
+- "The nightly backup monitor is down. Why?" (uses `get_incident`).
+- "Add a heartbeat monitor for our hourly sync job and text me when it misses a run."
 - "Set up Vaka for this repository" (uses `create_project` and `get_install_instructions`).
 
 A typical bug-fix loop: `list_issues` → `get_issue` (read the stack and breadcrumbs, open the

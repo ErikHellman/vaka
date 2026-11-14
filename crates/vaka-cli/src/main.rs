@@ -76,12 +76,99 @@ enum Cmd {
         #[command(subcommand)]
         what: CodeMappings,
     },
+    /// Heartbeat monitors for cron jobs (check-ins use the ingest key)
+    Monitor {
+        #[command(subcommand)]
+        what: Monitor,
+    },
     /// Send a test error with an ingest key to verify an installation
     SendTestEvent {
         /// Ingest key (vk_...)
         #[arg(long, env = "VAKA_KEY")]
         key: String,
     },
+}
+
+#[derive(Subcommand)]
+enum Monitor {
+    /// Run a command as a monitored run: in_progress, then ok or error from its exit code
+    ///
+    /// Example: vaka monitor run nightly-backup --cron "0 3 * * *" -- ./backup.sh
+    Run {
+        slug: String,
+        #[command(flatten)]
+        check_in: CheckInArgs,
+        /// The command and its arguments
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+    /// Send one check-in (ok by default)
+    CheckIn {
+        slug: String,
+        /// ok, error or in_progress
+        #[arg(long, default_value = "ok")]
+        status: String,
+        /// Pair an in_progress check-in with its ok or error
+        #[arg(long)]
+        id: Option<String>,
+        /// Error text for an error check-in
+        #[arg(long)]
+        message: Option<String>,
+        #[command(flatten)]
+        check_in: CheckInArgs,
+    },
+}
+
+#[derive(clap::Args)]
+struct CheckInArgs {
+    /// Ingest key (vk_...)
+    #[arg(long, env = "VAKA_KEY", hide_env_values = true)]
+    key: String,
+    /// Create the monitor on first check-in with this interval, e.g. 15m or 1h
+    #[arg(long, conflicts_with = "cron")]
+    every: Option<String>,
+    /// Create the monitor on first check-in with this cron schedule, e.g. "0 3 * * *"
+    #[arg(long)]
+    cron: Option<String>,
+    /// IANA time zone for --cron
+    #[arg(long, requires = "cron")]
+    timezone: Option<String>,
+    /// Seconds a check-in may be late
+    #[arg(long)]
+    grace: Option<u64>,
+    /// Seconds a run may take before it counts as failed (0 = no limit)
+    #[arg(long)]
+    max_runtime: Option<u64>,
+    #[arg(long, env = "VAKA_RELEASE")]
+    release: Option<String>,
+    #[arg(long, env = "VAKA_ENVIRONMENT")]
+    environment: Option<String>,
+}
+
+impl CheckInArgs {
+    fn monitor(&self) -> Option<Value> {
+        if self.every.is_none() && self.cron.is_none() {
+            return None;
+        }
+        let mut schedule = json!({});
+        if let Some(e) = &self.every {
+            schedule["every"] = json!(e);
+        }
+        if let Some(c) = &self.cron {
+            schedule["cron"] = json!(c);
+        }
+        if let Some(tz) = &self.timezone {
+            schedule["timezone"] = json!(tz);
+        }
+        let mut m = json!({"schedule": schedule});
+        if let Some(g) = self.grace {
+            m["grace_s"] = json!(g);
+        }
+        if let Some(r) = self.max_runtime {
+            m["max_runtime_s"] = json!(r);
+        }
+        Some(m)
+    }
 }
 
 #[derive(Subcommand)]
@@ -360,6 +447,7 @@ fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
             }
             Ok(())
         }
+        Cmd::Monitor { what } => monitor(ctx, what),
         Cmd::SendTestEvent { key } => {
             let body = json!({"sdk": {"name": "vaka-cli", "version": env!("CARGO_PKG_VERSION")}, "items": [{
                 "type": "error", "level": "error", "platform": "other", "release": "vaka-cli-test",
@@ -369,6 +457,81 @@ fn run(ctx: &Ctx, cmd: Cmd) -> Result<()> {
             let v = parse(r)?;
             println!("accepted: {}. Look for a `VakaTestError` issue in the project.", v["accepted"]);
             Ok(())
+        }
+    }
+}
+
+fn send_check_in(ctx: &Ctx, slug: &str, a: &CheckInArgs, mut body: Value, monitor: bool) -> Result<Value> {
+    if let Some(r) = &a.release {
+        body["release"] = json!(r);
+    }
+    if let Some(e) = &a.environment {
+        body["environment"] = json!(e);
+    }
+    if monitor {
+        if let Some(m) = a.monitor() {
+            body["monitor"] = m;
+        }
+    }
+    let slug: String = slug.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
+    let r = ctx
+        .http
+        .post(format!("{}/ingest/v1/monitors/{slug}/check-ins", ctx.url))
+        .header("x-vaka-key", &a.key)
+        .timeout(Duration::from_secs(15))
+        .json(&body)
+        .send()?;
+    parse(r)
+}
+
+fn monitor(ctx: &Ctx, what: Monitor) -> Result<()> {
+    match what {
+        Monitor::CheckIn { slug, status, id, message, check_in } => {
+            let mut body = json!({"status": status});
+            if let Some(id) = id {
+                body["check_in_id"] = json!(id);
+            }
+            if let Some(m) = message {
+                body["message"] = json!(m);
+            }
+            let v = send_check_in(ctx, &slug, &check_in, body, true)?;
+            if ctx.json {
+                println!("{v}");
+            } else {
+                println!("checked in {slug}: {}", v["state"].as_str().unwrap_or("ok"));
+            }
+            Ok(())
+        }
+        Monitor::Run { slug, check_in, command } => {
+            let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+            let id = format!("{:x}{:x}", nanos, std::process::id());
+            // A failed check-in never stops the job: warn and run it anyway.
+            let warn = |r: Result<Value>| {
+                if let Err(e) = r {
+                    eprintln!("vaka: check-in for {slug} failed: {e:#}");
+                }
+            };
+            warn(send_check_in(ctx, &slug, &check_in, json!({"status": "in_progress", "check_in_id": id}), true));
+            let started = std::time::Instant::now();
+            let result = std::process::Command::new(&command[0]).args(&command[1..]).status();
+            let ms = started.elapsed().as_millis() as u64;
+            let (code, body) = match &result {
+                Ok(st) if st.success() => (0, json!({"status": "ok", "check_in_id": id, "duration_ms": ms})),
+                Ok(st) => {
+                    let code = st.code().unwrap_or(1);
+                    let msg = match st.code() {
+                        Some(c) => format!("{} exited with code {c}", command[0]),
+                        None => format!("{} was killed by a signal", command[0]),
+                    };
+                    (code, json!({"status": "error", "check_in_id": id, "duration_ms": ms, "message": msg}))
+                }
+                Err(e) => (127, json!({"status": "error", "check_in_id": id, "duration_ms": ms, "message": format!("cannot run {}: {e}", command[0])})),
+            };
+            warn(send_check_in(ctx, &slug, &check_in, body, false));
+            if let Err(e) = result {
+                eprintln!("error: cannot run {}: {e}", command[0]);
+            }
+            std::process::exit(code);
         }
     }
 }

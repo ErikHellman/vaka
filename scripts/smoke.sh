@@ -525,6 +525,13 @@ grep '^/mon monitor_up ' "$HOOKS" | grep -q '"downtime_ms"' || fail "monitor_up 
 INC=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/incidents")
 [ "$(echo "$INC" | j '[(i["monitor"]["slug"], i["open"]) for i in d["incidents"]]')" = "[('backup', False)]" ] || fail "incidents: $INC"
 INCID=$(echo "$INC" | j 'd["incidents"][0]["id"]')
+grep '^/mon monitor_down ' "$HOOKS" | grep -q '"recent_releases":\[{' || fail "monitor_down context: $(grep '^/mon monitor_down' "$HOOKS" | head -c 800)"
+MI=$(curl -sf -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":21,\"method\":\"tools/call\",\"params\":{\"name\":\"get_incident\",\"arguments\":{\"incident\":\"$INCID\"}}}")
+echo "$MI" | j 'd["result"]["content"][0]["text"]' | python3 -c 'import sys,json; c=json.load(sys.stdin)["incident"]["context"]; assert c["issues"] and c["recent_releases"] and c["hints"], c' || fail "mcp get_incident context: $MI"
+ML2=$(curl -sf -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":22,\"method\":\"tools/call\",\"params\":{\"name\":\"list_monitors\",\"arguments\":{\"project\":\"$SLUG\"}}}")
+echo "$ML2" | grep -q 'backup' || fail "mcp list_monitors: $ML2"
+curl -sf -b "$JAR" "$VAKA/ui/projects/$SLUG/monitors" | grep -q 'Backup' || fail "monitors admin page"
+curl -sf -b "$JAR" "$VAKA/ui/projects/$SLUG/monitors/backup" | grep -q 'Incidents' || fail "monitor admin page"
 [ "$(curl -sf "${A[@]}" -X PATCH "$VAKA/api/v1/incidents/$INCID" -d '{"acknowledged":true}' | j 'd["incident"]["acknowledged_by"] is not None')" = "True" ] || fail "ack incident"
 sleep 1.5
 CHECKS=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/monitors/backup/checks?since=1h")
