@@ -58,6 +58,12 @@ curl -X POST {{ENDPOINT}}/ingest/v1/monitors/nightly-backup/check-ins -H "X-Vaka
   -H 'Content-Type: application/json' -d '{"status": "ok", "check_in_id": "run-42", "release": "1.4.0"}'
 ```
 
+Or use a helper that does this for you: `vaka monitor run nightly-backup -- ./backup.sh` in
+the [CLI](cli.md#monitor-a-cron-job), `withMonitor` in [Node](sdk-node.md#cron-jobs-heartbeat-monitors),
+`@vaka.monitor("slug")` in [Python](sdk-python.md#cron-jobs-heartbeat-monitors) and
+`vaka.WithMonitor` in [Go](sdk-go.md#cron-jobs-heartbeat-monitors). They also tag errors from the
+run, so the incident lists them.
+
 | Field | Meaning |
 | --- | --- |
 | `status` | `in_progress`, `ok` (default) or `error` |

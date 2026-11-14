@@ -102,6 +102,25 @@ Evaluation uses `POST /ingest/v1/flags` with the scope's user id as `distinct_id
 carry them as exposures, and the active span gets `feature_flag.<key>` attributes. On failure
 `getFlag` returns the fallback. See [flags](flags.md).
 
+## Cron jobs (heartbeat monitors)
+
+Report each run of a job to a [heartbeat monitor](monitoring.md). Vaka alerts when a run is
+missed, fails or runs too long.
+
+```ts
+import { withMonitor, checkIn } from '@hellsoft/vaka-node';
+
+// in_progress, then ok with the duration, or error (the exception is captured and rethrown).
+// With a config, the monitor is created on first use.
+await withMonitor('nightly-backup', () => backup(), { schedule: { cron: '0 3 * * *', timezone: 'Europe/Stockholm' } });
+
+await checkIn('hourly-sync');            // a single ok
+await checkIn('hourly-sync', 'error', { message: 'upstream down' });
+```
+
+Errors captured during a run carry the tag `monitor.check_in_id`, so the incident shows them.
+`checkIn` resolves to `false` instead of throwing when the check-in fails.
+
 ## User feedback
 
 Forward what users wrote in your own forms (support, contact, in-app chat). It is sent right away

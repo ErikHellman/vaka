@@ -18,6 +18,11 @@ export async function fakeVaka({ status = 202, feedbackStatus = 202, flags = { n
         res.writeHead(feedbackStatus, { 'content-type': 'application/json' });
         return res.end(feedbackStatus === 202 ? JSON.stringify({ id: 'fb-1', short_id: 'API-F1' }) : JSON.stringify({ error: 'too much feedback' }));
       }
+      if (req.url.startsWith('/ingest/v1/monitors/')) {
+        const missing = req.url.includes('/missing/');
+        res.writeHead(missing ? 404 : 202, { 'content-type': 'application/json' });
+        return res.end(missing ? JSON.stringify({ error: 'no monitor `missing`' }) : JSON.stringify({ ok: true, state: 'up' }));
+      }
       if (req.url === '/ingest/v1/flags') {
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ flags }));

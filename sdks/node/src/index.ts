@@ -475,6 +475,103 @@ export async function captureFeedback(f: Feedback): Promise<FeedbackResult> {
 }
 
 // ---------------------------------------------------------------------------
+// Monitors (heartbeat check-ins)
+// ---------------------------------------------------------------------------
+
+/** Schedule and limits for a heartbeat monitor, used to create it on its first check-in. */
+export interface MonitorConfig {
+  /** `{ every: '15m' }` or `{ cron: '0 3 * * *', timezone: 'Europe/Stockholm' }`. */
+  schedule: { every: string | number } | { cron: string; timezone?: string };
+  /** Seconds a check-in may be late (server default 120). */
+  graceS?: number;
+  /** Seconds a run may take (server default 1800, 0 = no limit). */
+  maxRuntimeS?: number;
+  name?: string;
+}
+
+export type CheckInStatus = 'in_progress' | 'ok' | 'error';
+
+export interface CheckInOptions {
+  /** Pairs an `in_progress` check-in with its `ok`/`error`. */
+  checkInId?: string;
+  durationMs?: number;
+  /** Error text for `error` check-ins. */
+  message?: string;
+  /** Creates the monitor if it doesn't exist yet. */
+  monitor?: MonitorConfig;
+}
+
+/** Error tag that links errors captured during a monitored run to the run. */
+export const CHECK_IN_TAG = 'monitor.check_in_id';
+
+function monitorBody(m: MonitorConfig): Record<string, unknown> {
+  const body: Record<string, unknown> = { schedule: m.schedule };
+  if (m.graceS !== undefined) body.grace_s = m.graceS;
+  if (m.maxRuntimeS !== undefined) body.max_runtime_s = m.maxRuntimeS;
+  if (m.name) body.name = m.name;
+  return body;
+}
+
+/**
+ * Report a heartbeat check-in for the monitor `slug`. Never throws: returns false (and logs a
+ * warning) when the SDK is not initialized or the server refuses the check-in.
+ */
+export async function checkIn(slug: string, status: CheckInStatus = 'ok', o: CheckInOptions = {}): Promise<boolean> {
+  if (!opts) return false;
+  const body: Record<string, unknown> = { status, release: opts.release, environment: opts.environment };
+  if (o.checkInId) body.check_in_id = o.checkInId;
+  if (o.durationMs !== undefined) body.duration_ms = Math.round(o.durationMs);
+  if (o.message) body.message = o.message.slice(0, 500);
+  if (o.monitor) body.monitor = monitorBody(o.monitor);
+  for (const k of Object.keys(body)) if (body[k] === undefined) delete body[k];
+  try {
+    const { context } = await import('@opentelemetry/api');
+    const { suppressTracing } = await import('@opentelemetry/core');
+    const r = await context.with(suppressTracing(context.active()), () =>
+      fetch(`${opts!.endpoint}/ingest/v1/monitors/${encodeURIComponent(slug)}/check-ins`, {
+        method: 'POST',
+        headers: { 'X-Vaka-Key': opts!.key, 'X-Vaka-Sdk': `${SDK.name}/${SDK.version}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10000),
+      }),
+    );
+    if (r.status >= 200 && r.status < 300) return true;
+    const text = await r.text().catch(() => '');
+    process.emitWarning(`[vaka] check-in for ${slug} failed: HTTP ${r.status} ${text.slice(0, 200)}`);
+  } catch (e) {
+    process.emitWarning(`[vaka] check-in for ${slug} failed: ${String((e as Error)?.message || e)}`);
+  }
+  return false;
+}
+
+/**
+ * Run a job as a monitored run: reports `in_progress`, then `ok` with the duration, or `error`
+ * (and captures the exception, tagged with the run) before rethrowing. Pass `monitor` to create
+ * the monitor from code on first use.
+ *
+ *   await Vaka.withMonitor('nightly-backup', () => backup(), { schedule: { cron: '0 3 * * *' } });
+ */
+export async function withMonitor<T>(slug: string, fn: () => T | Promise<T>, monitor?: MonitorConfig): Promise<T> {
+  const checkInId = randomUUID();
+  const started = performance.now();
+  await checkIn(slug, 'in_progress', { checkInId, monitor });
+  return withScope(async (scope) => {
+    scope.tags[CHECK_IN_TAG] = checkInId;
+    scope.tags['monitor.slug'] = slug;
+    try {
+      const result = await fn();
+      await checkIn(slug, 'ok', { checkInId, durationMs: performance.now() - started });
+      return result;
+    } catch (e) {
+      captureException(e);
+      await flush(5000);
+      await checkIn(slug, 'error', { checkInId, durationMs: performance.now() - started, message: String((e as Error)?.message || e) });
+      throw e;
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Analytics events
 // ---------------------------------------------------------------------------
 
