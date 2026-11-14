@@ -109,7 +109,7 @@ export interface FlagContext {
   properties?: Props;
 }
 
-export const SDK = { name: 'vaka-node', version: '0.2.0' };
+export const SDK = { name: 'vaka-node', version: '0.3.0' };
 
 type Resolved = Required<Pick<Options, 'key' | 'endpoint' | 'environment'>> & Options;
 

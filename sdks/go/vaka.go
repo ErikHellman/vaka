@@ -38,7 +38,7 @@ import (
 )
 
 // Version is the SDK version, sent as `sdk.version`.
-const Version = "0.1.0"
+const Version = "0.3.0"
 
 const sdkName = "vaka-go"
 

@@ -85,7 +85,7 @@ export interface CaptureContext {
   fingerprint?: string[];
 }
 
-const SDK = { name: 'vaka-browser', version: '0.2.0' };
+const SDK = { name: 'vaka-browser', version: '0.3.0' };
 const MAX_BREADCRUMBS = 50;
 const FLUSH_MS = 5000;
 const MAX_QUEUE = 20;

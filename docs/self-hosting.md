@@ -22,7 +22,7 @@ Optional services are turned on with `COMPOSE_PROFILES` in `.env`:
 | --- | --- |
 | `COMPOSE_PROFILES=caddy` | Adds [Caddy](https://caddyserver.com) on ports 80 and 443 with an automatic Let's Encrypt certificate for `VAKA_DOMAIN` |
 | `COMPOSE_PROFILES=postgres` | Adds Postgres for metadata; also set `VAKA_DB_URL=postgres://vaka:<POSTGRES_PASSWORD>@postgres:5432/vaka` |
-| `VAKA_VERSION=0.2.0` | Pins the server image (default `latest`); `VAKA_IMAGE` changes the image itself |
+| `VAKA_VERSION=0.3.0` | Pins the server image (default `latest`); `VAKA_IMAGE` changes the image itself |
 | `VAKA_PORT=127.0.0.1:8080` | Host port for plain HTTP; bind it to localhost when a proxy sits in front |
 | `CLICKHOUSE_VERSION`, `POSTGRES_PASSWORD` | ClickHouse image tag and Postgres password |
 
@@ -37,7 +37,7 @@ CLICKHOUSE_PASSWORD=...            # openssl rand -hex 24
 COMPOSE_PROFILES=caddy,postgres
 VAKA_DOMAIN=vaka.example.com
 VAKA_PORT=127.0.0.1:8080
-VAKA_VERSION=0.2.0
+VAKA_VERSION=0.3.0
 POSTGRES_PASSWORD=...
 VAKA_DB_URL=postgres://vaka:...@postgres:5432/vaka
 ```
