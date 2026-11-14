@@ -51,9 +51,42 @@ await loadFlags(props?)                 // (re)load flags; with `flags: true` th
 getFlag('pricing', 'control')           // true/false or the variant key
 isEnabled('new_checkout')
 onFlags((flags) => ...)
+await captureFeedback({ message, email?, name?, eventId?, tags?, attachments? }) // { id, short_id }
+lastEventId()                           // id of the last error sent, for feedback about it
+onUnhandledError((eventId) => ...)      // after an uncaught error is captured; returns unsubscribe
 ```
 
 Data is batched and sent every few seconds, and with `navigator.sendBeacon` when the page is hidden.
+
+## User feedback
+
+The widget is a separate module (about 5 KB gzipped), so apps that don't use it don't load it:
+
+```ts
+import { installFeedback, showFeedback } from '@hellsoft/vaka-browser/feedback';
+
+installFeedback({ crashPrompt: true });
+showFeedback();                       // open the dialog from your own link
+showFeedback({ eventId, crash: true }); // ask about a specific error
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `button` | `true` | Floating feedback button |
+| `position` | `bottom-right` | Or `bottom-left` |
+| `crashPrompt` | `false` | Ask "what happened?" after an uncaught error, at most once a minute; the answer is linked to that crash |
+| `screenshot` | `true` | Offer a screenshot of the page (the user can remove it) |
+| `askEmail` | `true` | Show the optional email field |
+| `email` | | Prefill the email, e.g. for signed-in users |
+| `accent` | `#2563eb` | Button and highlight color |
+| `zIndex` | | Stacking order of the widget |
+| `strings` | English | Override any text: `button`, `title`, `crashTitle`, `crashIntro`, `placeholder`, `emailLabel`, `screenshotLabel`, `submit`, `cancel`, `sending`, `thanks`, `error` |
+| `onSubmit` | | `(result) => ...` after sending |
+
+Script tag: `<script defer src="{{ENDPOINT}}/sdk/vaka-feedback.js" data-crash-prompt="true"></script>`
+after `vaka.js`, with `data-button`, `data-position`, `data-crash-prompt`, `data-screenshot`,
+`data-ask-email`, `data-accent` and `data-auto="false"`. Add `data-vaka-mask` to elements that
+must not appear in screenshots. See [feedback](feedback.md).
 
 ## Source maps
 

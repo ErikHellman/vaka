@@ -264,11 +264,23 @@ says something about identified users (`identity=user`).
 
 The [CLI](cli.md) wraps these; prefer `vaka upload ...` in build scripts.
 
+## User feedback
+
+See [feedback](feedback.md). Contact emails are returned to write tokens only.
+
+| Method & path | Description |
+| --- | --- |
+| `GET /projects/{p}/feedback` | List, newest first. Filters: `status` (`open` = new + triaged, default; `all`; or a list of new, triaged, resolved, ignored), `sentiment`, `topic`, `release`, `environment`, `platform`, `source` (widget, crash_prompt, api), `flag` (`key` or `key=variant`), `issue`, `user`, `session`, `has_screenshot`, `query` (text), `since` (default `30d`), `limit`, `offset` |
+| `GET /projects/{p}/feedback/summary` | Counts by `by` = sentiment (default), topic, release, flag, day, status, platform or source, with sentiment split, negative rate and quotes; `flag`, `since`, `include_closed`, `limit` |
+| `GET /feedback/{id}` | One item by id or short id (`WEB-F12`), with attachments and linked issue |
+| `PATCH /feedback/{id}` | `{status?, assignee? (email or ""), sentiment?, topics?, issue? (id, short id or "")}` (write scope) |
+| `GET /feedback/{id}/attachments/{n}` | Screenshot bytes (`n` from 0) |
+
 ## Privacy
 
 | Method & path | Description |
 | --- | --- |
-| `DELETE /projects/{p}/users/{user_id}` | Delete all errors, events and sessions for a user id (write scope). Returns counts. Cannot be undone |
+| `DELETE /projects/{p}/users/{user_id}` | Delete all errors, events, sessions and feedback for a user id (write scope). Returns counts. Cannot be undone |
 
 ## Alerts
 

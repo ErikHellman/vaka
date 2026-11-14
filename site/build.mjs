@@ -21,6 +21,7 @@ const nav = [
   ['Performance', 'performance'],
   ['Feature flags', 'flags'],
   ['Anomalies and digests', 'anomalies'],
+  ['User feedback', 'feedback'],
   ['OpenTelemetry', 'opentelemetry'],
   ['Privacy', 'privacy'],
   ['Ingest protocol', 'ingest'],

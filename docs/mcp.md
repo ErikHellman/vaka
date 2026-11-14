@@ -44,7 +44,7 @@ Read (everything a read token can call):
 | `list_issues` | Grouped errors with event and user counts in a window (`status`, `query`, `release`, `environment`, `since`, `sort`, `limit`) |
 | `get_issue` | Latest event with symbolicated stack trace (`frames[0]` is the crash site), source context, breadcrumbs, tags, breakdowns, `owners` and `suspect_commits` |
 | `get_fix_context` | Start here to fix a crash: in-app frames with repository source links, breadcrumbs, suspect commits, owners, linked PRs, suggested branch and `Fixes <ID>` trailer |
-| `get_session_timeline` | One session in order: pageviews, screens, events, breadcrumbs, errors, crashes |
+| `get_session_timeline` | One session in order: pageviews, screens, events, breadcrumbs, errors, crashes, feedback |
 | `issue_precursors` | What users did in the minutes before an issue across sessions, with lift versus all sessions |
 | `performance_summary` | Latency percentiles, throughput and error rate per transaction |
 | `slow_endpoints` | Slowest HTTP server endpoints by p95 |
@@ -86,6 +86,9 @@ Read (everything a read token can call):
 | `get_user_timeline` | One user's events, crashes and sessions, newest first |
 | `get_release_commits` | Commits recorded for a release, with changed files |
 | `get_ownership_rules` | The project's code ownership rules, parsed |
+| `list_feedback` | User feedback with sentiment, topics and linked issue; filters for status, sentiment, topic, release, flag, issue, user, screenshots and text ([feedback](feedback.md)) |
+| `get_feedback` | One feedback item with its screenshots as images |
+| `feedback_summary` | Feedback counts by sentiment, topic, release, flag variant, day, status, platform or source, with quotes |
 
 Write:
 
@@ -112,7 +115,8 @@ Write:
 | `test_alert_rule` | Send a test notification |
 | `list_alert_deliveries` | Delivery log with status, attempts and optional payloads |
 | `redeliver_alert` | Send a stored delivery again |
-| `delete_user_data` | Delete all data for a user id in a project (cannot be undone) |
+| `update_feedback` | Set a feedback item's status, assignee, sentiment, topics or linked issue |
+| `delete_user_data` | Delete all data for a user id in a project, including feedback (cannot be undone) |
 
 ## Resources
 
