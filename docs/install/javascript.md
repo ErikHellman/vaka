@@ -22,13 +22,13 @@ The global `window.Vaka` exposes the same API as the npm package.
 **Option B: npm package** (apps built with Vite, webpack, Next.js, etc.).
 
 ```sh
-npm install vaka-browser
+npm install @hellsoft/vaka-browser
 ```
 
 Initialise once, as early as possible in the client entry point (e.g. `main.ts`):
 
 ```ts
-import * as Vaka from 'vaka-browser';
+import * as Vaka from '@hellsoft/vaka-browser';
 
 Vaka.init({
   key: '{{KEY}}',
@@ -80,19 +80,19 @@ With Vite, Rollup or webpack, use the bundler plugin: it uploads the maps after 
 build and defines `__VAKA_RELEASE__` for app code. It needs an API token with write access.
 
 ```sh
-npm install --save-dev vaka-bundler-plugin
+npm install --save-dev @hellsoft/vaka-bundler-plugin
 ```
 
 ```js
 // vite.config.js
-import { vakaVite } from 'vaka-bundler-plugin';
+import { vakaVite } from '@hellsoft/vaka-bundler-plugin';
 export default {
   build: { sourcemap: 'hidden' },               // maps without a sourceMappingURL comment
   plugins: [vakaVite({ deleteAfterUpload: true })],
 };
 
 // webpack.config.js
-const { VakaWebpackPlugin } = require('vaka-bundler-plugin');
+const { VakaWebpackPlugin } = require('@hellsoft/vaka-bundler-plugin');
 module.exports = { devtool: 'hidden-source-map', plugins: [new VakaWebpackPlugin({ deleteAfterUpload: true })] };
 ```
 

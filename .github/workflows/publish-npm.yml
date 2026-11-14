@@ -1,6 +1,6 @@
 name: Publish npm packages
 
-# Manual: publishes vaka-browser, vaka-bundler-plugin and vaka-node from a release tag.
+# Manual: publishes @hellsoft/vaka-browser, @hellsoft/vaka-bundler-plugin and @hellsoft/vaka-node from a release tag.
 # Uses npm trusted publishing (OIDC) when configured on npmjs.com, else the NPM_TOKEN secret.
 # See docs/releasing/npm.md.
 on:
@@ -12,7 +12,7 @@ on:
       packages:
         description: "Which packages"
         type: choice
-        options: [all, vaka-browser, vaka-bundler-plugin, vaka-node]
+        options: [all, "@hellsoft/vaka-browser", "@hellsoft/vaka-bundler-plugin", "@hellsoft/vaka-node"]
         default: all
       dry_run:
         description: "Pack and check only; don't publish"
@@ -30,11 +30,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: vaka-browser
+          - name: "@hellsoft/vaka-browser"
             dir: sdks/js
-          - name: vaka-bundler-plugin
+          - name: "@hellsoft/vaka-bundler-plugin"
             dir: sdks/js-bundler
-          - name: vaka-node
+          - name: "@hellsoft/vaka-node"
             dir: sdks/node
     defaults:
       run:

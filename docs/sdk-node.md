@@ -1,6 +1,6 @@
 # Node.js SDK
 
-Package `vaka-node` (source: `sdks/node`). A thin layer on the standard OpenTelemetry Node SDK:
+Package `@hellsoft/vaka-node` (source: `sdks/node`). A thin layer on the standard OpenTelemetry Node SDK:
 traces and logs go to Vaka's [OTLP endpoint](opentelemetry.md), and the SDK adds what
 OpenTelemetry doesn't do well: crash capture, breadcrumbs, per-request user and tags, source
 context, release tagging and feature flags. Errors go to the [ingest API](ingest.md) with the
@@ -9,14 +9,14 @@ active trace id, so an agent can move from an issue to its trace and back. Node.
 Agent-followable install guide: [`/docs/install/node`]({{ENDPOINT}}/docs/install/node).
 
 ```sh
-npm install vaka-node
-node --import vaka-node/register server.js   # reads VAKA_KEY, VAKA_ENDPOINT, VAKA_RELEASE, ...
+npm install @hellsoft/vaka-node
+node --import @hellsoft/vaka-node/register server.js   # reads VAKA_KEY, VAKA_ENDPOINT, VAKA_RELEASE, ...
 ```
 
 or in code, before the framework is imported:
 
 ```ts
-import * as Vaka from 'vaka-node';
+import * as Vaka from '@hellsoft/vaka-node';
 Vaka.init({ key: 'vk_...', endpoint: 'https://vaka.example.com', release: '2.4.0' });
 ```
 
@@ -115,7 +115,7 @@ instrumentation for your framework) to `instrumentations`.
 ```ts
 import { NodeSDK } from '@opentelemetry/sdk-node';
 import { BatchSpanProcessor } from '@opentelemetry/sdk-trace';
-import * as Vaka from 'vaka-node';
+import * as Vaka from '@hellsoft/vaka-node';
 
 const cfg = { endpoint: 'https://vaka.example.com', key: 'vk_...' };
 new NodeSDK({
@@ -126,11 +126,11 @@ Vaka.init({ ...cfg, otel: false, release: '2.4.0' });
 ```
 
 Or skip the SDK's OpenTelemetry entirely and point standard `OTEL_EXPORTER_OTLP_*` variables at
-Vaka ([opentelemetry.md](opentelemetry.md)); `vaka-node` then only adds error capture.
+Vaka ([opentelemetry.md](opentelemetry.md)); `@hellsoft/vaka-node` then only adds error capture.
 
 ## ES modules
 
-The preload (`--import vaka-node/register`) also registers OpenTelemetry's ESM loader hook, so
+The preload (`--import @hellsoft/vaka-node/register`) also registers OpenTelemetry's ESM loader hook, so
 `import express from 'express'` is instrumented. With an `instrument.mjs` of your own, load it
 with `--import` and register the hook yourself if you need ESM instrumentation:
 `module.register('@opentelemetry/instrumentation/hook.mjs', import.meta.url)`.

@@ -1,5 +1,6 @@
 {
-  "name": "vaka-browser",
+  "name": "@hellsoft/vaka-browser",
+  "publishConfig": {"access": "public"},
   "version": "0.2.0",
   "description": "Vaka browser SDK: crash reporting and cookieless analytics",
   "license": "MIT OR Apache-2.0",

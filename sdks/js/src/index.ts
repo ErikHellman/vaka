@@ -1,7 +1,7 @@
 /**
  * Vaka browser SDK: crash reporting and cookieless analytics.
  *
- *   import * as Vaka from 'vaka-browser';
+ *   import * as Vaka from '@hellsoft/vaka-browser';
  *   Vaka.init({ key: 'vk_...', endpoint: 'https://vaka.example.com', release: '1.2.3' });
  *   Vaka.track('signup', { plan: 'pro' });
  */

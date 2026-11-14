@@ -1,5 +1,6 @@
 {
-  "name": "vaka-node",
+  "name": "@hellsoft/vaka-node",
+  "publishConfig": {"access": "public"},
   "version": "0.2.0",
   "description": "Vaka Node.js SDK: crash reporting, OpenTelemetry tracing and logs, feature flags",
   "license": "MIT OR Apache-2.0",

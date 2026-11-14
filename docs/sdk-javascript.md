@@ -1,6 +1,6 @@
 # JavaScript browser SDK
 
-Package `vaka-browser` (source: `sdks/js`). About 3 KB gzipped, no dependencies.
+Package `@hellsoft/vaka-browser` (source: `sdks/js`). About 3 KB gzipped, no dependencies.
 Also served by every Vaka instance at `{{ENDPOINT}}/sdk/vaka.js`.
 
 Agent-followable install guide: [`/docs/install/javascript`]({{ENDPOINT}}/docs/install/javascript)
@@ -57,7 +57,7 @@ Data is batched and sent every few seconds, and with `navigator.sendBeacon` when
 
 ## Source maps
 
-Build with source maps and upload them per release with the `vaka-bundler-plugin` package
+Build with source maps and upload them per release with the `@hellsoft/vaka-bundler-plugin` package
 (`vakaVite()` for Vite and Rollup, `new VakaWebpackPlugin()` for webpack) or with
 `vaka upload sourcemaps` (see [CLI](cli.md)). The plugin uses the bundler's `base` /
 `output.publicPath` as the URL prefix, so names match what browsers load.

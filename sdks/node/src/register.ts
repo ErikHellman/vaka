@@ -2,8 +2,8 @@
  * Preload entry: initializes Vaka from environment variables before the app loads, so
  * OpenTelemetry can instrument `http`, Express and friends.
  *
- *   VAKA_KEY=vk_... VAKA_ENDPOINT=https://vaka.example.com node --import vaka-node/register app.js
- *   (CommonJS: node --require vaka-node/register app.js)
+ *   VAKA_KEY=vk_... VAKA_ENDPOINT=https://vaka.example.com node --import @hellsoft/vaka-node/register app.js
+ *   (CommonJS: node --require @hellsoft/vaka-node/register app.js)
  */
 import * as nodeModule from 'node:module';
 import { pathToFileURL } from 'node:url';
