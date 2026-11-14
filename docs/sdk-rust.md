@@ -6,7 +6,7 @@ works with or without an async runtime.
 Agent-followable install guide: [`/docs/install/rust`]({{ENDPOINT}}/docs/install/rust).
 
 ```toml
-vaka-sdk = { git = "https://github.com/ErikHellman/vaka", features = ["tracing"] }
+vaka-sdk = { version = "0.2", features = ["tracing"] }
 ```
 
 ## Config

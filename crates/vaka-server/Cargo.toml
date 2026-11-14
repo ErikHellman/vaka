@@ -3,6 +3,7 @@ name = "vaka-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 anyhow = "1.0.104"
