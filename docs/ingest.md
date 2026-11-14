@@ -213,6 +213,11 @@ batch.
 - `message` is required, at most 5000 characters. `email` and `name` are optional contact details.
 - `id`: client-generated (UUID); a retry with the same id is stored once.
 - `event_id`: the error event the feedback is about; Vaka links it to that event's issue.
+- `issue`: an issue id or short id (`API-12`) to link instead, for feedback forwarded by a
+  backend. Unknown issues and issues of other projects are ignored. `event_id` wins when both
+  resolve.
+- Rate limits count per client address. A backend forwarding its users' feedback should send the
+  end user's address in `X-Forwarded-For`.
 - `source`: `widget`, `crash_prompt` or `api` (default). Mobile apps send `screen` instead of `url`.
 - Also accepts the common fields: `timestamp`, `release`, `environment`, `platform`, `anon_id`,
   `device`.
