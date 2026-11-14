@@ -433,6 +433,57 @@ curl -sf "${M[@]}" -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"metho
 send '{"items":[{"type":"error","release":"1.0.2","exception":{"type":"TypeError","value":"x is undefined","stacktrace":[{"function":"render","filename":"app.js","lineno":12,"in_app":true},{"function":"main","filename":"app.js","lineno":2}]}}]}'
 sleep 2
 [ "$(curl -sf "${A[@]}" "$VAKA/api/v1/issues/$SHORT" | j 'd["status"]')" = "open" ] || fail regression
+# User feedback
+FHOOK=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d "{\"project\":\"$SLUG\",\"trigger\":\"new_feedback\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/feedback\",\"filters\":{\"linked_to_issue\":true}}" | j 'd["id"]') || fail "feedback rule"
+curl -s "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d "{\"project\":\"$SLUG\",\"trigger\":\"new_feedback\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:1/x\",\"filters\":{\"sentiment\":\"angry\"}}" | grep -q 'sentiment must be' || fail "feedback filter validation"
+EID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+send "{\"items\":[{\"type\":\"error\",\"event_id\":\"$EID\",\"release\":\"1.0.2\",\"session_id\":\"fs1\",\"user\":{\"id\":\"u9\"},\"exception\":{\"type\":\"FeedbackSmokeError\",\"value\":\"boom\",\"stacktrace\":[{\"function\":\"pay\",\"filename\":\"app.js\",\"lineno\":7,\"in_app\":true}]}}]}"
+sleep 2
+FB1="{\"items\":[{\"type\":\"feedback\",\"id\":\"fb-smoke-1\",\"message\":\"It crashed when I paid. token=abc123secret\",\"email\":\"Bob@Example.com\",\"event_id\":\"$EID\",\"source\":\"crash_prompt\",\"release\":\"1.0.2\",\"session_id\":\"fs1\",\"user_id\":\"u1\",\"flags\":{\"new_checkout\":\"b\"}}]}"
+send "$FB1" | grep -q '"accepted":1' || fail "feedback batch"
+send "$FB1" | grep -q '"accepted":1' || fail "feedback retry"
+PNG=$(mktemp --suffix=.png)
+python3 -c '
+import struct, sys, zlib
+w, h = 64, 40
+raw = b"".join(b"\x00" + b"\x20\x60\xc0\xff" * w for _ in range(h))
+def chunk(t, d): return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+open(sys.argv[1], "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+' "$PNG"
+FB2=$(curl -sf -X POST "$VAKA/ingest/v1/feedback" -H "x-vaka-key: $KEY" -H 'x-vaka-sdk: smoke/1' -F 'feedback={"message":"Love the new dark mode!","session_id":"fs2","release":"1.0.2","flags":{"new_checkout":"a"},"url":"https://shop.example.com/settings?ref=x"};type=application/json' -F "screenshot=@$PNG;type=image/png") || fail "feedback multipart"
+FB2ID=$(echo "$FB2" | j 'd["id"]')
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$VAKA/ingest/v1/feedback" -H "x-vaka-key: $KEY" -F 'feedback={"message":"x"};type=application/json' -F "screenshot=@$0;type=image/png")" = "400" ] || fail "feedback non-image accepted"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$VAKA/ingest/v1/feedback" -H "x-vaka-key: $KEY" -H 'content-type: application/json' -d '{"message":"  "}')" = "400" ] || fail "empty feedback accepted"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$VAKA/ingest/v1/feedback" -H 'content-type: application/json' -d '{"message":"hi"}')" = "401" ] || fail "feedback without key"
+for i in 1 2 3 4 5; do curl -sf -o /dev/null -X POST "$VAKA/ingest/v1/feedback" -H "x-vaka-key: $KEY" -H 'content-type: application/json' -d "{\"message\":\"spam $i\",\"session_id\":\"fs3\"}" || fail "feedback $i"; done
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$VAKA/ingest/v1/feedback" -H "x-vaka-key: $KEY" -H 'content-type: application/json' -d '{"message":"spam 6","session_id":"fs3"}')" = "429" ] || fail "feedback session rate limit"
+FL=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/feedback?session=fs1")
+[ "$(echo "$FL" | j 'len(d["feedback"])')" = "1" ] || fail "feedback dedupe: $FL"
+[ "$(echo "$FL" | j 'd["feedback"][0]["contact_email"]')" = "bob@example.com" ] || fail "feedback email: $FL"
+echo "$FL" | j 'd["feedback"][0]["message"]' | grep -q 'token=\[Filtered\]' || fail "feedback scrub: $FL"
+FISSUE=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/issues?since=1h&query=FeedbackSmokeError" | j 'd["issues"][0]["short_id"]')
+[ "$(echo "$FL" | j 'd["feedback"][0]["issue_short_id"]')" = "$FISSUE" ] || fail "feedback crash link ($FISSUE): $FL"
+FSHORT=$(echo "$FL" | j 'd["feedback"][0]["short_id"]')
+echo "feedback $FSHORT about $FISSUE"
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/feedback?has_screenshot=true" | j '[f["message"] for f in d["feedback"]]')" = "['Love the new dark mode!']" ] || fail "feedback screenshot filter"
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/feedback?flag=new_checkout=b" | j 'len(d["feedback"])')" = "1" ] || fail "feedback flag filter"
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/feedback/$FB2ID/attachments/0" | wc -c)" = "$(wc -c < "$PNG")" ] || fail "feedback attachment bytes"
+curl -sfI "${A[@]}" "$VAKA/api/v1/feedback/$FB2ID/attachments/0" | grep -qi 'content-type: image/png' || fail "feedback attachment type"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$VAKA/api/v1/feedback/$FB2ID/attachments/0")" = "401" ] || fail "attachment without auth"
+[ "$(curl -sf "${A[@]}" -X PATCH "$VAKA/api/v1/feedback/$FSHORT" -d '{"status":"triaged","topics":["Checkout","payments"]}' | j '(d["status"], d["topics"])')" = "('triaged', ['checkout', 'payments'])" ] || fail "feedback update"
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/feedback/summary?by=flag&flag=new_checkout" | j 'sorted(b["key"] for b in d["buckets"])')" = "['(not set)', 'a', 'b']" ] || fail "feedback summary"
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/feedback/summary?by=topic" | j '[b["key"] for b in d["buckets"]][:2]')" = "['(none)', 'checkout']" ] || fail "feedback topic summary"
+[ "$(curl -sf "${A[@]}" "$VAKA/api/v1/issues/$FISSUE" | j 'd["feedback"]["count"]')" = "1" ] || fail "issue feedback"
+curl -sf "${A[@]}" "$VAKA/api/v1/projects/$SLUG/sessions/fs1/timeline" | j '[e["kind"] for e in d["timeline"]]' | grep -q feedback || fail "timeline feedback"
+curl -sf -b "$JAR" "$VAKA/ui/projects/$SLUG/feedback" | grep -q 'Love the new dark mode' || fail "feedback admin page"
+MF=$(curl -sf -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"tools/call\",\"params\":{\"name\":\"get_feedback\",\"arguments\":{\"feedback\":\"$FB2ID\"}}}")
+[ "$(echo "$MF" | j '[(c["type"], c.get("mimeType")) for c in d["result"]["content"]]')" = "[('text', None), ('image', 'image/png')]" ] || fail "mcp get_feedback image"
+for i in $(seq 1 30); do grep -q '^/feedback ' "$HOOKS" && break; sleep 1; done
+grep '^/feedback ' "$HOOKS" | grep -q "\"short_id\":\"$FSHORT\"" || fail "feedback alert: $(grep '^/feedback ' "$HOOKS")"
+grep '^/feedback ' "$HOOKS" | grep -q 'bob@example.com' && fail "feedback alert leaked the email"
+[ "$(grep -c '^/feedback ' "$HOOKS")" = "1" ] || fail "feedback alert filter: $(grep '^/feedback ' "$HOOKS")"
 # GDPR
-curl -sf "${A[@]}" -X DELETE "$VAKA/api/v1/projects/$SLUG/users/u1" | j 'd["errors"]' | grep -q 1 || fail gdpr
+GD=$(curl -sf "${A[@]}" -X DELETE "$VAKA/api/v1/projects/$SLUG/users/u1")
+echo "$GD" | j 'd["errors"]' | grep -q 1 || fail "gdpr: $GD"
+[ "$(echo "$GD" | j 'd["feedback"]')" = "1" ] || fail "gdpr feedback: $GD"
 echo "SMOKE OK"

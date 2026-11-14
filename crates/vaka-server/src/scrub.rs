@@ -47,6 +47,14 @@ impl Scrubber {
         CARD.replace_all(&s, "[card]").to_string()
     }
 
+    /// Free text a person wrote on purpose (user feedback): secrets and card numbers are
+    /// filtered, but email addresses are kept.
+    pub fn scrub_text(&self, s: &str) -> String {
+        let s = BEARER.replace_all(s, "$1 [Filtered]");
+        let s = KV_SECRET.replace_all(&s, "$1=[Filtered]");
+        CARD.replace_all(&s, "[card]").to_string()
+    }
+
     pub fn scrub_value(&self, v: &mut Value) {
         match v {
             Value::String(s) => *s = self.scrub_str(s),

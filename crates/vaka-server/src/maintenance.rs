@@ -50,6 +50,7 @@ pub async fn enforce_retention(state: &AppState) -> anyhow::Result<()> {
                 )
                 .await?;
         }
+        crate::feedback::enforce_retention(state, &p).await?;
     }
     Ok(())
 }
@@ -61,6 +62,7 @@ pub struct ErasureResult {
     pub errors: u64,
     pub events: u64,
     pub sessions: u64,
+    pub feedback: u64,
 }
 
 /// Delete everything stored for `user_id` in a project (GDPR right to erasure).
@@ -85,12 +87,15 @@ pub async fn erase_user(state: &AppState, project_id: &str, user_id: &str, actor
     for table in ["spans", "logs"] {
         state.ch.execute_with(&format!("DELETE FROM {table} WHERE project_id = {{p:String}} AND user_id = {{u:String}}"), &params).await?;
     }
-    crate::auth::audit(state, actor, "erase_user", project_id, &format!("user_id={user_id} errors={} events={} sessions={}", counts[0], counts[1], counts[2])).await;
+    // Feedback is matched by user id, and by contact email when the id is an email address.
+    let feedback = crate::feedback::erase_user(state, project_id, user_id).await?;
+    crate::auth::audit(state, actor, "erase_user", project_id, &format!("user_id={user_id} errors={} events={} sessions={} feedback={feedback}", counts[0], counts[1], counts[2])).await;
     Ok(ErasureResult {
         project_id: project_id.into(),
         user_id: user_id.into(),
         errors: counts[0],
         events: counts[1],
         sessions: counts[2],
+        feedback,
     })
 }

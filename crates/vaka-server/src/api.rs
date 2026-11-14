@@ -85,6 +85,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/projects/{p}/artifacts/{id}", delete(delete_artifact))
         .route("/api/v1/projects/{p}/users/{user_id}", delete(erase_user))
         .route("/api/v1/projects/{p}/install/{platform}", get(install_instructions))
+        .route("/api/v1/projects/{p}/feedback", get(list_feedback))
+        .route("/api/v1/projects/{p}/feedback/summary", get(feedback_summary))
+        .route("/api/v1/feedback/{id}", get(get_feedback).patch(update_feedback))
+        .route("/api/v1/feedback/{id}/attachments/{n}", get(feedback_attachment))
         .route("/api/v1/issues/{id}", get(get_issue).patch(update_issue))
         .route("/api/v1/issues/{id}/events", get(issue_events))
         .route("/api/v1/issues/{id}/comments", post(comment_issue))
@@ -99,6 +103,38 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/users/invite", post(invite_user))
         .route("/api/v1/users/{id}", patch(update_user).delete(delete_user))
         .route("/api/v1/openapi.json", get(|| async { Json(crate::openapi::spec()) }))
+}
+
+async fn list_feedback(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(mut q): Query<crate::feedback::ListParams>) -> J {
+    q.project = project;
+    Ok(Json(crate::feedback::list(&s, &p, q).await?))
+}
+
+async fn feedback_summary(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(mut q): Query<crate::feedback::SummaryParams>) -> J {
+    q.project = project;
+    Ok(Json(crate::feedback::summary(&s, &p, q).await?))
+}
+
+async fn get_feedback(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {
+    Ok(Json(crate::feedback::get(&s, &p, &id).await?))
+}
+
+async fn update_feedback(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Json(u): Json<crate::feedback::Update>) -> J {
+    Ok(Json(crate::feedback::update(&s, &p, &id, u).await?))
+}
+
+async fn feedback_attachment(State(s): State<AppState>, p: Principal, Path((id, n)): Path<(String, i64)>) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
+    let (ct, bytes) = crate::feedback::attachment(&s, &p, &id, n).await?;
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, ct),
+            (axum::http::header::CACHE_CONTROL, "private, max-age=3600".to_string()),
+            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+        ],
+        bytes,
+    )
+        .into_response())
 }
 
 async fn me(p: Principal) -> J {

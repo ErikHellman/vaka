@@ -100,7 +100,12 @@ pub fn spec() -> Value {
             "/api/v1/users": {"get": op("List users (admin)", &[], None)},
             "/api/v1/users/invite": {"post": op("Invite a user (admin)", &[], Some("{email, role: viewer|member|admin|owner}"))},
             "/api/v1/users/{id}": {"patch": op("Update user role or disable (admin)", &[id], Some("{role?, disabled?}")), "delete": op("Delete user (admin)", &[id], None)},
-            "/ingest/v1/batch": {"post": {"summary": "Ingest a batch of errors, sessions and events (ingest key in X-Vaka-Key)", "security": [], "responses": {"202": {"description": "{accepted, rejected[]}"}}}},
+            "/ingest/v1/batch": {"post": {"summary": "Ingest a batch of errors, sessions, events, spans and feedback (ingest key in X-Vaka-Key)", "security": [], "responses": {"202": {"description": "{accepted, rejected[]}"}}}},
+            "/ingest/v1/feedback": {"post": {"summary": "Send user feedback: a JSON object {message, email?, name?, event_id?, source?, user_id?, session_id?, release?, url?, device?, flags?, tags?}, or multipart/form-data with a `feedback` JSON part and up to 3 PNG/JPEG/WebP images (5 MB each). Rate-limited per IP and session.", "security": [], "responses": {"202": {"description": "{id, short_id, issue_id?, duplicate?}"}, "429": {"description": "rate limited"}}}},
+            "/api/v1/projects/{p}/feedback": {"get": op("List user feedback (newest first)", &[p, ("status", "query", false), ("sentiment", "query", false), ("topic", "query", false), ("release", "query", false), ("environment", "query", false), ("platform", "query", false), ("source", "query", false), ("flag", "query", false), ("issue", "query", false), ("user", "query", false), ("session", "query", false), ("has_screenshot", "query", false), ("query", "query", false), since, ("limit", "query", false), ("offset", "query", false)], None)},
+            "/api/v1/projects/{p}/feedback/summary": {"get": op("Feedback counts by sentiment, topic, release, flag, day, status, platform or source with sample quotes", &[p, ("by", "query", false), ("flag", "query", false), since, ("include_closed", "query", false), ("limit", "query", false)], None)},
+            "/api/v1/feedback/{id}": {"get": op("One feedback item (id or short id like WEB-F3) with context", &[id], None), "patch": op("Triage feedback", &[id], Some("{status?, assignee?, sentiment?, topics?, issue?}"))},
+            "/api/v1/feedback/{id}/attachments/{n}": {"get": op("Screenshot bytes", &[id, ("n", "path", true)], None)},
         }
     })
 }

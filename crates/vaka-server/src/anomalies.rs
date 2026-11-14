@@ -682,7 +682,7 @@ pub async fn narrative(state: &AppState, payload: &Value) -> (String, &'static s
 
 const NARRATIVE_SYSTEM: &str = "You write the opening paragraph of a scheduled monitoring digest that engineers read in Slack or email. \
 You get the digest data as JSON: per project, totals for the period and a list of detected anomalies with plain-English sentences, \
-baselines and evidence. Write 2 to 4 sentences of plain prose (no headings, no bullet points, no markdown) that say what matters most \
+baselines and evidence, plus user feedback counts with a sentiment split and quotes when there is any. Write 2 to 4 sentences of plain prose (no headings, no bullet points, no markdown) that say what matters most \
 and why: lead with the most severe or user-facing change, connect related findings (for example a new release and a crash-rate drop), \
 and say when nothing needs attention. Use only facts in the data, keep issue ids like WEB-12 and release names exactly as given, and do not \
 speculate about causes the data does not show.";
