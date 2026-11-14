@@ -3,6 +3,7 @@ package se.hellsoft.vaka.sample
 import android.app.Application
 import se.hellsoft.vaka.Vaka
 import se.hellsoft.vaka.VakaConfig
+import se.hellsoft.vaka.VakaFeedbackOptions
 
 class SampleApp : Application() {
     override fun onCreate() {
@@ -17,5 +18,6 @@ class SampleApp : Application() {
                 debug = BuildConfig.DEBUG,
             ),
         )
+        Vaka.installFeedback(VakaFeedbackOptions(crashPrompt = true))
     }
 }

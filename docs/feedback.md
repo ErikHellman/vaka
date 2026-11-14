@@ -5,8 +5,8 @@ stored next to your crashes, linked to the crash it is about, tagged with sentim
 and readable by agents through the [REST API](api.md#user-feedback) and the
 [MCP server](mcp.md).
 
-- **Widget**: a floating "Feedback" button for web apps (Android and iOS widgets are coming),
-  with an optional screenshot and email field.
+- **Widget**: a floating "Feedback" button for web and Android apps (iOS is coming), with an
+  optional screenshot and email field.
 - **Crash prompt**: after an uncaught error, ask "what were you doing?". The answer is linked to
   that crash's issue.
 - **API**: `captureFeedback()` in the SDKs, or `POST /ingest/v1/feedback` from anywhere.
@@ -52,6 +52,19 @@ The widget renders the visible part of the page to a JPEG in the browser (no ext
 permission prompt). The user sees it and can untick it before sending. Password fields and
 anything marked `data-vaka-mask` are blacked out; canvases, videos and iframes appear as empty
 boxes. Turn screenshots off with `screenshot: false`.
+
+## Android widget
+
+```kotlin
+Vaka.init(this, VakaConfig(...))
+Vaka.installFeedback(VakaFeedbackOptions(crashPrompt = true))
+
+Vaka.showFeedback(activity)   // open it from your own menu item
+```
+
+The crash prompt appears on the first screen of the next launch after a JVM or native crash.
+Screenshots skip `FLAG_SECURE` windows and black out password fields and views passed to
+`Vaka.maskInScreenshots(view)`. See the [Android SDK](sdk-android.md#user-feedback) for every option.
 
 ## Sending feedback from code
 
