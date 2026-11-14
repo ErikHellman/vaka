@@ -1,7 +1,13 @@
 # @hellsoft/vaka-bundler-plugin
 
+[![npm](https://img.shields.io/npm/v/@hellsoft/vaka-bundler-plugin)](https://www.npmjs.com/package/@hellsoft/vaka-bundler-plugin)
+
 Uploads JavaScript source maps to [Vaka](https://vaka.hellsoft.se) after Vite, Rollup and webpack
 builds, so stack traces resolve to original files and lines. No dependencies, Node 18+.
+
+```sh
+npm install --save-dev @hellsoft/vaka-bundler-plugin
+```
 
 ```js
 // vite.config.js
