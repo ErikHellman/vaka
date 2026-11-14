@@ -1,0 +1,6 @@
+<!-- Loaded after low-memory.xml (zz- prefix), so these values win. The container is capped at 2 GB
+     in deploy/hetzner/compose.yml; ClickHouse uses the smaller of the two limits below. -->
+<clickhouse>
+    <max_server_memory_usage>1700000000</max_server_memory_usage>
+    <max_server_memory_usage_to_ram_ratio>0.85</max_server_memory_usage_to_ram_ratio>
+</clickhouse>

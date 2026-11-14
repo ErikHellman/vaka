@@ -48,6 +48,10 @@ kept in the `vaka-data`, `clickhouse-data`, `postgres-data` and `caddy-data` vol
 To use your own reverse proxy (nginx, Traefik, Cloudflare Tunnel) instead of Caddy, leave the
 profile off and proxy to port 8080. `deploy/docker/Caddyfile` shows the minimal config.
 
+On a fresh 2 vCPU / 4 GB VM (Hetzner CX23 or similar, Ubuntu 24.04), `deploy/hetzner/setup.sh` does
+the host setup (user, key-only SSH, firewall, swap, Docker) and writes a `.env` with memory caps for
+small hosts; `deploy/hetzner/README.md` also covers moving an existing Fly.io instance there.
+
 Running ClickHouse somewhere that can't mount config files (Render, Railway, Kubernetes)? Build
 `deploy/clickhouse/Dockerfile`, which bakes the low-memory profile into the image.
 

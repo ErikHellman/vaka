@@ -1,0 +1,15 @@
+# Single-VM overrides for a small host (Hetzner CX23: 2 vCPU, 4 GB RAM). Enabled by setup.sh via
+#   COMPOSE_FILE=docker-compose.yml:deploy/hetzner/compose.yml   (in .env)
+# Paths are relative to the repository root.
+services:
+  clickhouse:
+    # Hard cap for the container; ClickHouse itself stays under ~1.6 GB (clickhouse-memory.xml),
+    # leaving the rest of the 4 GB for Vaka, Caddy, the page cache and the OS.
+    mem_limit: ${CLICKHOUSE_MEM_LIMIT:-2g}
+    volumes:
+      - ./deploy/hetzner/clickhouse-memory.xml:/etc/clickhouse-server/config.d/zz-hetzner-memory.xml:ro
+  vaka:
+    mem_limit: ${VAKA_MEM_LIMIT:-1g}
+    environment:
+      # Per-query budget for dashboard/API/MCP reads; must fit inside ClickHouse's cap.
+      VAKA_CH_MAX_MEMORY_MB: ${VAKA_CH_MAX_MEMORY_MB:-1024}
