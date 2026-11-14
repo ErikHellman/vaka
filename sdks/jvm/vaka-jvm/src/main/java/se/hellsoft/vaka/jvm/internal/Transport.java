@@ -20,4 +20,7 @@ public interface Transport {
 
     /** POST {@code json} to {@code path} (such as {@code /ingest/v1/batch}). Never throws. */
     Response post(String path, String json, Duration timeout);
+
+    /** POST an uncompressed body with extra headers (used for feedback uploads). Never throws. */
+    Response post(String path, String contentType, byte[] body, java.util.Map<String, String> headers, Duration timeout);
 }

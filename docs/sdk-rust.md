@@ -51,6 +51,28 @@ req.finish();                                  // or drop it
 With feature `tracing`, `vaka_sdk::tracing_layer::VakaLayer` turns `tracing` events into
 breadcrumbs, and `error!` events into Vaka errors.
 
+## User feedback
+
+Forward what users wrote in your own forms (support, contact, in-app chat). The call blocks until
+the server answers, so call it from `spawn_blocking` in async code.
+
+```rust
+let r = vaka_sdk::capture_feedback(vaka_sdk::Feedback {
+    message: form.message,
+    email: form.email,                    // optional contact
+    issue: Some("API-12".into()),         // or event_id: vaka_sdk::last_event_id()
+    ip: Some(client_ip.to_string()),
+    attachments: vec![vaka_sdk::Attachment { filename: "screenshot.png".into(), content_type: None, data: png }],
+    ..Default::default()
+})?;
+println!("{}", r.short_id); // "API-F12"
+```
+
+Errors are `FeedbackError::NotInitialized`, `Invalid`, `Status(code, message)` (429: rate
+limited) or `Transport`. `last_event_id()` returns the id of the last error, message or panic sent.
+
+Link it to a crash with the event id from a capture call, or to an issue by its short id (`API-12`). Pass the end user's IP address: feedback is rate limited per address (10 an hour by default), so without it all feedback from your server shares one limit. Vaka believes the address only from backends on a private network or listed in `VAKA_TRUSTED_PROXIES`. Rejected feedback raises an error with the HTTP status; 429 means a limit was hit. See [user feedback](feedback.md).
+
 ## Panics and symbols
 
 Panics are captured in the panic hook and sent synchronously, so they arrive even when

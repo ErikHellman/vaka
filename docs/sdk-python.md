@@ -81,6 +81,29 @@ def handle(event, context): ...
 Scopes follow `contextvars`, so each asyncio task keeps its own. A new thread starts on the
 global scope; use `contextvars.copy_context().run` to carry a request scope into one.
 
+## User feedback
+
+Forward what users wrote in your own forms (support, contact, in-app chat). It is sent right away
+(a blocking call) with the scope's user, tags and flags.
+
+```python
+r = vaka.capture_feedback(
+    form["message"],
+    email=form.get("email"),          # optional contact
+    issue="API-12",                   # or event_id=vaka.capture_exception(e)
+    ip=request.remote_addr,
+    attachments=[("screenshot.png", data)],
+)
+print(r.short_id)                     # "API-F12"
+```
+
+Keyword arguments: `email`, `name`, `event_id`, `issue`, `user_id`, `session_id`, `url`, `ip`,
+`tags`, `attachments` (up to 3 `(filename, bytes[, content_type])` PNG, JPEG or WebP images of
+5 MB), `timeout`. It raises `vaka.FeedbackError` with `.status` (429: rate limited). In async code
+call it with `await asyncio.to_thread(vaka.capture_feedback, ...)`.
+
+Link it to a crash with the event id from a capture call, or to an issue by its short id (`API-12`). Pass the end user's IP address: feedback is rate limited per address (10 an hour by default), so without it all feedback from your server shares one limit. Vaka believes the address only from backends on a private network or listed in `VAKA_TRUSTED_PROXIES`. Rejected feedback raises an error with the HTTP status; 429 means a limit was hit. See [user feedback](feedback.md).
+
 ## Frameworks
 
 | Framework | Setup |

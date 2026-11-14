@@ -57,6 +57,29 @@ Kotlin uses the same calls (`Vaka.track("signup", mapOf("plan" to "pro"))`).
 | `shutdownHook` | `true` | close (end session, flush) on JVM shutdown |
 | `debug` | `false` | log SDK activity to stderr |
 
+## User feedback
+
+Forward what users wrote in your own forms (support, contact, in-app chat). The call blocks until
+the server answers and carries the current scope's user, tags and flags.
+
+```java
+try {
+    FeedbackResult r = Vaka.captureFeedback(Feedback.of(form.message())
+        .email(form.email())            // optional contact
+        .issue("API-12")                // or .eventId(Vaka.captureException(e))
+        .ip(request.getRemoteAddr())
+        .attachment("screenshot.png", png));
+    return r.shortId;                   // "API-F12"
+} catch (FeedbackException e) {
+    if (e.status() == 429) { /* rate limited */ }
+}
+```
+
+Builder methods: `email`, `name`, `eventId`, `issue`, `userId`, `sessionId`, `url`, `ip`, `tag`,
+`attachment` (up to 3 PNG, JPEG or WebP images of 5 MB).
+
+Link it to a crash with the event id from a capture call, or to an issue by its short id (`API-12`). Pass the end user's IP address: feedback is rate limited per address (10 an hour by default), so without it all feedback from your server shares one limit. Vaka believes the address only from backends on a private network or listed in `VAKA_TRUSTED_PROXIES`. Rejected feedback raises an error with the HTTP status; 429 means a limit was hit. See [user feedback](feedback.md).
+
 ## Scopes: users, tags and breadcrumbs per request
 
 There is one global scope. A server should give each request its own `VakaScope`; it lives on the

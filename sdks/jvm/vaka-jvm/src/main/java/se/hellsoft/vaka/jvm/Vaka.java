@@ -75,6 +75,19 @@ public final class Vaka {
         return c != null ? c.captureMessage(message, level) : null;
     }
 
+    /**
+     * Forwards feedback a user wrote (a support form, in-app chat) to Vaka. Blocks until the
+     * server answers.
+     *
+     * @throws FeedbackException when the SDK is not initialised, the feedback is invalid or the
+     *     server refused it ({@link FeedbackException#status()} 429 means a rate limit was hit)
+     */
+    public static FeedbackResult captureFeedback(Feedback feedback) {
+        VakaClient c = current;
+        if (c == null) throw new FeedbackException("vaka is not initialized", 0);
+        return c.captureFeedback(feedback);
+    }
+
     /** Adds a breadcrumb to the current scope; the last 100 are sent with the next error. */
     public static void addBreadcrumb(String category, String message) { addBreadcrumb(category, message, Level.INFO, null); }
 

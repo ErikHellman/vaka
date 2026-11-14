@@ -16,6 +16,7 @@ class FakeVaka:
         self.requests = []  # (path, headers, body bytes)
         self.statuses = []  # queued status codes for /ingest/v1/batch
         self.flags = {"new_checkout": "one_page", "beta": False, "dark_mode": True}
+        self.feedback_status = 202
         self.lock = threading.Lock()
         fake = self
 
@@ -33,6 +34,9 @@ class FakeVaka:
                     status = fake.statuses.pop(0) if self.path.startswith("/ingest/v1/batch") and fake.statuses else None
                 if self.path.startswith("/ingest/v1/flags"):
                     self._reply(200, {"flags": fake.flags, "details": {}})
+                elif self.path.startswith("/ingest/v1/feedback"):
+                    st = fake.feedback_status
+                    self._reply(st, {"id": "fb-1", "short_id": "API-F1"} if st == 202 else {"error": "too much feedback"})
                 elif self.path.startswith("/ingest/otlp"):
                     self._reply(200, {}, content_type=self.headers.get("Content-Type", "application/json"), raw=b"")
                 elif status:

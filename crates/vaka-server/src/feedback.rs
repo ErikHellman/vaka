@@ -47,6 +47,10 @@ pub struct FeedbackItem {
     /// The error event this feedback is about (crash prompts).
     #[serde(default)]
     pub event_id: Option<String>,
+    /// An issue this feedback is about (id or short id like `API-12`), for backend SDKs that
+    /// forward feedback from the app's own forms. `event_id` wins when both resolve.
+    #[serde(default, alias = "issue_id")]
+    pub issue: Option<String>,
     /// widget | crash_prompt | api
     #[serde(default)]
     pub source: Option<String>,
@@ -328,7 +332,16 @@ pub async fn ingest(state: &AppState, project: &ProjectInfo, ctx: &RequestCtx, i
         false => url,
     };
     let event_id = item.event_id.as_deref().filter(|e| uuid::Uuid::parse_str(e).is_ok()).map(|e| e.to_lowercase()).unwrap_or_default();
-    let issue_id = if event_id.is_empty() { None } else { issue_for_event(state, &project.id, &event_id).await };
+    let mut issue_id = if event_id.is_empty() { None } else { issue_for_event(state, &project.id, &event_id).await };
+    if issue_id.is_none() {
+        if let Some(i) = item.issue.as_deref().map(str::trim).filter(|i| !i.is_empty()) {
+            if let Ok(Some(issue)) = crate::query::get_issue_row(state, i).await {
+                if issue["project_id"].as_str() == Some(project.id.as_str()) {
+                    issue_id = issue["id"].as_str().map(String::from);
+                }
+            }
+        }
+    }
     let now = now_ms();
     let created = item.timestamp.as_ref().and_then(crate::util::parse_timestamp).filter(|t| *t <= now + 60_000).unwrap_or(now);
     let user_id = item.user_id.clone().or_else(|| item.user.as_ref().and_then(|u| u.id.clone())).unwrap_or_default();

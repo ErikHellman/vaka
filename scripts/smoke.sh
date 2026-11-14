@@ -482,6 +482,11 @@ for i in $(seq 1 30); do grep -q '^/feedback ' "$HOOKS" && break; sleep 1; done
 grep '^/feedback ' "$HOOKS" | grep -q "\"short_id\":\"$FSHORT\"" || fail "feedback alert: $(grep '^/feedback ' "$HOOKS")"
 grep '^/feedback ' "$HOOKS" | grep -q 'bob@example.com' && fail "feedback alert leaked the email"
 [ "$(grep -c '^/feedback ' "$HOOKS")" = "1" ] || fail "feedback alert filter: $(grep '^/feedback ' "$HOOKS")"
+# Backend SDKs: link by issue short id, end user's address in X-Forwarded-For
+FB3=$(curl -sf -X POST "$VAKA/ingest/v1/feedback" -H "x-vaka-key: $KEY" -H 'x-forwarded-for: 198.51.100.7' -H 'content-type: application/json' -d "{\"message\":\"Support form: export is broken\",\"issue\":\"$FISSUE\",\"user_id\":\"u5\"}") || fail "feedback with issue"
+[ "$(echo "$FB3" | j 'd["issue_id"] is not None')" = "True" ] || fail "feedback issue link: $FB3"
+FB4=$(curl -sf -X POST "$VAKA/ingest/v1/feedback" -H "x-vaka-key: $KEY" -H 'x-forwarded-for: 198.51.100.7' -H 'content-type: application/json' -d '{"message":"Unknown issue","issue":"NOPE-999"}') || fail "feedback with unknown issue"
+[ "$(echo "$FB4" | j 'd["issue_id"]')" = "None" ] || fail "feedback unknown issue linked: $FB4"
 # GDPR
 GD=$(curl -sf "${A[@]}" -X DELETE "$VAKA/api/v1/projects/$SLUG/users/u1")
 echo "$GD" | j 'd["errors"]' | grep -q 1 || fail "gdpr: $GD"

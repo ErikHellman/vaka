@@ -102,6 +102,30 @@ Evaluation uses `POST /ingest/v1/flags` with the scope's user id as `distinct_id
 carry them as exposures, and the active span gets `feature_flag.<key>` attributes. On failure
 `getFlag` returns the fallback. See [flags](flags.md).
 
+## User feedback
+
+Forward what users wrote in your own forms (support, contact, in-app chat). It is sent right away
+with the scope's user, tags and flags.
+
+```ts
+app.post('/support', async (req, res) => {
+  const r = await Vaka.captureFeedback({
+    message: req.body.message,
+    email: req.body.email,           // optional contact
+    issue: req.body.issue,           // optional: 'API-12', or eventId from captureException
+    ip: req.ip,
+    attachments: req.file ? [{ filename: req.file.originalname, data: req.file.buffer }] : [],
+  });
+  res.json({ ticket: r.shortId });   // 'API-F12'
+});
+```
+
+Fields: `message` (required), `email`, `name`, `eventId`, `issue`, `userId`, `sessionId`, `url`
+(defaults to the request URL), `ip`, `tags`, `attachments` (up to 3 PNG, JPEG or WebP images of
+5 MB). It rejects with a `FeedbackError` whose `status` is the HTTP status (429: rate limited).
+
+Link it to a crash with the event id from a capture call, or to an issue by its short id (`API-12`). Pass the end user's IP address: feedback is rate limited per address (10 an hour by default), so without it all feedback from your server shares one limit. Vaka believes the address only from backends on a private network or listed in `VAKA_TRUSTED_PROXIES`. Rejected feedback raises an error with the HTTP status; 429 means a limit was hit. See [user feedback](feedback.md).
+
 ## Frameworks
 
 **Express**: `app.use(Vaka.requestHandler())` before routes, `app.use(Vaka.errorHandler())` after.
