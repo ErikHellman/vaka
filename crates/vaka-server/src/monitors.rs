@@ -435,6 +435,9 @@ async fn apply(state: &AppState, mut m: Monitor, c: &CheckResult, now: i64, sche
                 .bind(m.consecutive_fail)
                 .execute(&state.db)
                 .await?;
+            // The snapshot is quick (a few indexed queries) and goes into the alert payload.
+            let ctx = correlate(state, &m, now, &c.check_in_id).await;
+            let _ = sqlx::query("UPDATE monitor_incidents SET context = $1 WHERE id = $2").bind(ctx.to_string()).bind(&incident).execute(&state.db).await;
             if !was_flapping {
                 notify(state, &m, "monitor_down", &incident, json!({"flapping": m.flapping})).await;
             }
@@ -500,6 +503,7 @@ async fn notify(state: &AppState, m: &Monitor, trigger: &str, incident_id: &str,
         "trigger": trigger,
         "project": {"id": project.id, "slug": project.slug, "name": project.name},
         "monitor": {"id": m.id, "slug": m.slug, "name": m.name, "kind": m.kind, "environment": m.environment, "schedule": m.heartbeat().ok().map(|h| h.describe()), "last_error": m.last_error},
+        "context": incident["context"].clone(),
         "incident": incident,
         "details": details,
         "url": format!("{}/ui/projects/{}/monitors/{}", state.config.public_url, project.slug, m.slug),
@@ -509,6 +513,133 @@ async fn notify(state: &AppState, m: &Monitor, trigger: &str, incident_id: &str,
     if let Err(e) = crate::alerts::notify_monitor(state, &project, m, trigger, incident_id, payload).await {
         tracing::warn!("monitor alert failed: {e:#}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Correlation
+// ---------------------------------------------------------------------------
+
+/// Error tag the SDK monitor helpers put on errors captured during a run.
+pub const CHECK_IN_TAG: &str = "monitor.check_in_id";
+const WINDOW_MS: i64 = 15 * 60_000;
+
+/// What else happened around `at` in the monitor's project: recent releases, the issues with
+/// the most errors (new ones flagged), the error rate against its 24 h baseline, top error
+/// logs, and errors tagged with the failed run. Stored on the incident so an agent can see the
+/// likely cause in one call.
+pub async fn correlate(state: &AppState, m: &Monitor, at: i64, check_in_id: &str) -> Value {
+    let mut ctx = serde_json::Map::new();
+    ctx.insert("computed_at".into(), json!(iso_time(now_ms())));
+    ctx.insert("window".into(), json!({"from": iso_time(at - WINDOW_MS), "to": iso_time(at + WINDOW_MS)}));
+
+    if let Ok(rows) = sqlx::query("SELECT version, created_at FROM releases WHERE project_id = $1 AND created_at >= $2 AND created_at <= $3 ORDER BY created_at DESC LIMIT 5")
+        .bind(&m.project_id)
+        .bind(at - 2 * 3_600_000)
+        .bind(at + WINDOW_MS)
+        .fetch_all(&state.db)
+        .await
+    {
+        let releases: Vec<Value> = rows.iter().map(|r| json!({"version": r.s("version"), "created_at": iso_time(r.i("created_at")), "minutes_before": (at - r.i("created_at")) / 60_000})).collect();
+        ctx.insert("recent_releases".into(), json!(releases));
+    }
+
+    let env = m.environment.clone();
+    let p = |extra: Vec<(&'static str, String)>| {
+        let mut v = vec![("p", m.project_id.clone()), ("from", (at - WINDOW_MS).to_string()), ("to", (at + WINDOW_MS).to_string()), ("env", env.clone())];
+        v.extend(extra);
+        v
+    };
+    let issues = state
+        .ch
+        .query(
+            "SELECT issue_id, count() AS events FROM errors WHERE project_id = {p:String} AND timestamp >= fromUnixTimestamp64Milli({from:Int64}) \
+             AND timestamp <= fromUnixTimestamp64Milli({to:Int64}) AND ({env:String} = '' OR environment = {env:String}) GROUP BY issue_id ORDER BY events DESC LIMIT 5",
+            &p(vec![]),
+        )
+        .await
+        .unwrap_or_default();
+    let mut top = Vec::new();
+    for i in issues {
+        let id = i["issue_id"].as_str().unwrap_or("").to_string();
+        if let Ok(Some(r)) = sqlx::query("SELECT i.short_id, i.title, i.first_seen, i.regressed_at, i.status, p.slug FROM issues i JOIN projects p ON p.id = i.project_id WHERE i.id = $1")
+            .bind(&id)
+            .fetch_optional(&state.db)
+            .await
+        {
+            let first = r.i("first_seen");
+            let regressed = oi(&r, "regressed_at");
+            top.push(json!({
+                "id": id,
+                "short_id": crate::query::short_id(&r.s("slug"), r.i("short_id")),
+                "title": r.s("title"),
+                "status": r.s("status"),
+                "events_in_window": i["events"],
+                "new": (first - at).abs() <= WINDOW_MS,
+                "regressed": regressed.map(|t| (t - at).abs() <= WINDOW_MS).unwrap_or(false),
+            }));
+        }
+    }
+    ctx.insert("issues".into(), json!(top));
+
+    if let Ok(rows) = state
+        .ch
+        .query(
+            "SELECT countIf(timestamp >= fromUnixTimestamp64Milli({from:Int64})) AS recent, countIf(timestamp < fromUnixTimestamp64Milli({from:Int64})) AS baseline \
+             FROM errors WHERE project_id = {p:String} AND timestamp >= fromUnixTimestamp64Milli({base:Int64}) AND timestamp <= fromUnixTimestamp64Milli({at:Int64}) \
+             AND ({env:String} = '' OR environment = {env:String})",
+            &[("p", m.project_id.clone()), ("from", (at - 30 * 60_000).to_string()), ("base", (at - 86_400_000).to_string()), ("at", at.to_string()), ("env", env.clone())],
+        )
+        .await
+    {
+        if let Some(r) = rows.first() {
+            let n = |v: &Value| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).unwrap_or(0.0);
+            let recent = n(&r["recent"]);
+            // The baseline covers 23.5 hours: 47 half-hour periods.
+            let per_30m = n(&r["baseline"]) / 47.0;
+            ctx.insert(
+                "error_rate".into(),
+                json!({"last_30m": recent as i64, "baseline_per_30m": (per_30m * 10.0).round() / 10.0, "ratio": if per_30m > 0.0 { Some((recent / per_30m * 10.0).round() / 10.0) } else { None }}),
+            );
+        }
+    }
+
+    let logs = state
+        .ch
+        .query(
+            "SELECT substring(body, 1, 200) AS message, count() AS n, any(trace_id) AS trace_id FROM logs WHERE project_id = {p:String} \
+             AND timestamp >= fromUnixTimestamp64Milli({from:Int64}) AND timestamp <= fromUnixTimestamp64Milli({to:Int64}) AND severity IN ('error', 'fatal') \
+             AND ({env:String} = '' OR environment = {env:String}) GROUP BY message ORDER BY n DESC LIMIT 5",
+            &p(vec![]),
+        )
+        .await
+        .unwrap_or_default();
+    ctx.insert("error_logs".into(), json!(logs));
+
+    if !check_in_id.is_empty() {
+        let run_errors = state
+            .ch
+            .query(
+                "SELECT issue_id, any(exception_type) AS type, any(exception_value) AS value, count() AS events FROM errors WHERE project_id = {p:String} \
+                 AND timestamp >= fromUnixTimestamp64Milli({from:Int64}) - INTERVAL 1 DAY AND tags[{tag:String}] = {run:String} GROUP BY issue_id LIMIT 5",
+                &p(vec![("tag", CHECK_IN_TAG.to_string()), ("run", check_in_id.to_string())]),
+            )
+            .await
+            .unwrap_or_default();
+        ctx.insert("run_errors".into(), json!(run_errors));
+    }
+
+    let mut hints = Vec::new();
+    if let Some(r) = ctx["recent_releases"].as_array().and_then(|a| a.first()) {
+        hints.push(format!("release {} was created {} min before the incident", r["version"].as_str().unwrap_or(""), r["minutes_before"]));
+    }
+    if let Some(i) = ctx["issues"].as_array().and_then(|a| a.iter().find(|i| i["new"] == true || i["regressed"] == true)) {
+        hints.push(format!("issue {} ({}) is {} around the same time", i["short_id"].as_str().unwrap_or(""), i["title"].as_str().unwrap_or(""), if i["new"] == true { "new" } else { "regressed" }));
+    }
+    if ctx["run_errors"].as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+        hints.push("the failed run reported errors (run_errors); start with get_fix_context on that issue".into());
+    }
+    ctx.insert("hints".into(), json!(hints));
+    Value::Object(ctx)
 }
 
 // ---------------------------------------------------------------------------
@@ -1229,6 +1360,19 @@ async fn incident_for(state: &AppState, p: &Principal, id: &str) -> QResult<(Str
 
 pub async fn get_incident(state: &AppState, p: &Principal, id: &str) -> QResult<Value> {
     let (project_id, mut v) = incident_for(state, p, id).await?;
+    if v["open"] == true {
+        // Ongoing: refresh the context so it includes what happened since the start.
+        let mid = v["monitor_id"].as_str().unwrap_or("").to_string();
+        let started = sqlx::query("SELECT started_at FROM monitor_incidents WHERE id = $1").bind(id).fetch_one(&state.db).await?.i("started_at");
+        if let Some(m) = load(state, &mid).await? {
+            let mut ctx = correlate(state, &m, started, "").await;
+            if let Some(run) = v["context"].get("run_errors") {
+                ctx["run_errors"] = run.clone();
+            }
+            sqlx::query("UPDATE monitor_incidents SET context = $1 WHERE id = $2").bind(ctx.to_string()).bind(id).execute(&state.db).await?;
+            v["context"] = ctx;
+        }
+    }
     if let Some(proj) = crate::projects::find(state, &project_id).await? {
         v["project"] = json!(proj.slug);
     }

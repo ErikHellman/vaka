@@ -260,7 +260,10 @@ async fn dispatch(state: &AppState, project: &ProjectInfo, issue_id: &str, trigg
             }
             payload["fix_context"] = fix.clone().flatten().unwrap_or(Value::Null);
         }
-        deliver_new(state, &rule, &secret, trigger, issue_id, payload).await?;
+        // One rule failing (a misconfigured channel) must not stop the others.
+        if let Err(e) = deliver_new(state, &rule, &secret, trigger, issue_id, payload).await {
+            tracing::warn!("alert dispatch failed: {e:#}");
+        }
     }
     Ok(())
 }
