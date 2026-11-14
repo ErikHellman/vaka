@@ -8,7 +8,7 @@ Blocking HTTP on a background thread, so it works with or without an async runti
 
 ```toml
 [dependencies]
-vaka-sdk = { version = "0.3", features = ["tracing"] }
+vaka-sdk = { version = "0.4", features = ["tracing"] }
 ```
 
 Drop `features = ["tracing"]` if the app does not use the `tracing` crate.

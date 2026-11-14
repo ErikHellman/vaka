@@ -1,6 +1,6 @@
 // swift-tools-version:5.9
 // Root manifest so apps can depend on the iOS SDK by repository URL:
-//   .package(url: "https://github.com/ErikHellman/vaka", from: "0.3.0")
+//   .package(url: "https://github.com/ErikHellman/vaka", from: "0.4.0")
 // The SDK lives in sdks/ios (which has its own Package.swift for development and tests).
 import PackageDescription
 

@@ -19,7 +19,7 @@ The setup costs roughly a shared-cpu-1x and a shared-cpu-2x machine plus two sma
 | `VAKA_FLY_REGION` | `arn` | Region for both apps and volumes (`fly platform regions`) |
 | `VAKA_PUBLIC_URL` | `https://<VAKA_FLY_APP>.fly.dev` | Public URL used in links, alerts and install guides |
 | `VAKA_FLY_ORG` | your personal org | Organization the apps are created in |
-| `VAKA_FLY_IMAGE` | build from source | Deploy a published image instead, e.g. `ghcr.io/erikhellman/vaka:0.3.0` |
+| `VAKA_FLY_IMAGE` | build from source | Deploy a published image instead, e.g. `ghcr.io/erikhellman/vaka:0.4.0` |
 | `VAKA_FLY_VM_SIZE`, `VAKA_FLY_VM_MEMORY` | `shared-cpu-1x`, `512mb` | Server machine |
 | `VAKA_FLY_VOLUME_GB` | `3` | Server volume (SQLite and debug files) |
 | `VAKA_FLY_CLICKHOUSE_VM_SIZE`, `VAKA_FLY_CLICKHOUSE_VM_MEMORY` | `shared-cpu-2x`, `2gb` | ClickHouse machine |

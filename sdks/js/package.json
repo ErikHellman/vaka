@@ -1,7 +1,7 @@
 {
   "name": "@hellsoft/vaka-browser",
   "publishConfig": {"access": "public"},
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Vaka browser SDK: crash reporting, cookieless analytics and user feedback",
   "license": "MIT OR Apache-2.0",
   "repository": {"type": "git", "url": "https://github.com/ErikHellman/vaka", "directory": "sdks/js"},
