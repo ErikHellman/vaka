@@ -3,6 +3,7 @@ name = "vaka"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "Command-line tool for Vaka: upload debug files, query issues"
 
 [dependencies]

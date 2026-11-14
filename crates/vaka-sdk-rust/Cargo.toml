@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Rust SDK for Vaka: panics, errors, release health and events"
+readme = "README.md"
+keywords = ["crash-reporting", "error-tracking", "analytics", "panic", "telemetry"]
+categories = ["development-tools::debugging", "development-tools::profiling"]
 
 [lib]
 name = "vaka_sdk"

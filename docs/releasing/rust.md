@@ -4,8 +4,7 @@ Crate `vaka-sdk` (`crates/vaka-sdk-rust`). Its version comes from `[workspace.pa
 root `Cargo.toml`, shared with the server and the CLI, so it is bumped with every release.
 
 Only the SDK goes to crates.io. The server (`vaka-server`) and CLI (`vaka`) ship as the Docker
-image and the release binaries; add `publish = false` to their `[package]` sections so they are
-never published by accident.
+image and the release binaries, and have `publish = false` so they are never published by accident.
 
 ## One-time setup
 
@@ -16,9 +15,9 @@ never published by accident.
    repository secret. Better: after the first publish, set up **trusted publishing** on the
    crate's settings page (GitHub repository `ErikHellman/vaka`, your workflow file name) and use
    `rust-lang/crates-io-auth-action` in that workflow instead of a stored token.
-3. Check the metadata crates.io needs. `description`, `license` and `repository` are set;
-   add `readme`, `keywords` and `categories` (e.g. `["development-tools::debugging"]`) and a
-   `crates/vaka-sdk-rust/README.md` if you want a crate page with content.
+3. Crate metadata (`description`, `license`, `repository`, `readme`, `keywords`, `categories`)
+   and the crate page (`crates/vaka-sdk-rust/README.md`) are in place. The server and CLI have
+   `publish = false`.
 
 ## Publish a release
 
@@ -39,7 +38,7 @@ https://docs.rs/vaka-sdk.
 A published version can't be overwritten or deleted. `cargo yank -p vaka-sdk --version 0.3.0`
 stops new projects from resolving it (existing lockfiles keep working); then publish a patch.
 
-## After the first publish
+## After a minor version bump
 
-Change the install guide (`docs/install/rust.md`) and `docs/sdk-rust.md` from the git dependency
-to `vaka-sdk = { version = "0.3", features = ["tracing"] }`.
+The first publish was 0.2.0 (2026-11-14). When the minor version changes, update the version in
+`docs/install/rust.md`, `docs/sdk-rust.md` and `crates/vaka-sdk-rust/README.md`.
