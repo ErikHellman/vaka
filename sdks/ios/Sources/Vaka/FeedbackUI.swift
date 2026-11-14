@@ -368,6 +368,7 @@ public struct VakaFeedbackView: View {
 
 #if (os(iOS) || os(macOS)) && canImport(PhotosUI)
 @available(iOS 16, macOS 13, *)
+@MainActor
 private struct AddImageButton: View {
     @ObservedObject var model: FeedbackFormModel
     @State private var selection: [PhotosPickerItem] = []

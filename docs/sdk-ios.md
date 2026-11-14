@@ -85,7 +85,8 @@ let r = try await Vaka.captureFeedback(Vaka.Feedback(message: text, email: email
   On the next launch it is sent as a `fatal` error with `instruction_addr` frames and `debug_images`
   (only the images that frames point into), plus the breadcrumbs, user, tags, release and session of the run that
   crashed. That session is reported as `crashed`. Previous handlers are restored and the signal re-raised, so the
-  system crash report is still produced.
+  system crash report is still produced. tvOS does not allow an alternate signal stack, so stack overflows are not
+  reported there.
 - Signals map to the Mach exception names users know: SIGSEGV/SIGBUS → `EXC_BAD_ACCESS`, SIGTRAP → `EXC_BREAKPOINT`
   (Swift runtime traps: force-unwrap of nil, out-of-range index, `fatalError`), SIGILL → `EXC_BAD_INSTRUCTION`,
   SIGFPE → `EXC_ARITHMETIC`. A Mach exception server is not used in v1: every crash type above already arrives

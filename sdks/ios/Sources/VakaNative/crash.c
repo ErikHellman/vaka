@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #if defined(__APPLE__)
+#include <TargetConditionals.h>
 #include <mach/mach.h>
 #include <sys/ucontext.h>
 #elif defined(__linux__)
@@ -298,6 +299,8 @@ int vaka_crash_install(const char *report_path) {
     if (!__sync_bool_compare_and_swap(&g_installed, 0, 1)) return 0;
 
     // Alternate stack so stack overflows on this thread can still be reported.
+    // (tvOS prohibits sigaltstack; there, stack overflows are not reported.)
+#if !(defined(__APPLE__) && TARGET_OS_TV)
     size_t alt_size = 64 * 1024;
     if (!g_alt_stack) g_alt_stack = malloc(alt_size);
     if (g_alt_stack) {
@@ -307,6 +310,7 @@ int vaka_crash_install(const char *report_path) {
         ss.ss_size = alt_size;
         sigaltstack(&ss, NULL);
     }
+#endif
 
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
@@ -444,6 +448,10 @@ __attribute__((noinline)) static void test_crash_inner(int sig) {
 }
 
 int vaka_test_fork_crash(const char *report_path, int sig) {
+#if defined(__APPLE__) && TARGET_OS_TV
+    (void)report_path; (void)test_crash_inner; (void)sig;
+    return -1; // fork is prohibited on tvOS
+#else
     pid_t pid = fork();
     if (pid < 0) return -1;
     if (pid == 0) {
@@ -454,4 +462,5 @@ int vaka_test_fork_crash(const char *report_path, int sig) {
     int status = 0;
     waitpid(pid, &status, 0);
     return status;
+#endif
 }
