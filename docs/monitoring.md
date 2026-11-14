@@ -96,6 +96,28 @@ curl -X POST {{ENDPOINT}}/api/v1/alert-rules -H "Authorization: Bearer $VAKA_TOK
 Add a second rule with `monitor_up` to hear about recoveries. Webhook payloads contain `monitor`,
 `incident` and `details`.
 
+## Why is it down?
+
+When a monitor goes down, Vaka stores a **context** snapshot on the incident and puts it in the
+alert payload:
+
+- `recent_releases`: releases created in the 2 hours before the incident.
+- `issues`: the issues with the most errors within 15 minutes of the start, flagged `new` or
+  `regressed` when that happened in the same window.
+- `error_rate`: errors in the 30 minutes before against the 24-hour baseline.
+- `error_logs`: the most common error logs in the window.
+- `run_errors`: errors tagged `monitor.check_in_id` with the failed run's id (the SDK helpers
+  add this tag).
+- `hints`: one-line leads, such as "release 2.4.0 was created 6 min before the incident".
+
+The MCP tool `get_incident` returns it, recomputed while the incident is open, so an agent can
+go from "the backup job is down" to `get_fix_context` on the issue that broke it.
+
+## Admin UI
+
+**Monitors** on a project page lists monitors with state and uptime. A monitor's page shows its
+last checks, incidents with their hints, the crontab line to check in, and pause and resume.
+
 ## API
 
 | Endpoint | Purpose |
