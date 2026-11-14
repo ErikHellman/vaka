@@ -32,12 +32,12 @@ jobs:
       VERSION: ${{ inputs.version || github.ref_name }}
       MODE: ${{ inputs.mode || 'release' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - name: Check version
         run: |
           want="${VERSION#jvm-v}"

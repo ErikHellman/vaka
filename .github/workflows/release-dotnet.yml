@@ -21,8 +21,8 @@ jobs:
       run:
         working-directory: sdks/dotnet
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: |
             8.0.x
@@ -40,7 +40,7 @@ jobs:
         run: |
           dotnet pack -c Release -p:Version=${{ steps.v.outputs.version }} -o out
           ls -l out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: nuget-${{ steps.v.outputs.version }}
           path: sdks/dotnet/out/*
