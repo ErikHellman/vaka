@@ -16,6 +16,9 @@ env:
   CARGO_TERM_COLOR: always
   # The smoke tests deliver alerts to local mock servers on 127.0.0.1.
   VAKA_ALLOW_PRIVATE_ALERT_TARGETS: "true"
+  # ...and run HTTP monitors against them. Canaries off: the result must not depend on the internet.
+  VAKA_MONITOR_ALLOW_CIDRS: "127.0.0.0/8"
+  VAKA_MONITOR_CANARY_URLS: "off"
 
 jobs:
   rust:

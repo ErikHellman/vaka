@@ -95,6 +95,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/projects/{p}/monitors", get(list_monitors).post(create_monitor))
         .route("/api/v1/projects/{p}/monitors/{slug}", get(get_monitor).patch(update_monitor).delete(delete_monitor))
         .route("/api/v1/projects/{p}/monitors/{slug}/checks", get(monitor_checks))
+        .route("/api/v1/projects/{p}/monitors/{slug}/run", post(run_monitor))
         .route("/api/v1/projects/{p}/incidents", get(list_incidents))
         .route("/api/v1/incidents/{id}", get(get_incident).patch(update_incident))
         .route("/api/v1/alert-rules", get(list_rules).post(create_rule))
@@ -650,6 +651,10 @@ async fn delete_monitor(State(s): State<AppState>, p: Principal, Path((project, 
     Ok(Json(crate::monitors::delete(&s, &p, &project, &slug).await?))
 }
 
+async fn run_monitor(State(s): State<AppState>, p: Principal, Path((project, slug)): Path<(String, String)>) -> J {
+    Ok(Json(crate::monitors::run_now(&s, &p, &project, &slug).await?))
+}
+
 async fn monitor_checks(State(s): State<AppState>, p: Principal, Path((project, slug)): Path<(String, String)>, Query(q): Query<crate::monitors::ChecksQuery>) -> J {
     Ok(Json(crate::monitors::checks(&s, &p, &project, &slug, q).await?))
 }
@@ -1180,7 +1185,7 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
     if trigger == "digest" && !(0..=23).contains(&b.threshold.unwrap_or(8)) {
         return Err(ApiError::bad("for digests, threshold is the UTC hour to send at (0 to 23, default 8)"));
     }
-    if channel == "github_issue" && matches!(trigger.as_str(), "monitor_down" | "monitor_up") {
+    if channel == "github_issue" && matches!(trigger.as_str(), "monitor_down" | "monitor_up" | "tls_expiring") {
         return Err(ApiError::bad("github_issue works with issue triggers; use github_dispatch or a webhook for monitor alerts"));
     }
     if channel == "github_issue" && matches!(trigger.as_str(), "digest" | "release_created" | "perf_regression") {

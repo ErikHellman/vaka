@@ -535,6 +535,10 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
                 config: a.get("config").cloned().filter(|v| !v.is_null()),
                 fail_threshold: i(&a, "fail_threshold"),
                 recover_threshold: i(&a, "recover_threshold"),
+                secret_headers: match a.get("secret_headers") {
+                    None | Some(Value::Null) => None,
+                    Some(v) => Some(serde_json::from_value(v.clone()).map_err(|_| crate::auth::ApiError::bad("secret_headers must be an object of name: value strings"))?),
+                },
                 paused_until: match a.get("paused_until") {
                     None => None,
                     Some(Value::Null) => Some(None),
@@ -547,6 +551,7 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
                 crate::monitors::update(state, p, &req(&a, "project")?, &req(&a, "monitor")?, input).await?
             }
         }
+        "run_monitor_check" => crate::monitors::run_now(state, p, &req(&a, "project")?, &req(&a, "monitor")?).await?,
         "delete_monitor" => crate::monitors::delete(state, p, &req(&a, "project")?, &req(&a, "monitor")?).await?,
         "list_incidents" => {
             let q = crate::monitors::IncidentQuery { monitor: s(&a, "monitor"), status: s(&a, "status"), since: s(&a, "since"), limit: i(&a, "limit") };
@@ -1259,7 +1264,7 @@ pub fn tools() -> Vec<Value> {
             "Notify or wake an agent when something happens. Triggers: new_issue, regression, spike, threshold (issue reaches N events), issue_resolved, issue_assigned, issue_commented, release_created, perf_regression (newest release slower than the previous one; threshold = p95 increase in percent, default 20), digest (daily or weekly summary with detected anomalies and a written narrative; see `schedule`). Channels: webhook (signed JSON with the full fix context), slack, email, sms (one short text message per alert via the server's SMS provider: 46elks, Twilio or Sinch; default max_per_hour 10), github_dispatch (repository_dispatch `vaka.<trigger>` to start a GitHub Actions workflow, e.g. a coding agent), github_issue (opens one GitHub issue per Vaka issue; later alerts comment). Failed deliveries are retried with backoff. Needs a write token.",
             vec![
                 ("project", prop("string", "Project slug; omit for all projects")),
-                ("trigger", prop("string", "new_issue, regression, spike, threshold, issue_resolved, issue_assigned, issue_commented, release_created, perf_regression, digest, new_feedback, monitor_down or monitor_up")),
+                ("trigger", prop("string", "new_issue, regression, spike, threshold, issue_resolved, issue_assigned, issue_commented, release_created, perf_regression, digest, new_feedback, monitor_down, monitor_up or tls_expiring")),
                 ("channel", prop("string", "webhook, slack, email, sms, github_dispatch or github_issue")),
                 ("target", prop("string", "Webhook URL, Slack incoming webhook URL, comma-separated emails, comma-separated E.164 phone numbers for sms (+46701234567), or owner/repo for GitHub channels")),
                 ("secret", prop("string", "Webhook signing secret (HMAC-SHA256 in X-Vaka-Signature), or the GitHub token for GitHub channels")),
@@ -1332,16 +1337,17 @@ pub fn tools() -> Vec<Value> {
         tool(
             "create_monitor",
             "Create monitor",
-            "Create a heartbeat monitor for a cron job or scheduled task. The job then reports to the returned check_in_url with the project ingest key (POST {status: in_progress|ok|error}, or GET .../ok?key=). Missed, failed or hung runs take it down and fire monitor_down alerts (create an alert rule for those). Needs a write token.",
+            "Create a monitor. heartbeat: a cron job or scheduled task reports to the returned check_in_url with the project ingest key (POST {status: in_progress|ok|error}, or GET .../ok?key=); missed, failed or hung runs take it down. http: Vaka requests a public URL on an interval; down after 2 failed checks. tls: Vaka watches a host's certificate and fires tls_expiring before it expires (http monitors on https URLs do too). Down fires monitor_down alerts (create an alert rule for those). Needs a write token.",
             vec![
                 ("project", project()),
                 ("slug", prop("string", "Lowercase id used in the check-in URL, e.g. nightly-backup (default: from name)")),
                 ("name", prop("string", "Human-readable name")),
-                ("kind", prop("string", "heartbeat (default)")),
+                ("kind", prop("string", "heartbeat (default), http or tls")),
                 ("environment", prop("string", "Environment the job runs in, e.g. production")),
-                ("config", json!({"type": "object", "description": "{schedule: {every: \"15m\"} or {cron: \"0 3 * * *\", timezone: \"Europe/Stockholm\"}, grace_s?: seconds a check-in may be late (default 120), max_runtime_s?: seconds a started run may take (default 1800, 0 = no limit)}"})),
-                ("fail_threshold", prop("integer", "Failed checks in a row before down (default 1)")),
-                ("recover_threshold", prop("integer", "Successful checks in a row before up (default 1)")),
+                ("config", json!({"type": "object", "description": "heartbeat: {schedule: {every: \"15m\"} or {cron: \"0 3 * * *\", timezone: \"Europe/Stockholm\"}, grace_s?: seconds a check-in may be late (default 120), max_runtime_s?: seconds a started run may take (default 1800, 0 = no limit)}. http: {url, every?: \"1m\" (min 30s), method?: GET|HEAD, timeout_s?: 10, expect_status?: [200, \"3xx\"] (default 2xx/3xx), body_contains?, headers?: {name: value}, follow_redirects?: true, tls_warn_days?: 14}. tls: {host, port?: 443, every?: \"6h\", tls_warn_days?: 14}"})),
+                ("secret_headers", json!({"type": "object", "description": "http: headers stored encrypted and never shown again, e.g. {\"Authorization\": \"Bearer ...\"}"})),
+                ("fail_threshold", prop("integer", "Failed checks in a row before down (default 1 for heartbeat, 2 for http/tls)")),
+                ("recover_threshold", prop("integer", "Successful checks in a row before up (default 1 for heartbeat, 2 for http/tls)")),
             ],
             &["project", "config"],
             false,
@@ -1357,11 +1363,21 @@ pub fn tools() -> Vec<Value> {
                 ("name", prop("string", "New name")),
                 ("environment", prop("string", "New environment")),
                 ("config", json!({"type": "object", "description": "Replacement config (see create_monitor)"})),
+                ("secret_headers", json!({"type": "object", "description": "http: replace the secret headers; {} removes them"})),
                 ("fail_threshold", prop("integer", "1 to 10")),
                 ("recover_threshold", prop("integer", "1 to 10")),
                 ("enabled", prop("boolean", "false stops checking")),
                 ("paused_until", json!({"type": ["string", "null"], "description": "Pause until (2h, RFC 3339, forever); null resumes"})),
             ],
+            &["project", "monitor"],
+            false,
+            false,
+        ),
+        tool(
+            "run_monitor_check",
+            "Run monitor check",
+            "Run an http or tls monitor's check now and apply the result (it counts toward thresholds like a scheduled check). Returns the result, status, duration, error and trace id. Use it to confirm a fix. Needs a write token.",
+            vec![("project", project()), ("monitor", prop("string", "Monitor slug or id"))],
             &["project", "monitor"],
             false,
             false,

@@ -22,6 +22,7 @@ pub const TRIGGERS: &[&str] = &[
     "new_feedback",
     "monitor_down",
     "monitor_up",
+    "tls_expiring",
 ];
 pub const CHANNELS: &[&str] = &["webhook", "slack", "email", "sms", "github_dispatch", "github_issue"];
 const SPIKE_COOLDOWN_MS: i64 = 6 * 3_600_000;
@@ -576,6 +577,15 @@ pub fn monitor_text(trigger: &str, payload: &Value) -> String {
         "monitor_down" if d["flapping"].as_bool().unwrap_or(false) => format!("{name} is flapping (up and down repeatedly) [{project}]; alerts are paused until it settles"),
         "monitor_down" if settled => format!("{name} settled DOWN after flapping [{project}]: {}", m["last_error"].as_str().unwrap_or("")),
         "monitor_down" => format!("{name} is DOWN [{project}]: {}", m["last_error"].as_str().unwrap_or("")),
+        "tls_expiring" => {
+            let days = d["days_left"].as_i64().unwrap_or(0);
+            let target = m["target"].as_str().unwrap_or("");
+            if days < 0 {
+                format!("{name}: the TLS certificate for {target} has EXPIRED [{project}]")
+            } else {
+                format!("{name}: the TLS certificate for {target} expires in {days} days [{project}]")
+            }
+        }
         "monitor_up" if settled => format!("{name} settled UP after flapping [{project}]"),
         "monitor_up" => {
             let mins = d["downtime_ms"].as_i64().map(|ms| format!(" after {}", human_duration(ms))).unwrap_or_default();
@@ -1553,9 +1563,9 @@ pub async fn test_rule(state: &AppState, rule_id: &str) -> anyhow::Result<String
         let payload = json!({
             "trigger": rule.trigger,
             "project": {"id": rule.project_id, "slug": "", "name": "Vaka test"},
-            "monitor": {"id": "test", "slug": "nightly-backup", "name": "Nightly backup (test)", "kind": "heartbeat", "environment": "production", "schedule": "every 1d", "last_error": "no check-in for the run expected at 03:00 (test alert)"},
+            "monitor": {"id": "test", "slug": "nightly-backup", "name": "Nightly backup (test)", "kind": "heartbeat", "environment": "production", "schedule": "every 1d", "target": "example.com:443", "last_error": "no check-in for the run expected at 03:00 (test alert)"},
             "incident": {"id": "test", "kind": "down", "open": rule.trigger == "monitor_down", "test": true},
-            "details": {"downtime_ms": 720_000, "test": true},
+            "details": {"downtime_ms": 720_000, "days_left": 9, "test": true},
             "url": state.config.public_url,
             "sent_at": crate::util::iso_time(now_ms()),
         });

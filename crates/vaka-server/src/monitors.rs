@@ -1,4 +1,5 @@
-//! Health monitoring: heartbeat (cron) monitors, their state machine, incidents and alerts.
+//! Health monitoring: heartbeat (cron), HTTP and TLS monitors, their state machine, incidents
+//! and alerts.
 //!
 //! Config and state live in the metadata database (`monitors`, `monitor_incidents`); every
 //! check result is also written to ClickHouse (`monitor_checks`) for uptime and history.
@@ -19,7 +20,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 /// Monitor kinds this build can run.
-pub const KINDS: &[&str] = &["heartbeat"];
+pub const KINDS: &[&str] = &["heartbeat", "http", "tls"];
 pub const CHECK_IN_STATUSES: &[&str] = &["in_progress", "ok", "error"];
 const LEASE_MS: i64 = 120_000;
 /// A monitor is flapping after this many state changes within `FLAP_WINDOW_MS`.
@@ -30,6 +31,13 @@ const FLAP_SETTLE_MS: i64 = 15 * 60_000;
 const DEFAULT_GRACE_S: i64 = 120;
 const DEFAULT_MAX_RUNTIME_S: i64 = 1800;
 const MIN_EVERY_S: i64 = 60;
+/// HTTP and TLS checks: default interval, minimum interval, and parallel checks per tick.
+const DEFAULT_HTTP_EVERY_S: i64 = 60;
+const DEFAULT_TLS_EVERY_S: i64 = 6 * 3600;
+const MIN_PROBE_EVERY_S: i64 = 30;
+const PROBE_CONCURRENCY: usize = 16;
+/// Probe monitors go down after 2 failed checks in a row and up after 2 good ones.
+const PROBE_THRESHOLD: i64 = 2;
 
 static INSTANCE: Lazy<String> = Lazy::new(|| crate::util::random_token(8));
 
@@ -68,6 +76,7 @@ pub struct Monitor {
     pub expected_at: Option<i64>,
     pub run_id: String,
     pub run_started_at: Option<i64>,
+    pub tls_not_after: Option<i64>,
     pub created_by: String,
     pub created_at: i64,
     pub updated_at: i64,
@@ -75,7 +84,7 @@ pub struct Monitor {
 
 const COLS: &str = "id, project_id, slug, name, kind, enabled, environment, config, fail_threshold, recover_threshold, state, state_since, flapping, \
     last_transition_at, transitions, paused_until, consecutive_fail, consecutive_ok, last_check_at, last_result, last_error, next_check_at, expected_at, \
-    run_id, run_started_at, created_by, created_at, updated_at";
+    run_id, run_started_at, tls_not_after, created_by, created_at, updated_at";
 
 fn oi(r: &sqlx::any::AnyRow, c: &str) -> Option<i64> {
     use sqlx::Row;
@@ -109,6 +118,7 @@ fn from_row(r: &sqlx::any::AnyRow) -> Monitor {
         expected_at: oi(r, "expected_at"),
         run_id: r.s("run_id"),
         run_started_at: oi(r, "run_started_at"),
+        tls_not_after: oi(r, "tls_not_after"),
         created_by: r.s("created_by"),
         created_at: r.i("created_at"),
         updated_at: r.i("updated_at"),
@@ -122,6 +132,18 @@ impl Monitor {
 
     fn heartbeat(&self) -> Result<Heartbeat, String> {
         Heartbeat::from_config(&self.config)
+    }
+
+    fn probe(&self) -> Result<ProbeConfig, String> {
+        ProbeConfig::from_config(&self.kind, &self.config)
+    }
+
+    /// "every 1h" or "cron in UTC" for heartbeats, "every 1m" for checks.
+    pub fn schedule_text(&self) -> Option<String> {
+        match self.kind.as_str() {
+            "heartbeat" => self.heartbeat().ok().map(|h| h.describe()),
+            _ => self.probe().ok().map(|p| format!("every {}", human_secs(p.every_s))),
+        }
     }
 
     pub fn to_json(&self, state: &AppState) -> Value {
@@ -157,6 +179,13 @@ impl Monitor {
             v["deadline"] = json!(opt(self.expected_at.map(|e| e + hb.as_ref().map(|h| h.grace_s).unwrap_or(DEFAULT_GRACE_S) * 1000)));
             v["running_since"] = json!(if self.run_id.is_empty() { None } else { opt(self.run_started_at) });
             v["check_in_url"] = json!(format!("{}/ingest/v1/monitors/{}/check-ins", state.config.public_url, self.slug));
+        } else {
+            let pc = self.probe().ok();
+            v["schedule"] = json!(self.schedule_text());
+            v["target"] = json!(pc.as_ref().map(|p| p.target()));
+            v["next_check_at"] = json!(if self.paused(now) { None } else { opt(self.next_check_at) });
+            v["tls_expires_at"] = json!(opt(self.tls_not_after));
+            v["tls_days_left"] = json!(self.tls_not_after.map(|t| (t - now).div_euclid(86_400_000)));
         }
         v
     }
@@ -268,6 +297,109 @@ fn human_secs(s: i64) -> String {
     }
 }
 
+/// An HTTP or TLS monitor's check, parsed from its config.
+#[derive(Clone, Debug)]
+pub struct ProbeConfig {
+    pub every_s: i64,
+    pub timeout_s: i64,
+    /// Days before certificate expiry to fire `tls_expiring` (0 = never).
+    pub tls_warn_days: i64,
+    pub http: Option<crate::probes::HttpCheck>,
+    /// TLS: host and port.
+    pub tls: Option<(String, u16)>,
+}
+
+impl ProbeConfig {
+    pub fn from_config(kind: &str, c: &Value) -> Result<ProbeConfig, String> {
+        let secs = |k: &str, default: i64| -> Result<i64, String> {
+            match c.get(k) {
+                None | Some(Value::Null) => Ok(default),
+                Some(Value::Number(n)) => n.as_i64().filter(|n| *n > 0).ok_or(format!("{k} must be a positive number of seconds")),
+                Some(Value::String(s)) => parse_duration_s(s).ok_or(format!("{k} must be a duration like \"5m\"")),
+                _ => Err(format!("{k} must be a number of seconds")),
+            }
+        };
+        let every_s = secs("every", if kind == "tls" { DEFAULT_TLS_EVERY_S } else { DEFAULT_HTTP_EVERY_S })?;
+        if every_s < MIN_PROBE_EVERY_S || every_s > 7 * 86_400 {
+            return Err(format!("every must be between {MIN_PROBE_EVERY_S} seconds and 7 days"));
+        }
+        let timeout_s = secs("timeout_s", crate::probes::DEFAULT_TIMEOUT_S)?;
+        if timeout_s > crate::probes::MAX_TIMEOUT_S {
+            return Err(format!("timeout_s must be at most {}", crate::probes::MAX_TIMEOUT_S));
+        }
+        let tls_warn_days = match c.get("tls_warn_days") {
+            None | Some(Value::Null) => crate::probes::DEFAULT_TLS_WARN_DAYS,
+            Some(v) => v.as_i64().filter(|d| (0..=365).contains(d)).ok_or("tls_warn_days must be 0 to 365")?,
+        };
+        let guard = crate::probes::guard();
+        let mut pc = ProbeConfig { every_s, timeout_s, tls_warn_days, http: None, tls: None };
+        match kind {
+            "http" => {
+                let url = c.get("url").and_then(|v| v.as_str()).ok_or("http monitors need `url`")?.trim().to_string();
+                guard.check_url(&url)?;
+                let method = match c.get("method").and_then(|v| v.as_str()).map(|m| m.to_ascii_uppercase()) {
+                    None => reqwest::Method::GET,
+                    Some(m) if m == "GET" => reqwest::Method::GET,
+                    Some(m) if m == "HEAD" => reqwest::Method::HEAD,
+                    Some(_) => return Err("method must be GET or HEAD".into()),
+                };
+                let body_contains = match c.get("body_contains") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(s)) if !s.is_empty() && s.len() <= 200 => Some(s.clone()),
+                    _ => return Err("body_contains must be text of 1 to 200 characters".into()),
+                };
+                if body_contains.is_some() && method == reqwest::Method::HEAD {
+                    return Err("body_contains needs method GET".into());
+                }
+                let mut headers = Vec::new();
+                if let Some(h) = c.get("headers").filter(|v| !v.is_null()) {
+                    let obj = h.as_object().ok_or("headers must be an object of name: value")?;
+                    if obj.len() > 20 {
+                        return Err("at most 20 headers".into());
+                    }
+                    for (k, v) in obj {
+                        let v = v.as_str().ok_or("header values must be strings")?;
+                        reqwest::header::HeaderName::from_bytes(k.as_bytes()).map_err(|_| format!("`{k}` is not a valid header name"))?;
+                        reqwest::header::HeaderValue::from_str(v).map_err(|_| format!("header `{k}` has an invalid value"))?;
+                        headers.push((k.clone(), v.to_string()));
+                    }
+                }
+                pc.http = Some(crate::probes::HttpCheck {
+                    url,
+                    method,
+                    timeout: Duration::from_secs(timeout_s as u64),
+                    expect: crate::probes::parse_expect(c.get("expect_status"))?,
+                    body_contains,
+                    headers,
+                    follow_redirects: c.get("follow_redirects").and_then(|v| v.as_bool()).unwrap_or(true),
+                });
+            }
+            "tls" => {
+                let host = c.get("host").and_then(|v| v.as_str()).ok_or("tls monitors need `host` (and optionally `port`, default 443)")?.trim().trim_end_matches('.').to_ascii_lowercase();
+                let port = match c.get("port") {
+                    None | Some(Value::Null) => 443,
+                    Some(v) => v.as_u64().filter(|p| (1..=65535).contains(p)).ok_or("port must be 1 to 65535")? as u16,
+                };
+                if host.is_empty() || host.contains('/') || host.contains(':') && !host.starts_with('[') {
+                    return Err("host must be a host name like example.com, without scheme or path".into());
+                }
+                guard.check_url(&format!("https://{host}:{port}/"))?;
+                pc.tls = Some((host, port));
+            }
+            _ => return Err(format!("{kind} monitors have no check")),
+        }
+        Ok(pc)
+    }
+
+    pub fn target(&self) -> String {
+        match (&self.http, &self.tls) {
+            (Some(h), _) => format!("{} {}", h.method, h.url),
+            (_, Some((h, p))) => format!("{h}:{p}"),
+            _ => String::new(),
+        }
+    }
+}
+
 /// When the scheduler should next look at a heartbeat monitor: the deadline of the expected
 /// run, or earlier when a running job would exceed its maximum runtime.
 fn heartbeat_next_check(hb: &Heartbeat, expected: Option<i64>, run_started: Option<i64>) -> Option<i64> {
@@ -314,6 +446,7 @@ pub struct CheckResult {
     pub release: String,
     pub environment: String,
     pub trace_id: String,
+    pub tls_days_left: i64,
 }
 
 impl CheckResult {
@@ -340,7 +473,7 @@ async fn record_check(state: &AppState, m: &Monitor, c: &CheckResult, at: i64) {
         duration_ms: c.duration_ms.clamp(0, u32::MAX as i64) as u32,
         http_status: c.http_status.clamp(0, 999) as u16,
         error: truncate(&c.error, 500),
-        tls_days_left: 0,
+        tls_days_left: c.tls_days_left.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
         check_in_id: c.check_in_id.clone(),
         release: c.release.clone(),
         environment: if c.environment.is_empty() { m.environment.clone() } else { c.environment.clone() },
@@ -436,7 +569,13 @@ async fn apply(state: &AppState, mut m: Monitor, c: &CheckResult, now: i64, sche
                 .execute(&state.db)
                 .await?;
             // The snapshot is quick (a few indexed queries) and goes into the alert payload.
-            let ctx = correlate(state, &m, now, &c.check_in_id).await;
+            let mut ctx = correlate(state, &m, now, &c.check_in_id).await;
+            if !c.trace_id.is_empty() {
+                ctx["check_trace_id"] = json!(c.trace_id);
+                if let Some(h) = ctx["hints"].as_array_mut() {
+                    h.push(json!(format!("the failed check sent traceparent trace id {}; if the target reports traces to Vaka, get_trace shows where it failed", c.trace_id)));
+                }
+            }
             let _ = sqlx::query("UPDATE monitor_incidents SET context = $1 WHERE id = $2").bind(ctx.to_string()).bind(&incident).execute(&state.db).await;
             if !was_flapping {
                 notify(state, &m, "monitor_down", &incident, json!({"flapping": m.flapping})).await;
@@ -502,7 +641,7 @@ async fn notify(state: &AppState, m: &Monitor, trigger: &str, incident_id: &str,
     let payload = json!({
         "trigger": trigger,
         "project": {"id": project.id, "slug": project.slug, "name": project.name},
-        "monitor": {"id": m.id, "slug": m.slug, "name": m.name, "kind": m.kind, "environment": m.environment, "schedule": m.heartbeat().ok().map(|h| h.describe()), "last_error": m.last_error},
+        "monitor": {"id": m.id, "slug": m.slug, "name": m.name, "kind": m.kind, "environment": m.environment, "schedule": m.schedule_text(), "target": m.probe().ok().map(|p| p.target()), "tls_expires_at": m.tls_not_after.map(iso_time), "last_error": m.last_error},
         "context": incident["context"].clone(),
         "incident": incident,
         "details": details,
@@ -629,13 +768,13 @@ pub async fn correlate(state: &AppState, m: &Monitor, at: i64, check_in_id: &str
     }
 
     let mut hints = Vec::new();
-    if let Some(r) = ctx["recent_releases"].as_array().and_then(|a| a.first()) {
+    if let Some(r) = ctx.get("recent_releases").and_then(|v| v.as_array()).and_then(|a| a.first()) {
         hints.push(format!("release {} was created {} min before the incident", r["version"].as_str().unwrap_or(""), r["minutes_before"]));
     }
-    if let Some(i) = ctx["issues"].as_array().and_then(|a| a.iter().find(|i| i["new"] == true || i["regressed"] == true)) {
+    if let Some(i) = ctx.get("issues").and_then(|v| v.as_array()).and_then(|a| a.iter().find(|i| i["new"] == true || i["regressed"] == true)) {
         hints.push(format!("issue {} ({}) is {} around the same time", i["short_id"].as_str().unwrap_or(""), i["title"].as_str().unwrap_or(""), if i["new"] == true { "new" } else { "regressed" }));
     }
-    if ctx["run_errors"].as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+    if ctx.get("run_errors").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
         hints.push("the failed run reported errors (run_errors); start with get_fix_context on that issue".into());
     }
     ctx.insert("hints".into(), json!(hints));
@@ -696,18 +835,35 @@ pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
     .bind(now)
     .fetch_all(&state.db)
     .await?;
+    let limit = std::sync::Arc::new(tokio::sync::Semaphore::new(PROBE_CONCURRENCY));
+    let mut probes = tokio::task::JoinSet::new();
     for r in due {
         let id = r.s("id");
         if !claim(state, &id, now).await? {
             continue;
         }
-        let res = match load(state, &id).await? {
-            Some(m) if m.kind == "heartbeat" => evaluate_heartbeat(state, m, now).await.map(|_| ()),
-            _ => Ok(()),
-        };
-        release(state, &id).await;
-        res?;
+        match load(state, &id).await? {
+            Some(m) if m.kind == "heartbeat" => {
+                let res = evaluate_heartbeat(state, m, now).await;
+                release(state, &id).await;
+                res?;
+            }
+            Some(m) => {
+                // HTTP and TLS checks wait on the network, so they run in parallel.
+                let st = state.clone();
+                let permit = limit.clone().acquire_owned().await?;
+                probes.spawn(async move {
+                    if let Err(e) = evaluate_probe(&st, m, None).await {
+                        tracing::warn!("monitor check failed: {e:#}");
+                    }
+                    release(&st, &id).await;
+                    drop(permit);
+                });
+            }
+            None => release(state, &id).await,
+        }
     }
+    while probes.join_next().await.is_some() {}
     settle_flapping(state, now).await
 }
 
@@ -757,6 +913,129 @@ async fn evaluate_heartbeat(state: &AppState, mut m: Monitor, now: i64) -> anyho
     let m2 = m.clone();
     m = apply(state, m2, &c, now, (next, Some(e))).await?;
     Ok(m)
+}
+
+/// Run an HTTP or TLS monitor's check now and apply the result. The caller holds the lease.
+async fn evaluate_probe(state: &AppState, m: Monitor, secrets: Option<Vec<(String, String)>>) -> anyhow::Result<(Monitor, CheckResult)> {
+    let pc = match m.probe() {
+        Ok(pc) => pc,
+        Err(e) => {
+            // The config no longer validates (for example the allowlist changed): fail visibly.
+            let mut c = CheckResult::new("fail");
+            c.error = e;
+            let next = Some(now_ms() + DEFAULT_HTTP_EVERY_S * 1000);
+            let m = apply(state, m, &c, now_ms(), (next, None)).await?;
+            return Ok((m, c));
+        }
+    };
+    let probe = if let Some(mut http) = pc.http.clone() {
+        let secrets = match secrets {
+            Some(s) => s,
+            None => load_secret_headers(state, &m.id).await,
+        };
+        http.headers.extend(secrets);
+        crate::probes::run_http(&http).await
+    } else if let Some((host, port)) = &pc.tls {
+        crate::probes::run_tls(host, *port, Duration::from_secs(pc.timeout_s as u64)).await
+    } else {
+        anyhow::bail!("monitor {} has no check", m.slug);
+    };
+    let now = now_ms();
+    let mut c = CheckResult::new(&probe.result);
+    c.duration_ms = probe.duration_ms;
+    c.http_status = probe.http_status;
+    c.error = probe.error.clone();
+    c.trace_id = probe.trace_id.clone();
+    c.environment = m.environment.clone();
+    if let Some(na) = probe.tls_not_after {
+        c.tls_days_left = (na - now).div_euclid(86_400_000);
+    }
+    let next = Some(now + pc.every_s * 1000);
+    let m = apply(state, m, &c, now, (next, None)).await?;
+    if let Some(na) = probe.tls_not_after {
+        tls_expiry(state, &m, &pc, na, now).await?;
+    }
+    Ok((m, c))
+}
+
+/// Track the certificate's expiry and fire `tls_expiring` once per certificate when it is
+/// within `tls_warn_days`. The warning is an incident of kind `tls_expiring` that closes when
+/// a renewed certificate shows up.
+async fn tls_expiry(state: &AppState, m: &Monitor, pc: &ProbeConfig, not_after: i64, now: i64) -> anyhow::Result<()> {
+    if m.tls_not_after != Some(not_after) {
+        sqlx::query("UPDATE monitors SET tls_not_after = $1 WHERE id = $2").bind(not_after).bind(&m.id).execute(&state.db).await?;
+    }
+    let open = sqlx::query("SELECT id, first_error FROM monitor_incidents WHERE monitor_id = $1 AND kind = 'tls_expiring' AND ended_at IS NULL LIMIT 1")
+        .bind(&m.id)
+        .fetch_optional(&state.db)
+        .await?;
+    let days_left = (not_after - now).div_euclid(86_400_000);
+    let expiring = pc.tls_warn_days > 0 && days_left < pc.tls_warn_days;
+    match open {
+        Some(r) if !expiring => {
+            // Renewed (or the warning was turned off).
+            sqlx::query("UPDATE monitor_incidents SET ended_at = $1 WHERE id = $2").bind(now).bind(r.s("id")).execute(&state.db).await?;
+        }
+        None if expiring => {
+            let id = new_id();
+            let msg = if days_left < 0 {
+                format!("the certificate expired on {}", iso_time(not_after))
+            } else {
+                format!("the certificate expires in {days_left} days ({})", iso_time(not_after))
+            };
+            sqlx::query("INSERT INTO monitor_incidents (id, monitor_id, project_id, kind, started_at, first_error, failed_checks) VALUES ($1, $2, $3, 'tls_expiring', $4, $5, 0)")
+                .bind(&id)
+                .bind(&m.id)
+                .bind(&m.project_id)
+                .bind(now)
+                .bind(&msg)
+                .execute(&state.db)
+                .await?;
+            let mut m2 = m.clone();
+            m2.tls_not_after = Some(not_after);
+            notify(state, &m2, "tls_expiring", &id, json!({"days_left": days_left, "expires_at": iso_time(not_after), "warn_days": pc.tls_warn_days})).await;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn load_secret_headers(state: &AppState, monitor_id: &str) -> Vec<(String, String)> {
+    let rows = sqlx::query("SELECT name, value FROM monitor_secrets WHERE monitor_id = $1 ORDER BY name").bind(monitor_id).fetch_all(&state.db).await.unwrap_or_default();
+    rows.iter()
+        .filter_map(|r| match crate::secretbox::open(&r.s("value")) {
+            Ok(v) => Some((r.s("name"), v)),
+            Err(e) => {
+                tracing::warn!("monitor secret header {} unreadable: {e:#}", r.s("name"));
+                None
+            }
+        })
+        .collect()
+}
+
+async fn secret_header_names(state: &AppState, monitor_id: &str) -> Vec<String> {
+    sqlx::query("SELECT name FROM monitor_secrets WHERE monitor_id = $1 ORDER BY name").bind(monitor_id).fetch_all(&state.db).await.unwrap_or_default().iter().map(|r| r.s("name")).collect()
+}
+
+/// Replace a monitor's secret headers (values sealed with `VAKA_SECRET_KEY`).
+async fn store_secret_headers(state: &AppState, monitor_id: &str, headers: &HashMap<String, String>) -> anyhow::Result<()> {
+    sqlx::query("DELETE FROM monitor_secrets WHERE monitor_id = $1").bind(monitor_id).execute(&state.db).await?;
+    for (k, v) in headers {
+        sqlx::query("INSERT INTO monitor_secrets (monitor_id, name, value) VALUES ($1, $2, $3)").bind(monitor_id).bind(k).bind(crate::secretbox::seal(v)).execute(&state.db).await?;
+    }
+    Ok(())
+}
+
+fn validate_secret_headers(h: &HashMap<String, String>) -> QResult<()> {
+    if h.len() > 10 {
+        return Err(ApiError::bad("at most 10 secret_headers"));
+    }
+    for (k, v) in h {
+        reqwest::header::HeaderName::from_bytes(k.as_bytes()).map_err(|_| ApiError::bad(format!("`{k}` is not a valid header name")))?;
+        let mut hv = reqwest::header::HeaderValue::from_str(v).map_err(|_| ApiError::bad(format!("secret header `{k}` has an invalid value")))?;
+        hv.set_sensitive(true);
+    }
+    Ok(())
 }
 
 /// End flapping for monitors that have been stable for `FLAP_SETTLE_MS`, alerting once with
@@ -979,6 +1258,9 @@ pub struct MonitorIn {
     pub config: Option<Value>,
     pub fail_threshold: Option<i64>,
     pub recover_threshold: Option<i64>,
+    /// HTTP monitors: headers whose values are stored encrypted and never returned (for
+    /// example Authorization). Replaces the stored set; `{}` removes them.
+    pub secret_headers: Option<HashMap<String, String>>,
     /// RFC 3339 time or relative (`2h`) to pause until; `"forever"` pauses indefinitely;
     /// null resumes.
     #[serde(default, deserialize_with = "double_option")]
@@ -1037,10 +1319,20 @@ fn validate(kind: &str, input: &MonitorIn) -> QResult<Value> {
     }
     if kind == "heartbeat" {
         Heartbeat::from_config(&config).map_err(ApiError::bad)?;
+    } else {
+        ProbeConfig::from_config(kind, &config).map_err(ApiError::bad)?;
+    }
+    if let Some(h) = &input.secret_headers {
+        if kind != "http" {
+            return Err(ApiError::bad("secret_headers are for http monitors"));
+        }
+        validate_secret_headers(h)?;
     }
     // Keep only known keys so stored config stays predictable.
     let keep: &[&str] = match kind {
         "heartbeat" => &["schedule", "grace_s", "max_runtime_s"],
+        "http" => &["url", "method", "every", "timeout_s", "expect_status", "body_contains", "headers", "follow_redirects", "tls_warn_days"],
+        "tls" => &["host", "port", "every", "timeout_s", "tls_warn_days"],
         _ => &[],
     };
     let clean: serde_json::Map<String, Value> = config.as_object().unwrap().iter().filter(|(k, v)| keep.contains(&k.as_str()) && !v.is_null()).map(|(k, v)| (k.clone(), v.clone())).collect();
@@ -1075,7 +1367,7 @@ async fn insert_monitor(state: &AppState, project: &ProjectInfo, input: MonitorI
         None => None,
     };
     let id = new_id();
-    let default_threshold = 1;
+    let default_threshold = if kind == "heartbeat" { 1 } else { PROBE_THRESHOLD };
     let res = sqlx::query(
         "INSERT INTO monitors (id, project_id, slug, name, kind, enabled, environment, config, fail_threshold, recover_threshold, state, state_since, \
          next_check_at, expected_at, paused_until, created_by, created_at, updated_at) \
@@ -1100,6 +1392,9 @@ async fn insert_monitor(state: &AppState, project: &ProjectInfo, input: MonitorI
     .await?;
     if res.rows_affected() == 0 {
         return Err(ApiError::bad(format!("a monitor `{slug}` already exists in this project; use update_monitor")));
+    }
+    if let Some(h) = &input.secret_headers {
+        store_secret_headers(state, &id, h).await?;
     }
     crate::auth::audit(state, actor, "create_monitor", &id, &slug).await;
     load(state, &id).await?.ok_or_else(|| ApiError::not_found("monitor"))
@@ -1175,7 +1470,7 @@ pub async fn get(state: &AppState, p: &Principal, project: &str, slug: &str) -> 
         .bind(&m.id)
         .fetch_all(&state.db)
         .await?;
-    let mut v = m.to_json(state);
+    let mut v = full_json(state, &m).await;
     v["stats"] = stats.get(&m.id).cloned().unwrap_or(json!({}));
     Ok(json!({"project": proj.slug, "monitor": v, "recent_checks": checks, "incidents": incidents.iter().map(incident_from_row).collect::<Vec<_>>()}))
 }
@@ -1184,7 +1479,7 @@ async fn recent_checks(state: &AppState, m: &Monitor, since: Option<i64>, limit:
     state
         .ch
         .query(
-            "SELECT timestamp, result, duration_ms, http_status, error, check_in_id, release, environment, trace_id FROM monitor_checks \
+            "SELECT timestamp, result, duration_ms, http_status, error, tls_days_left, check_in_id, release, environment, trace_id FROM monitor_checks \
              WHERE project_id = {p:String} AND monitor_id = {m:String} AND timestamp >= fromUnixTimestamp64Milli({since:Int64}) ORDER BY timestamp DESC LIMIT {n:UInt32}",
             &[("p", m.project_id.clone()), ("m", m.id.clone()), ("since", since.unwrap_or(0).to_string()), ("n", limit.to_string())],
         )
@@ -1209,13 +1504,57 @@ pub async fn checks(state: &AppState, p: &Principal, project: &str, slug: &str, 
     Ok(json!({"project": proj.slug, "monitor": m.slug, "checks": checks}))
 }
 
+/// A monitor's JSON with the names (never the values) of its secret headers.
+async fn full_json(state: &AppState, m: &Monitor) -> Value {
+    let mut v = m.to_json(state);
+    if m.kind == "http" {
+        v["secret_headers"] = json!(secret_header_names(state, &m.id).await);
+    }
+    v
+}
+
 pub async fn create(state: &AppState, p: &Principal, project: &str, input: MonitorIn) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     if !p.can_write(&proj.id) {
         return Err(ApiError::forbidden());
     }
     let m = insert_monitor(state, &proj, input, &p.label()).await?;
-    Ok(json!({"monitor": m.to_json(state)}))
+    Ok(json!({"monitor": full_json(state, &m).await}))
+}
+
+/// Run an HTTP or TLS monitor's check now (`run_monitor_check`), applying the result like a
+/// scheduled check. Returns the check and the monitor's new state.
+pub async fn run_now(state: &AppState, p: &Principal, project: &str, slug: &str) -> QResult<Value> {
+    let proj = project_for(state, p, project).await?;
+    if !p.can_write(&proj.id) {
+        return Err(ApiError::forbidden());
+    }
+    let m = get_row(state, &proj.id, slug).await?;
+    if m.kind == "heartbeat" {
+        return Err(ApiError::bad("heartbeat monitors are checked by their job's check-ins; run the job, or send a check-in"));
+    }
+    let mut claimed = false;
+    for _ in 0..30 {
+        if claim(state, &m.id, now_ms()).await? {
+            claimed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    if !claimed {
+        return Err(ApiError::bad("the monitor is being checked right now; try again in a moment"));
+    }
+    let res = async {
+        let Some(m) = load(state, &m.id).await? else { anyhow::bail!("monitor deleted") };
+        evaluate_probe(state, m, None).await
+    }
+    .await;
+    release(state, &m.id).await;
+    let (m, c) = res?;
+    Ok(json!({
+        "monitor": full_json(state, &m).await,
+        "check": {"result": c.result, "duration_ms": c.duration_ms, "http_status": if c.http_status > 0 { Some(c.http_status) } else { None }, "error": c.error, "trace_id": c.trace_id, "tls_days_left": m.tls_not_after.map(|_| c.tls_days_left)},
+    }))
 }
 
 pub async fn update(state: &AppState, p: &Principal, project: &str, slug: &str, input: MonitorIn) -> QResult<Value> {
@@ -1239,6 +1578,7 @@ pub async fn update(state: &AppState, p: &Principal, project: &str, slug: &str, 
         config: input.config.clone().or(Some(cur.config.clone())),
         fail_threshold: input.fail_threshold.or(Some(cur.fail_threshold)),
         recover_threshold: input.recover_threshold.or(Some(cur.recover_threshold)),
+        secret_headers: input.secret_headers.clone(),
         paused_until: None,
     };
     let config = validate(&cur.kind, &merged)?;
@@ -1270,11 +1610,18 @@ pub async fn update(state: &AppState, p: &Principal, project: &str, slug: &str, 
             let next = heartbeat_next_check(&hb, Some(e), cur.run_started_at.filter(|_| !cur.run_id.is_empty()));
             sqlx::query("UPDATE monitors SET expected_at = $1, next_check_at = $2 WHERE id = $3").bind(e).bind(next).bind(&cur.id).execute(&state.db).await?;
         }
+        _ if schedule_changed && cur.paused_until.is_none() => {
+            // A changed target or interval is checked right away.
+            sqlx::query("UPDATE monitors SET next_check_at = $1 WHERE id = $2").bind(now).bind(&cur.id).execute(&state.db).await?;
+        }
         _ => {}
+    }
+    if let Some(h) = &input.secret_headers {
+        store_secret_headers(state, &cur.id, h).await?;
     }
     crate::auth::audit(state, &p.label(), "update_monitor", &cur.id, &cur.slug).await;
     let m = load(state, &cur.id).await?.ok_or_else(|| ApiError::not_found("monitor"))?;
-    Ok(json!({"monitor": m.to_json(state)}))
+    Ok(json!({"monitor": full_json(state, &m).await}))
 }
 
 pub async fn delete(state: &AppState, p: &Principal, project: &str, slug: &str) -> QResult<Value> {
@@ -1446,6 +1793,24 @@ mod tests {
         assert_eq!(heartbeat_next_check(&hb, Some(10_000_000), Some(0)), Some(600_000));
         let hb = Heartbeat { max_runtime_s: 0, ..hb };
         assert_eq!(heartbeat_next_check(&hb, Some(10_000), Some(0)), Some(70_000));
+    }
+
+    #[test]
+    fn probe_config() {
+        let pc = ProbeConfig::from_config("http", &json!({"url": "https://example.com/health", "every": "5m", "expect_status": [200]})).unwrap();
+        assert_eq!(pc.every_s, 300);
+        assert_eq!(pc.target(), "GET https://example.com/health");
+        assert!(ProbeConfig::from_config("http", &json!({})).is_err());
+        assert!(ProbeConfig::from_config("http", &json!({"url": "http://192.168.0.1/"})).is_err());
+        assert!(ProbeConfig::from_config("http", &json!({"url": "https://example.com", "every": "10s"})).is_err());
+        assert!(ProbeConfig::from_config("http", &json!({"url": "https://example.com", "method": "POST"})).is_err());
+        assert!(ProbeConfig::from_config("http", &json!({"url": "https://example.com", "method": "HEAD", "body_contains": "ok"})).is_err());
+        assert!(ProbeConfig::from_config("http", &json!({"url": "https://example.com", "headers": {"bad name": "x"}})).is_err());
+        let tls = ProbeConfig::from_config("tls", &json!({"host": "Example.com."})).unwrap();
+        assert_eq!(tls.tls, Some(("example.com".into(), 443)));
+        assert_eq!(tls.every_s, DEFAULT_TLS_EVERY_S);
+        assert!(ProbeConfig::from_config("tls", &json!({"host": "https://example.com"})).is_err());
+        assert!(ProbeConfig::from_config("tls", &json!({"host": "10.0.0.1"})).is_err());
     }
 
     #[test]

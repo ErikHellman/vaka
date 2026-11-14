@@ -22,8 +22,8 @@ Vaka is a self-hosted crash reporting and analytics service built for coding age
   topics, linked to the crash it is about ([feedback](feedback.md)).
 - **Alerts and agent triggers**: webhooks, Slack, email, SMS, GitHub `repository_dispatch` or GitHub
   issues ([alerts](alerts.md)); anomaly detection and scheduled digests ([anomalies](anomalies.md)).
-- **Monitoring**: heartbeat monitors for cron jobs and scheduled work, with incidents and
-  down/up alerts ([monitoring](monitoring.md)).
+- **Monitoring**: heartbeat monitors for cron jobs, HTTP uptime checks and TLS certificate
+  expiry, with incidents, correlated "why is it down?" context and alerts ([monitoring](monitoring.md)).
 
 There is no dashboard. A small admin UI (`/ui`) handles setup: users, projects, keys and tokens.
 Everything else goes through the [REST API](api.md) or the [MCP server](mcp.md), so you can ask

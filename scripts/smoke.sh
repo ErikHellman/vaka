@@ -216,6 +216,11 @@ class H(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b"{\"html_url\": \"https://github.com/acme/shop/issues/1\", \"number\": 1}")
         else:
             self.wfile.write(b"ok")
+    def do_GET(self):
+        # Targets for HTTP monitors: /up answers 200 "healthy", anything else 503.
+        open(sys.argv[1], "ab").write(b"GET " + self.path.encode() + b" " + (self.headers.get("traceparent") or "-").encode() + b" " + (self.headers.get("x-token") or "-").encode() + b"\n")
+        ok = self.path.startswith("/up")
+        self.send_response(200 if ok else 503); self.end_headers(); self.wfile.write(b"healthy" if ok else b"down")
     def log_message(self, *a): pass
 http.server.HTTPServer(("127.0.0.1", int(sys.argv[2])), H).serve_forever()
 ' "$HOOKS" "$HOOK_PORT" & HOOK_PID=$!
@@ -547,6 +552,38 @@ sleep 1.1
 [ "$(curl -sf "${A[@]}" -X PATCH "$VAKA/api/v1/projects/$SLUG/monitors/sync-job" -d '{"paused_until":null}' | j 'd["monitor"]["state"]')" = "unknown" ] || fail "resume monitor"
 curl -sf "${A[@]}" -X DELETE "$VAKA/api/v1/projects/$SLUG/monitors/sync-job" >/dev/null || fail "delete monitor"
 echo "monitors ok"
+# HTTP and TLS monitors: SSRF guard with the operator allowlist, thresholds, run now, secrets
+curl -s "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/monitors" -d '{"slug":"intranet","kind":"http","config":{"url":"http://10.255.0.1/health"}}' | grep -q 'VAKA_MONITOR_ALLOW_CIDRS' || fail "private monitor target allowed"
+curl -s "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/monitors" -d '{"slug":"meta","kind":"http","config":{"url":"http://169.254.169.254/"}}' | grep -q 'not a public address' || fail "metadata monitor target allowed"
+rule "{\"project\":\"$SLUG\",\"trigger\":\"monitor_down\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/http\",\"filters\":{\"monitor_kind\":\"http\"}}" >/dev/null || fail "http monitor rule"
+rule "{\"project\":\"$SLUG\",\"trigger\":\"tls_expiring\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/tls\"}" >/dev/null || fail "tls_expiring rule"
+HM=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/monitors" -d "{\"name\":\"Shop API\",\"kind\":\"http\",\"config\":{\"url\":\"http://127.0.0.1:$HOOK_PORT/up\",\"every\":\"1h\",\"body_contains\":\"healthy\"},\"secret_headers\":{\"X-Token\":\"s3cret\"}}") || fail "create http monitor"
+[ "$(echo "$HM" | j '(d["monitor"]["slug"], d["monitor"]["fail_threshold"], d["monitor"]["secret_headers"])')" = "('shop-api', 2, ['X-Token'])" ] || fail "http monitor: $HM"
+echo "$HM" | grep -q 's3cret' && fail "secret header value returned"
+RUN=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/monitors/shop-api/run") || fail "run http check"
+[ "$(echo "$RUN" | j '(d["check"]["result"], d["check"]["http_status"], len(d["check"]["trace_id"]), d["monitor"]["state"])')" = "('ok', 200, 32, 'up')" ] || fail "http check: $RUN"
+TRACE=$(echo "$RUN" | j 'd["check"]["trace_id"]')
+grep "^GET /up 00-$TRACE-" "$HOOKS" | grep -q ' s3cret$' || fail "traceparent or secret header not sent: $(grep '^GET' "$HOOKS")"
+# A failing endpoint goes down on the second failed check (threshold 2) and alerts once.
+curl -sf "${A[@]}" -X PATCH "$VAKA/api/v1/projects/$SLUG/monitors/shop-api" -d "{\"config\":{\"url\":\"http://127.0.0.1:$HOOK_PORT/down\",\"every\":\"1h\"}}" >/dev/null || fail "update http monitor"
+R1=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/monitors/shop-api/run" | j '(d["check"]["result"], d["check"]["error"])')
+[ "$R1" = "('fail', 'HTTP 503 Service Unavailable')" ] || fail "first failed check: $R1"
+R2=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/monitors/shop-api/run" | j 'd["monitor"]["state"]')
+[ "$R2" = "down" ] || fail "http monitor not down after 2 failures: $R2"
+for i in $(seq 1 10); do grep -q '^/http monitor_down ' "$HOOKS" && break; sleep 0.5; done
+[ "$(grep -c '^/http monitor_down .*"slug":"shop-api"' "$HOOKS")" = "1" ] || fail "http monitor_down alert: $(grep '^/http' "$HOOKS")"
+grep '^/http monitor_down ' "$HOOKS" | grep -q '"check_trace_id"' || fail "http monitor_down trace: $(grep '^/http' "$HOOKS" | tail -c 600)"
+MR=$(curl -sf -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":23,\"method\":\"tools/call\",\"params\":{\"name\":\"run_monitor_check\",\"arguments\":{\"project\":\"$SLUG\",\"monitor\":\"shop-api\"}}}")
+echo "$MR" | j 'd["result"]["content"][0]["text"]' | grep -q '503' || fail "mcp run_monitor_check: $MR"
+# Connection refused and a non-TLS port fail too; heartbeats can't be run.
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/monitors" -d '{"slug":"closed","kind":"http","config":{"url":"http://127.0.0.1:9/"}}' >/dev/null || fail "create closed-port monitor"
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/monitors/closed/run" | j 'd["check"]["result"]' | grep -qx 'fail' || fail "closed port check"
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/monitors" -d "{\"slug\":\"cert\",\"kind\":\"tls\",\"config\":{\"host\":\"127.0.0.1\",\"port\":$HOOK_PORT}}" >/dev/null || fail "create tls monitor"
+curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/monitors/cert/run" | j 'd["check"]["result"]' | grep -qx 'fail' || fail "tls check of a plain http port"
+curl -s "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/monitors/backup/run" | grep -q 'check-ins' || fail "run heartbeat"
+curl -sf -b "$JAR" "$VAKA/ui/projects/$SLUG/monitors/shop-api" | grep -q 'Check now' || fail "http monitor admin page"
+for m in shop-api closed cert; do curl -sf "${A[@]}" -X DELETE "$VAKA/api/v1/projects/$SLUG/monitors/$m" >/dev/null || fail "delete $m"; done
+
 # GDPR
 GD=$(curl -sf "${A[@]}" -X DELETE "$VAKA/api/v1/projects/$SLUG/users/u1")
 echo "$GD" | j 'd["errors"]' | grep -q 1 || fail "gdpr: $GD"

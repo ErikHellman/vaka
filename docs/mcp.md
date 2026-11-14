@@ -109,7 +109,8 @@ Write:
 | `set_code_mappings` | Replace the stack path → repository path mappings |
 | `apply_ownership_rules` | Re-apply ownership rules to open issues |
 | `comment_issue` | Add a Markdown comment, e.g. root cause and a link to the fix |
-| `create_monitor` / `update_monitor` / `delete_monitor` | Manage heartbeat monitors for cron jobs; `update_monitor` with `paused_until` pauses or resumes ([monitoring](monitoring.md)) |
+| `create_monitor` / `update_monitor` / `delete_monitor` | Manage heartbeat (cron), HTTP and TLS monitors; `update_monitor` with `paused_until` pauses or resumes ([monitoring](monitoring.md)) |
+| `run_monitor_check` | Run an HTTP or TLS check now, e.g. to confirm a fix |
 | `create_alert_rule` | Webhook, Slack, email, SMS, GitHub repository_dispatch or GitHub issue on new issues, regressions, spikes, thresholds, resolves, assignments, comments, new releases, or a daily or weekly digest (`schedule` with a time zone); with filters and rate limits |
 | `list_alert_rules` | Rules with triggers, channels and filters |
 | `update_alert_rule` / `delete_alert_rule` | Change or delete a rule |
@@ -144,6 +145,7 @@ releases, issues, error rate and logs around the incident's start.
 - "Who probably broke checkout in 2.4.0? Look at the suspect commits on the top new issue."
 - "The nightly backup monitor is down. Why?" (uses `get_incident`).
 - "Add a heartbeat monitor for our hourly sync job and text me when it misses a run."
+- "Watch https://shop.example.com/health every minute and tell Slack when it's down or the certificate is about to expire."
 - "Set up Vaka for this repository" (uses `create_project` and `get_install_instructions`).
 
 A typical bug-fix loop: `list_issues` → `get_issue` (read the stack and breadcrumbs, open the
