@@ -45,7 +45,7 @@ All SDKs share the server's version. Change all of these together:
 | `Package.swift`, `docs/install/ios.md`, `docs/install/android.md` | Version numbers in the examples |
 | `Cargo.lock`, `sdks/js/package-lock.json`, `sdks/node/package-lock.json` | Regenerate (`cargo update -w`, `npm install`); rebuild `sdks/js/dist/vaka.min.js` |
 
-`grep -rn '"0.3.0"\|= "0.3.0"\|VERSION_NAME=' --include=*.json --include=*.ts --include=*.toml --include=*.kts --include=*.properties --include=*.swift --include=*.py .`
+`grep -rn '"0.4.0"\|= "0.4.0"\|VERSION_NAME=' --include=*.json --include=*.ts --include=*.toml --include=*.kts --include=*.properties --include=*.swift --include=*.py .`
 (with the old version) finds them.
 
 ## Credentials
