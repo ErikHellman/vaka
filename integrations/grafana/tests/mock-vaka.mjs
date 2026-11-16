@@ -10,19 +10,47 @@ function series(params) {
   const step = 300_000;
   const rows = [];
   for (let t = Math.floor(since / step) * step, i = 0; t <= until && rows.length < 2000; t += step, i++) {
-    rows.push({ bucket: new Date(t).toISOString().replace('.000Z', 'Z'), errors: (i % 5) + 1, users: 1, unhandled: 0, fatal: 0, issues: 1 });
+    rows.push({
+      bucket: new Date(t).toISOString().replace('.000Z', 'Z'),
+      errors: (i % 5) + 1,
+      users: 1,
+      unhandled: 0,
+      fatal: 0,
+      issues: 1,
+    });
   }
   return rows;
 }
 
 const routes = {
-  '/api/v1/me': () => ({ type: 'token', name: 'e2e', scope: 'read', server_version: '0.5.0', capabilities: ['errors_timeseries', 'stream'] }),
-  '/api/v1/projects': () => ({ projects: [{ slug: 'web', name: 'Web shop' }, { slug: 'app', name: 'Mobile app' }] }),
+  '/api/v1/me': () => ({
+    type: 'token',
+    name: 'e2e',
+    scope: 'read',
+    server_version: '0.5.0',
+    capabilities: ['errors_timeseries', 'stream'],
+  }),
+  '/api/v1/projects': () => ({
+    projects: [
+      { slug: 'web', name: 'Web shop' },
+      { slug: 'app', name: 'Mobile app' },
+    ],
+  }),
   '/api/v1/projects/web': () => ({ slug: 'web', name: 'Web shop' }),
   '/api/v1/projects/web/releases': () => ({ releases: [{ version: '1.2.0', first_seen: new Date().toISOString() }] }),
   '/api/v1/projects/web/errors/timeseries': (p) => ({ interval: '5m', series: series(p) }),
   '/api/v1/projects/web/issues': () => ({
-    issues: [{ short_id: 'WEB-1', title: 'TypeError: x is undefined', level: 'error', status: 'open', events_in_window: 42, users_in_window: 7, url: 'http://localhost/ui' }],
+    issues: [
+      {
+        short_id: 'WEB-1',
+        title: 'TypeError: x is undefined',
+        level: 'error',
+        status: 'open',
+        events_in_window: 42,
+        users_in_window: 7,
+        url: 'http://localhost/ui',
+      },
+    ],
   }),
 };
 
