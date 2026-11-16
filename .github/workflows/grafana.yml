@@ -1,0 +1,141 @@
+name: Grafana plugin
+
+# Build, lint and test integrations/grafana (the hellsoft-vaka-datasource plugin), then run the
+# Playwright e2e tests against real Grafana (minimum supported and latest) with a mock Vaka.
+on:
+  push:
+    branches: [main]
+    paths: ["integrations/grafana/**", ".github/workflows/grafana.yml"]
+  pull_request:
+    paths: ["integrations/grafana/**", ".github/workflows/grafana.yml"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: integrations/grafana
+
+jobs:
+  build:
+    name: Build, lint and unit tests
+    runs-on: ubuntu-latest
+    outputs:
+      plugin-id: ${{ steps.metadata.outputs.plugin-id }}
+      plugin-version: ${{ steps.metadata.outputs.plugin-version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: integrations/grafana/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test:ci
+      - run: npm run build
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: integrations/grafana/go.mod
+          cache-dependency-path: integrations/grafana/go.sum
+      - name: Lint backend
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: latest
+          working-directory: integrations/grafana
+          args: ./...
+      - name: Build backend
+        uses: magefile/mage-action@a662bd8c29d8106879588cfff83b2faf6e6f59db # v4.0.0
+        with:
+          version: latest
+          args: buildAll
+          workdir: integrations/grafana
+      - name: Test backend
+        run: go test -race ./pkg/...
+      - name: Plugin metadata
+        id: metadata
+        run: |
+          echo "plugin-id=$(jq -r .id dist/plugin.json)" >> "$GITHUB_OUTPUT"
+          echo "plugin-version=$(jq -r .info.version dist/plugin.json)" >> "$GITHUB_OUTPUT"
+      - name: Package
+        run: |
+          ID=$(jq -r .id dist/plugin.json); VERSION=$(jq -r .info.version dist/plugin.json)
+          cp -r dist "$ID" && zip -qr "$ID-$VERSION.zip" "$ID" && rm -r "$ID"
+          echo "ARCHIVE=$ID-$VERSION.zip" >> "$GITHUB_ENV"
+      - name: Validate plugin.json
+        run: docker run --pull=always -v "$PWD/$ARCHIVE:/archive.zip" grafana/plugin-validator-cli -analyzer=metadatavalid /archive.zip
+      - name: Full plugin validator (informational)
+        continue-on-error: true
+        run: docker run --pull=always -v "$PWD/$ARCHIVE:/archive.zip" grafana/plugin-validator-cli /archive.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: grafana-plugin-dist
+          path: integrations/grafana/dist
+          retention-days: 5
+
+  resolve-versions:
+    name: Resolve e2e Grafana versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    needs: build
+    outputs:
+      matrix: ${{ steps.resolve-versions.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: resolve-versions
+        uses: grafana/plugin-actions/e2e-version@e2e-version/v3.0.1
+        with:
+          # Keep in sync with grafanaDependency in integrations/grafana/src/plugin.json.
+          grafana-dependency: ">=12.0.0"
+          limit: "3"
+          skip-grafana-nightly-image: true
+
+  e2e:
+    needs: [resolve-versions, build]
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        GRAFANA_IMAGE: ${{ fromJson(needs.resolve-versions.outputs.matrix) }}
+    name: e2e ${{ matrix.GRAFANA_IMAGE.name }}@${{ matrix.GRAFANA_IMAGE.VERSION }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: grafana-plugin-dist
+          path: integrations/grafana/dist
+      - run: chmod +x dist/gpx_*
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: integrations/grafana/package-lock.json
+      - run: npm ci
+      - name: Start mock Vaka
+        run: nohup node tests/mock-vaka.mjs > /tmp/mock-vaka.log 2>&1 &
+      - name: Start Grafana
+        run: |
+          docker compose pull
+          ANONYMOUS_AUTH_ENABLED=false DEVELOPMENT=false GRAFANA_VERSION=${{ matrix.GRAFANA_IMAGE.VERSION }} GRAFANA_IMAGE=${{ matrix.GRAFANA_IMAGE.NAME }} docker compose up -d
+      - uses: grafana/plugin-actions/wait-for-grafana@wait-for-grafana/v1.0.4
+        with:
+          url: http://localhost:3000/login
+      - run: npm exec playwright install chromium --with-deps
+      - name: Run Playwright tests
+        id: run-tests
+        run: npm run e2e
+      - name: Logs
+        if: ${{ always() && steps.run-tests.outcome == 'failure' }}
+        run: |
+          docker logs hellsoft-vaka-datasource 2>&1 | grep -i -E "vaka|error|plugin" | tail -n 150
+          tail -n 50 /tmp/mock-vaka.log
+      - run: docker compose down
+        if: always()

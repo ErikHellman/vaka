@@ -1,6 +1,7 @@
 # Native Grafana datasource plugin
 
-Status: proposal, for review (2026-11-16). Owner: Erik + Claude Code. Nothing is built yet.
+Status: built (2026-11-16), not yet released to the catalog. Owner: Erik + Claude Code. See
+[Implementation notes](#implementation-notes) at the end for what changed from this plan.
 
 Vaka deliberately has almost no UI of its own. Grafana is the most common place people
 already build dashboards and alerts, so a first-class datasource lets Vaka data sit next to
@@ -53,8 +54,7 @@ scope and how many projects it can read (or the exact 401/403 reason).
 ## Auth
 
 - Bearer token only (`Authorization: Bearer vt_...`), injected by the backend on every request.
-- Recommend a dedicated read token per Grafana instance (docs show `vaka tokens create
-  --scope read --name grafana`). Write scope is never needed and the config page warns if
+- Recommend a dedicated read token per Grafana instance (created in the admin UI under Tokens). Write scope is never needed and the config page warns if
   `/me` reports one.
 - Forwarding the signed-in Grafana user's identity is out of scope; Vaka has no OAuth/OIDC
   today.
@@ -223,3 +223,30 @@ useful (installable as an unsigned or privately signed plugin on Erik's Grafana)
    `@grafana/ui`), or support 10.4 too?
 4. **Timing**: after v1 (end of November), or start M0 now since it also improves the
    Infinity guide?
+
+## Implementation notes
+
+Built on 2026-11-16 (Erik approved the plan with `hellsoft` as the org and asked for judgement
+calls to be noted here).
+
+- **M0 server changes** (PR #35): `interval` accepts minute and durations, `fill=true`,
+  `group_by` on every time series, and new `errors/timeseries`, `performance/timeseries` and
+  `sessions/timeseries` endpoints (the last replaces the planned `releases/health?interval=day`:
+  crash-free rate per bucket, `group_by=release`). `GET /me` reports `server_version` and
+  `capabilities`, which the plugin uses instead of probing for 404s.
+- **Grafana version:** `grafanaDependency` is `>=12.0.0`, not 11: the current scaffolding
+  (create-plugin 9) builds against `@grafana/*` 13.2 and React 19. The e2e job runs against the
+  minimum and latest versions; raise the floor if 12.x fails there.
+- **Live:** a separate *Live stream* query type (errors, events or transactions as rows), not a
+  "Live" toggle that joins history and live updates in one panel. Simpler and it works with any
+  table or logs panel; the joined version can come later.
+- **Query types:** everything in the plan, plus Incidents (table) and Sessions and crash-free rate.
+  Variables cover projects, releases, event names and dimension values; environments use
+  dimension values (`environment`).
+- **Not verified in a real Grafana from this session** (Grafana downloads are blocked in the
+  build sandbox). The backend was tested against a real Vaka with every query type
+  (`TestLiveServer`), and the Playwright e2e tests run in CI against Grafana in Docker with a mock
+  Vaka (`tests/mock-vaka.mjs`).
+- **Not done:** catalog submission and signing need the `hellsoft` org on grafana.com and the
+  `GRAFANA_ACCESS_POLICY_TOKEN` secret (see `docs/releasing/grafana.md`); screenshots for the
+  catalog listing; bundled example dashboards for the native plugin.
