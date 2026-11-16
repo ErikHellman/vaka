@@ -36,6 +36,19 @@ pub fn router() -> Router<AppState> {
         .route("/ui/tokens", get(tokens_page).post(tokens_action))
         .route("/ui/users", get(users_page).post(users_action))
         .route("/ui/alerts", get(alerts_page).post(alerts_action))
+        .route("/favicon.svg", get(|| icon("image/svg+xml", include_bytes!("../assets/favicon.svg"))))
+        .route("/favicon.ico", get(|| icon("image/x-icon", include_bytes!("../assets/favicon.ico"))))
+        .route("/apple-touch-icon.png", get(|| icon("image/png", include_bytes!("../assets/apple-touch-icon.png"))))
+}
+
+/// Admin UI icon: the Vaka eye on a dark tile with an amber badge, so it is
+/// told apart from the public docs site (vaka.hellsoft.se) in a tab bar.
+async fn icon(content_type: &'static str, body: &'static [u8]) -> Response {
+    (
+        [(header::CONTENT_TYPE, content_type), (header::CACHE_CONTROL, "public, max-age=86400")],
+        body,
+    )
+        .into_response()
 }
 
 const CSS: &str = r#"
@@ -43,7 +56,7 @@ const CSS: &str = r#"
 @media (prefers-color-scheme:dark){:root{--bg:#0c0a09;--fg:#e7e5e4;--muted:#a8a29e;--line:#292524;--card:#1c1917;--accent:#60a5fa}}
 *{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg)}
 header{display:flex;gap:20px;align-items:center;padding:12px 24px;border-bottom:1px solid var(--line);background:var(--card);flex-wrap:wrap}
-header a{color:var(--fg);text-decoration:none}header .brand{font-weight:700}header .sp{flex:1}
+header a{color:var(--fg);text-decoration:none}header .brand{font-weight:700;display:inline-flex;align-items:center;gap:8px}header .sp{flex:1}
 main{max-width:1000px;margin:24px auto;padding:0 16px}h1{font-size:22px}h2{font-size:17px;margin-top:28px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px;margin:12px 0}
 table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-weight:500;font-size:13px}
@@ -69,11 +82,15 @@ fn page(title: &str, user: Option<&Principal>, flash: Option<&str>, body: Markup
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { (title) " · Vaka" }
+                meta name="theme-color" content="#1d1d1b";
+                link rel="icon" href="/favicon.ico" sizes="32x32";
+                link rel="icon" href="/favicon.svg" type="image/svg+xml";
+                link rel="apple-touch-icon" href="/apple-touch-icon.png";
                 style { (PreEscaped(CSS)) }
             }
             body {
                 header {
-                    a.brand href="/ui" { "Vaka" }
+                    a.brand href="/ui" { img src="/favicon.svg" alt="" width="22" height="22"; "Vaka" }
                     @if let Some(Principal::User { email, role, .. }) = user {
                         a href="/ui" { "Projects" }
                         @if *role >= Role::Admin {

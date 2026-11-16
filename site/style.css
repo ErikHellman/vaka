@@ -6,7 +6,7 @@ header { display: flex; justify-content: space-between; align-items: center; pad
 header a { color: var(--fg); text-decoration: none; }
 .status { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px 12px; }
 .status img { display: block; }
-.brand { font-weight: 700; font-size: 20px; letter-spacing: .02em; }
+.brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 20px; letter-spacing: .02em; }
 .layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); max-width: 1100px; margin: 0 auto; }
 nav { padding: 24px 16px; border-right: 1px solid var(--line); position: sticky; top: 0; align-self: start; max-height: 100vh; overflow: auto; }
 nav a { display: block; padding: 3px 8px; color: var(--muted); text-decoration: none; border-radius: 4px; font-size: 15px; }
