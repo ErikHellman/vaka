@@ -1,0 +1,57 @@
+{
+  "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
+  "type": "datasource",
+  "name": "Vaka",
+  "id": "hellsoft-vaka-datasource",
+  "metrics": true,
+  "alerting": true,
+  "annotations": true,
+  "streaming": true,
+  "logs": true,
+  "tracing": true,
+  "backend": true,
+  "executable": "gpx_vaka",
+  "info": {
+    "description": "Errors, crash-free rates, analytics, performance, logs and traces from Vaka, with alerting and live streams.",
+    "author": {
+      "name": "Hellsoft",
+      "url": "https://vaka.hellsoft.se"
+    },
+    "keywords": [
+      "vaka",
+      "errors",
+      "crash reporting",
+      "analytics",
+      "performance",
+      "apm",
+      "web vitals",
+      "logs",
+      "traces"
+    ],
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    },
+    "links": [
+      {
+        "name": "Documentation",
+        "url": "https://vaka.hellsoft.se/grafana.html"
+      },
+      {
+        "name": "Source",
+        "url": "https://github.com/ErikHellman/vaka/tree/main/integrations/grafana"
+      },
+      {
+        "name": "Vaka",
+        "url": "https://vaka.hellsoft.se"
+      }
+    ],
+    "screenshots": [],
+    "version": "%VERSION%",
+    "updated": "%TODAY%"
+  },
+  "dependencies": {
+    "grafanaDependency": ">=12.0.0",
+    "plugins": []
+  }
+}

@@ -1,0 +1,8 @@
+services:
+  grafana:
+    extends:
+      file: .config/docker-compose-base.yaml
+      service: grafana
+    # Lets Grafana reach tests/mock-vaka.mjs (or a Vaka server) running on the host.
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'

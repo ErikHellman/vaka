@@ -1,0 +1,17 @@
+apiVersion: 1
+
+datasources:
+  # Points at tests/mock-vaka.mjs on the Docker host. For a real server, change url and token.
+  - name: 'Vaka'
+    type: 'hellsoft-vaka-datasource'
+    uid: 'vaka-e2e'
+    access: proxy
+    isDefault: false
+    orgId: 1
+    version: 1
+    editable: true
+    jsonData:
+      url: 'http://host.docker.internal:18080'
+      defaultProject: 'web'
+    secureJsonData:
+      token: 'vt_e2e'

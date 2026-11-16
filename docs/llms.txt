@@ -82,7 +82,7 @@ filter to any analytics tool, or `breakdown: "cohort:<name>"` to a funnel.
 - [CLI: debug file uploads]({{ENDPOINT}}/docs/cli.md)
 - [Alerts: webhooks, Slack, email, SMS (46elks, Twilio, Sinch), daily digests]({{ENDPOINT}}/docs/alerts.md)
 - [Real-time: polling, the live SSE stream of new errors/events/spans, webhooks]({{ENDPOINT}}/docs/realtime.md)
-- [Grafana: Infinity datasource over the REST API, example dashboard, ClickHouse datasource]({{ENDPOINT}}/docs/grafana.md)
+- [Grafana: the Vaka data source plugin (query types, alerting, live), Infinity datasource, ClickHouse datasource]({{ENDPOINT}}/docs/grafana.md)
 - [Monitoring: heartbeat (cron), HTTP uptime and TLS expiry monitors, check-ins, incidents]({{ENDPOINT}}/docs/monitoring.md)
 - [Performance tracing: spans, Web Vitals, app start]({{ENDPOINT}}/docs/performance.md)
 - [Feature flags and experiments]({{ENDPOINT}}/docs/flags.md)

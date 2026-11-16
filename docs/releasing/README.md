@@ -11,6 +11,7 @@ released by [`release.yml`](../../.github/workflows/release.yml) (see
 | `Vaka` (iOS, macOS, tvOS) | Swift Package Manager (git tags), CocoaPods trunk | [ios.md](ios.md) |
 | `vaka-sdk` (Rust) | crates.io | [rust.md](rust.md) |
 | `github.com/ErikHellman/vaka/sdks/go` | Go module proxy (git tags) | [go.md](go.md) |
+| `hellsoft-vaka-datasource` (Grafana plugin) | GitHub release `grafana/v*`, then the Grafana catalog | [grafana.md](grafana.md) |
 | `se.hellsoft.vaka:vaka-jvm` | Maven Central | [jvm.md](jvm.md) |
 | `vaka-sdk` (Python) | PyPI (trusted publishing) | [python.md](python.md) |
 | `Vaka`, `Vaka.OpenTelemetry`, `Vaka.AspNetCore` (.NET) | NuGet | [dotnet.md](dotnet.md) |
