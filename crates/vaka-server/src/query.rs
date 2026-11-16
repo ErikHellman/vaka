@@ -808,28 +808,42 @@ pub async fn analytics_summary(state: &AppState, p: &Principal, a: AnalyticsPara
     }))
 }
 
-pub async fn analytics_timeseries(state: &AppState, p: &Principal, a: AnalyticsParams, interval: Option<&str>) -> QResult<Value> {
+pub async fn analytics_timeseries(state: &AppState, p: &Principal, a: AnalyticsParams, opts: crate::timeseries::SeriesOpts) -> QResult<Value> {
+    use crate::timeseries as ts;
     let project = project_for(state, p, &a.project).await?;
     let w = analytics_where(state, &project.id, &a).await?;
-    let interval = match interval {
-        Some("hour") => "hour",
-        Some("day") => "day",
-        Some("week") => "week",
-        Some("month") => "month",
-        None => if w.until - w.since <= 2 * 86_400_000 { "hour" } else { "day" },
-        Some(other) => return Err(ApiError::bad(format!("unknown interval `{other}`: hour, day, week or month"))),
-    };
-    let bucket = match interval {
-        "hour" => "toStartOfHour(timestamp)",
-        "day" => "toStartOfDay(timestamp)",
-        "week" => "toStartOfWeek(timestamp, 1)",
-        _ => "toStartOfMonth(timestamp)",
-    };
+    let b = ts::parse_interval(opts.interval.as_deref(), w.since, w.until)?;
+    let bucket = b.sql("timestamp");
+    let empty = ts::empty_row(&["visitors", "pageviews", "screen_views", "custom_events", "events", "identified_users"], &[]);
+    let mut out = json!({"project": project.slug, "interval": b.name(), "bucket_seconds": b.seconds(), "window": {"since": iso_time(w.since), "until": iso_time(w.until)}, "filters": a.filters});
     let rows = state
         .ch
-        .query(&format!("SELECT formatDateTime({bucket}, '%Y-%m-%dT%H:%i:%SZ') AS bucket, {METRICS} FROM events WHERE {} GROUP BY bucket ORDER BY bucket", w.sql), &w.params)
+        .query(&format!("SELECT {bucket} AS bucket, {METRICS} FROM events WHERE {} GROUP BY bucket ORDER BY bucket", w.sql), &w.params)
         .await?;
-    Ok(json!({"project": project.slug, "interval": interval, "window": {"since": iso_time(w.since), "until": iso_time(w.until)}, "filters": a.filters, "series": rows}))
+    out["series"] = json!(if opts.fill { ts::fill(rows, &b, w.since, w.until, &empty) } else { rows });
+    if let Some(dim) = opts.group_by.as_deref().filter(|d| !d.is_empty()) {
+        let expr = dimension_expr(dim).ok_or_else(|| ApiError::bad(format!("unknown dimension `{dim}`; valid: {}", DIMENSIONS.join(", "))))?;
+        let mut ps = w.params.clone();
+        ps.push(("glim", opts.limit.unwrap_or(10).clamp(1, 50).to_string()));
+        let rows = state
+            .ch
+            .query(
+                &format!(
+                    "SELECT toString({expr}) AS grp, {bucket} AS bucket, {METRICS} FROM events WHERE {w} AND toString({expr}) IN \
+                     (SELECT toString({expr}) FROM events WHERE {w} GROUP BY toString({expr}) ORDER BY uniq(visitor_id) DESC, count() DESC LIMIT {{glim:UInt32}}) \
+                     GROUP BY grp, bucket ORDER BY bucket",
+                    w = w.sql
+                ),
+                &ps,
+            )
+            .await?;
+        out["group_by"] = json!(dim);
+        out["groups"] = ts::split_groups(rows, "visitors")
+            .into_iter()
+            .map(|(key, _, rows)| json!({"key": key, "series": if opts.fill { ts::fill(rows, &b, w.since, w.until, &empty) } else { rows }}))
+            .collect();
+    }
+    Ok(out)
 }
 
 pub async fn analytics_breakdown(state: &AppState, p: &Principal, a: AnalyticsParams, dimension: &str, limit: Option<i64>) -> QResult<Value> {

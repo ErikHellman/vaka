@@ -126,14 +126,14 @@ pub struct PerfParams {
     pub sort: Option<String>,
 }
 
-struct W {
-    sql: String,
-    params: Vec<(&'static str, String)>,
-    since: i64,
-    until: i64,
+pub(crate) struct W {
+    pub(crate) sql: String,
+    pub(crate) params: Vec<(&'static str, String)>,
+    pub(crate) since: i64,
+    pub(crate) until: i64,
 }
 
-fn where_for(project_id: &str, a: &PerfParams, roots_only: bool) -> W {
+pub(crate) fn where_for(project_id: &str, a: &PerfParams, roots_only: bool) -> W {
     let now = now_ms();
     let since = a.since.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 86_400_000);
     let until = a.until.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now + 60_000);

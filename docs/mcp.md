@@ -47,6 +47,7 @@ Read (everything a read token can call):
 | `get_session_timeline` | One session in order: pageviews, screens, events, breadcrumbs, errors, crashes, feedback |
 | `issue_precursors` | What users did in the minutes before an issue across sessions, with lift versus all sessions |
 | `performance_summary` | Latency percentiles, throughput and error rate per transaction |
+| `performance_timeseries` | Latency percentiles and throughput over time |
 | `slow_endpoints` | Slowest HTTP server endpoints by p95 |
 | `app_startup` | Cold and warm app start times by release |
 | `web_vitals` | LCP, INP, CLS, FCP, TTFB p75 with ratings, overall and by page |
@@ -63,7 +64,9 @@ Read (everything a read token can call):
 | `compare_releases` | Two releases side by side: new, gone and increased issues |
 | `explain_spike` | Why errors went up: recent window vs baseline, ranked by issue, release, OS, device, country, exception type |
 | `analytics_summary` | Visitors, pageviews, screen views, custom events, with the previous period |
-| `analytics_timeseries` | Metrics per hour, day, week or month |
+| `analytics_timeseries` | Metrics per minute, hour, day, week, month or custom interval, optionally per dimension value |
+| `errors_timeseries` | Errors over time, optionally per issue, release, level, ... |
+| `sessions_timeseries` | Sessions and crash-free rates over time, optionally per release |
 | `analytics_breakdown` | Top values of a dimension (pages, referrers, countries, browsers, events, `prop:<name>`) |
 | `top_pages` | Most visited pages |
 | `list_event_names` | Event catalog: names, counts and property keys (use before funnels) |
