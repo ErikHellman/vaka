@@ -31,6 +31,8 @@ pub const DOCS: &[(&str, &str)] = &[
     doc!("anomalies.md"),
     doc!("feedback.md"),
     doc!("monitoring.md"),
+    doc!("realtime.md"),
+    doc!("grafana.md"),
     doc!("opentelemetry.md"),
     doc!("cli.md"),
     doc!("sdk-javascript.md"),

@@ -29,6 +29,8 @@ pub struct AppStateInner {
     pub s3: Option<crate::s3::S3>,
     /// (day, salt) used for anonymous visitor hashing; rotated daily.
     pub salt: RwLock<(String, String)>,
+    /// Fan-out of newly stored rows for `/stream` subscribers.
+    pub live: tokio::sync::broadcast::Sender<std::sync::Arc<crate::live::LiveMsg>>,
 }
 
 pub type AppState = Arc<AppStateInner>;

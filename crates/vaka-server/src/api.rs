@@ -60,6 +60,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/projects/{p}/analytics/events", get(analytics_events))
         .route("/api/v1/projects/{p}/analytics/revenue", get(analytics_revenue))
         .route("/api/v1/projects/{p}/analytics/realtime", get(analytics_realtime))
+        .route("/api/v1/projects/{p}/stream", get(crate::live::stream))
         .route("/api/v1/projects/{p}/goals", get(list_goals).post(create_goal))
         .route("/api/v1/projects/{p}/flags", get(list_flags).post(create_flag))
         .route("/api/v1/projects/{p}/flags/{key}", get(get_flag).patch(update_flag).delete(delete_flag))

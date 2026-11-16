@@ -145,6 +145,7 @@ get them computed when read; `POST /projects/{p}/ownership/apply` stores them.
 | `GET /projects/{p}/analytics/timeseries` | Same metrics per `interval` (hour\|day\|week\|month) |
 | `GET /projects/{p}/analytics/breakdown` | Top values of `dimension`, ranked by visitors; `limit` |
 | `GET /projects/{p}/analytics/realtime` | The last `minutes` (default 5, max 60): visitors, pageviews, active sessions, errors, top pages, referrers, countries and events, and visitors per minute for the last 30 minutes |
+| `GET /projects/{p}/stream` | Server-Sent Events: each new error, analytics event or span as it is stored. `types` (error,event,span), `event_types`, `environment`, `root_spans_only`. See [realtime.md](realtime.md) |
 
 Common parameters: `since`, `until`, `type` (pageview\|screen_view\|custom), and repeated
 `filter=dimension:value` (prefix the value with `~` for contains or `!` for not equal).

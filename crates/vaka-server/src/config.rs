@@ -37,6 +37,9 @@ pub struct Config {
     /// Let webhook and Slack alert targets point at private or loopback addresses
     /// (`VAKA_ALLOW_PRIVATE_ALERT_TARGETS`). Off by default: it would allow SSRF.
     pub allow_private_alert_targets: bool,
+    /// Browser origins allowed to call `/api/v1` with a bearer token (`VAKA_API_CORS_ORIGINS`,
+    /// comma-separated, `*` for any). Empty: no CORS headers, so only same-origin and server-side callers.
+    pub api_cors_origins: Vec<String>,
     /// Ingest items accepted per project per minute, and per project and client address per
     /// minute (`VAKA_INGEST_PER_PROJECT_MINUTE`, `VAKA_INGEST_PER_IP_MINUTE`; 0 = unlimited).
     pub ingest_per_project_minute: u32,
@@ -159,6 +162,9 @@ impl Config {
                     .unwrap_or_else(|_| DEFAULT_TRUSTED_PROXIES.into()),
             ),
             allow_private_alert_targets: flag("VAKA_ALLOW_PRIVATE_ALERT_TARGETS"),
+            api_cors_origins: var("VAKA_API_CORS_ORIGINS")
+                .map(|v| v.split(',').map(|o| o.trim().trim_end_matches('/').to_string()).filter(|o| !o.is_empty()).collect())
+                .unwrap_or_default(),
             ingest_per_project_minute: var("VAKA_INGEST_PER_PROJECT_MINUTE")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(120_000),

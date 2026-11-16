@@ -211,7 +211,7 @@ async fn flush(state: &AppState, errors: &mut Vec<ErrorRow>, sessions: &mut Vec<
         let mut ok = true;
         if !errors.is_empty() {
             match state.ch.insert("errors", errors).await {
-                Ok(()) => errors.clear(),
+                Ok(()) => { crate::live::publish(state, errors, &[], &[]); errors.clear() }
                 Err(e) => { ok = false; tracing::warn!(attempt, "insert errors: {e:#}") }
             }
         }
@@ -223,13 +223,13 @@ async fn flush(state: &AppState, errors: &mut Vec<ErrorRow>, sessions: &mut Vec<
         }
         if !events.is_empty() {
             match state.ch.insert("events", events).await {
-                Ok(()) => events.clear(),
+                Ok(()) => { crate::live::publish(state, &[], events, &[]); events.clear() }
                 Err(e) => { ok = false; tracing::warn!(attempt, "insert events: {e:#}") }
             }
         }
         if !spans.is_empty() {
             match state.ch.insert("spans", spans).await {
-                Ok(()) => spans.clear(),
+                Ok(()) => { crate::live::publish(state, &[], &[], spans); spans.clear() }
                 Err(e) => { ok = false; tracing::warn!(attempt, "insert spans: {e:#}") }
             }
         }

@@ -17,6 +17,7 @@ mod github;
 mod grouping;
 mod ingest;
 mod insights;
+mod live;
 mod maintenance;
 mod mcp;
 mod migrate_db;
@@ -121,6 +122,7 @@ async fn main() -> anyhow::Result<()> {
         alert_http: netguard::alert_client(config.allow_private_alert_targets)?,
         s3: s3::S3Config::from_env().map(s3::S3::new).transpose()?,
         salt: Default::default(),
+        live: live::channel(),
     });
     auth::bootstrap_admin(&state).await?;
     if let Err(e) = secretbox::seal_existing(&state.db).await {
@@ -157,7 +159,7 @@ async fn main() -> anyhow::Result<()> {
                 .layer(RequestDecompressionLayer::new())
                 .layer(tower_http::limit::RequestBodyLimitLayer::new(20 * 1024 * 1024)),
         )
-        .merge(api::router())
+        .merge(api_router(&config)?)
         .merge(mcp::router())
         .merge(docs::router())
         .merge(admin::router())
@@ -207,6 +209,29 @@ async fn main() -> anyhow::Result<()> {
     })
     .await?;
     Ok(())
+}
+
+/// The REST API, with CORS for the origins in `VAKA_API_CORS_ORIGINS` (bearer tokens only, no cookies).
+fn api_router(config: &config::Config) -> anyhow::Result<Router<state::AppState>> {
+    if config.api_cors_origins.is_empty() {
+        return Ok(api::router());
+    }
+    let origin = if config.api_cors_origins.iter().any(|o| o == "*") {
+        tower_http::cors::AllowOrigin::any()
+    } else {
+        let list = config
+            .api_cors_origins
+            .iter()
+            .map(|o| HeaderValue::from_str(o).map_err(|_| anyhow::anyhow!("invalid origin in VAKA_API_CORS_ORIGINS: {o}")))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        tower_http::cors::AllowOrigin::list(list)
+    };
+    let cors = CorsLayer::new()
+        .allow_origin(origin)
+        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::PUT, Method::DELETE, Method::OPTIONS])
+        .allow_headers([axum::http::header::AUTHORIZATION, axum::http::header::CONTENT_TYPE, axum::http::header::ACCEPT, axum::http::header::CACHE_CONTROL])
+        .max_age(std::time::Duration::from_secs(3600));
+    Ok(api::router().layer(cors))
 }
 
 async fn health(

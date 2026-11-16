@@ -584,6 +584,21 @@ curl -s "${A[@]}" -X POST "$VAKA/api/v1/projects/$SLUG/monitors/backup/run" | gr
 curl -sf -b "$JAR" "$VAKA/ui/projects/$SLUG/monitors/shop-api" | grep -q 'Check now' || fail "http monitor admin page"
 for m in shop-api closed cert; do curl -sf "${A[@]}" -X DELETE "$VAKA/api/v1/projects/$SLUG/monitors/$m" >/dev/null || fail "delete $m"; done
 
+# Live stream (SSE): new errors and events arrive after they are stored; bad types are refused.
+STREAM_OUT=$(mktemp)
+curl -sN --max-time 8 "${A[@]}" "$VAKA/api/v1/projects/$SLUG/stream?types=error,event&event_types=custom" > "$STREAM_OUT" &
+STREAM_PID=$!
+sleep 1
+send '{"items":[{"type":"error","message":"streamed boom"},{"type":"event","name":"stream_signup","props":{"plan":"pro"}},{"type":"event","name":"pageview","url":"https://ex.com/streamed"}]}' >/dev/null || fail "stream ingest"
+for _ in $(seq 1 30); do grep -q 'stream_signup' "$STREAM_OUT" && grep -q 'streamed boom' "$STREAM_OUT" && break; sleep 0.2; done
+kill "$STREAM_PID" 2>/dev/null || true
+grep -q '^event: ready' "$STREAM_OUT" || fail "stream ready: $(cat "$STREAM_OUT")"
+grep -q 'streamed boom' "$STREAM_OUT" || fail "stream error: $(cat "$STREAM_OUT")"
+grep -q '"plan":"pro"' "$STREAM_OUT" || fail "stream event: $(cat "$STREAM_OUT")"
+! grep -q '/streamed' "$STREAM_OUT" || fail "stream event_types filter: $(cat "$STREAM_OUT")"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "${A[@]}" "$VAKA/api/v1/projects/$SLUG/stream?types=logs")" = 400 ] || fail "stream bad type"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$VAKA/api/v1/projects/$SLUG/stream")" = 401 ] || fail "stream needs auth"
+
 # GDPR
 GD=$(curl -sf "${A[@]}" -X DELETE "$VAKA/api/v1/projects/$SLUG/users/u1")
 echo "$GD" | j 'd["errors"]' | grep -q 1 || fail "gdpr: $GD"

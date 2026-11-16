@@ -1,0 +1,462 @@
+{
+  "title": "Vaka overview",
+  "uid": "vaka-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "10s",
+  "tags": [
+    "vaka"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "yesoreyeram-infinity-datasource",
+        "label": "Vaka (Infinity)"
+      },
+      {
+        "name": "vaka_url",
+        "type": "textbox",
+        "label": "Vaka URL",
+        "query": "https://vaka.example.com",
+        "current": {
+          "text": "https://vaka.example.com",
+          "value": "https://vaka.example.com"
+        }
+      },
+      {
+        "name": "project",
+        "type": "textbox",
+        "label": "Project slug",
+        "query": "web",
+        "current": {
+          "text": "web",
+          "value": "web"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Visitors (last 5 min)",
+      "type": "stat",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${datasource}"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "${vaka_url}/api/v1/projects/${project}/analytics/realtime?minutes=5",
+          "url_options": {
+            "method": "GET"
+          },
+          "root_selector": "",
+          "columns": [
+            {
+              "selector": "visitors",
+              "text": "visitors",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^visitors$/"
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 2,
+      "title": "Pageviews (last 5 min)",
+      "type": "stat",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${datasource}"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "${vaka_url}/api/v1/projects/${project}/analytics/realtime?minutes=5",
+          "url_options": {
+            "method": "GET"
+          },
+          "root_selector": "",
+          "columns": [
+            {
+              "selector": "pageviews",
+              "text": "pageviews",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^pageviews$/"
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 3,
+      "title": "Active sessions",
+      "type": "stat",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${datasource}"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "${vaka_url}/api/v1/projects/${project}/analytics/realtime?minutes=5",
+          "url_options": {
+            "method": "GET"
+          },
+          "root_selector": "",
+          "columns": [
+            {
+              "selector": "active_sessions",
+              "text": "active_sessions",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^active_sessions$/"
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 4,
+      "title": "Errors (last 5 min)",
+      "type": "stat",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${datasource}"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "${vaka_url}/api/v1/projects/${project}/analytics/realtime?minutes=5",
+          "url_options": {
+            "method": "GET"
+          },
+          "root_selector": "",
+          "columns": [
+            {
+              "selector": "errors",
+              "text": "errors",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^errors$/"
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 5,
+      "title": "Visitors per minute (last 30 min)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 24,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${datasource}"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "${vaka_url}/api/v1/projects/${project}/analytics/realtime?minutes=5",
+          "url_options": {
+            "method": "GET"
+          },
+          "root_selector": "per_minute_last_30",
+          "columns": [
+            {
+              "selector": "minute",
+              "text": "minute",
+              "type": "timestamp"
+            },
+            {
+              "selector": "visitors",
+              "text": "visitors",
+              "type": "number"
+            },
+            {
+              "selector": "events",
+              "text": "events",
+              "type": "number"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Traffic",
+      "type": "timeseries",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 16,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${datasource}"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "${vaka_url}/api/v1/projects/${project}/analytics/timeseries?since=${__from}&until=${__to}",
+          "url_options": {
+            "method": "GET"
+          },
+          "root_selector": "series",
+          "columns": [
+            {
+              "selector": "bucket",
+              "text": "bucket",
+              "type": "timestamp"
+            },
+            {
+              "selector": "visitors",
+              "text": "visitors",
+              "type": "number"
+            },
+            {
+              "selector": "pageviews",
+              "text": "pageviews",
+              "type": "number"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Top pages",
+      "type": "table",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 11,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${datasource}"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "${vaka_url}/api/v1/projects/${project}/analytics/breakdown?dimension=path&limit=10&since=${__from}&until=${__to}",
+          "url_options": {
+            "method": "GET"
+          },
+          "root_selector": "rows",
+          "columns": [
+            {
+              "selector": "value",
+              "text": "page",
+              "type": "string"
+            },
+            {
+              "selector": "visitors",
+              "text": "visitors",
+              "type": "number"
+            },
+            {
+              "selector": "pageviews",
+              "text": "pageviews",
+              "type": "number"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Top issues",
+      "type": "table",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "${datasource}"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "${vaka_url}/api/v1/projects/${project}/issues?sort=events&limit=20&since=${__from}",
+          "url_options": {
+            "method": "GET"
+          },
+          "root_selector": "issues",
+          "columns": [
+            {
+              "selector": "short_id",
+              "text": "id",
+              "type": "string"
+            },
+            {
+              "selector": "title",
+              "text": "title",
+              "type": "string"
+            },
+            {
+              "selector": "level",
+              "text": "level",
+              "type": "string"
+            },
+            {
+              "selector": "events_in_window",
+              "text": "events",
+              "type": "number"
+            },
+            {
+              "selector": "users_in_window",
+              "text": "users",
+              "type": "number"
+            },
+            {
+              "selector": "last_seen",
+              "text": "last seen",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

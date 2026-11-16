@@ -1,0 +1,14 @@
+# Grafana provisioning for the Infinity datasource pointed at Vaka.
+# Put this in /etc/grafana/provisioning/datasources/ and set VAKA_URL and VAKA_TOKEN
+# (a read-only Vaka API token) in Grafana's environment.
+apiVersion: 1
+datasources:
+  - name: Vaka
+    type: yesoreyeram-infinity-datasource
+    uid: vaka
+    jsonData:
+      auth_method: bearerToken
+      allowedHosts:
+        - ${VAKA_URL}
+    secureJsonData:
+      bearerToken: ${VAKA_TOKEN}
