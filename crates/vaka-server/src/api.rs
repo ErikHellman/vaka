@@ -52,6 +52,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/issues/{id}/links/{link}", delete(delete_link))
         .route("/api/v1/projects/{p}/analytics/summary", get(analytics_summary))
         .route("/api/v1/projects/{p}/analytics/timeseries", get(analytics_timeseries))
+        .route("/api/v1/projects/{p}/errors/timeseries", get(errors_timeseries))
+        .route("/api/v1/projects/{p}/performance/timeseries", get(perf_timeseries))
+        .route("/api/v1/projects/{p}/sessions/timeseries", get(sessions_timeseries))
         .route("/api/v1/projects/{p}/analytics/breakdown", get(analytics_breakdown))
         .route("/api/v1/projects/{p}/explain-spike", get(explain_spike))
         .route("/api/v1/projects/{p}/analytics/funnel", get(analytics_funnel))
@@ -145,13 +148,19 @@ async fn feedback_attachment(State(s): State<AppState>, p: Principal, Path((id, 
         .into_response())
 }
 
+/// Feature names clients (such as the Grafana plugin) can probe for in `GET /me`.
+pub const CAPABILITIES: &[&str] = &["stream", "analytics_group_by", "errors_timeseries", "performance_timeseries", "sessions_timeseries", "interval_durations", "fill"];
+
 async fn me(p: Principal) -> J {
-    Ok(Json(match p {
+    let mut v = match p {
         Principal::User { id, email, name, role } => json!({"type": "user", "id": id, "email": email, "name": name, "role": role}),
         Principal::Token { id, name, project_id, write } => {
             json!({"type": "token", "id": id, "name": name, "project_id": project_id, "scope": if write {"write"} else {"read"}})
         }
-    }))
+    };
+    v["server_version"] = json!(env!("CARGO_PKG_VERSION"));
+    v["capabilities"] = json!(CAPABILITIES);
+    Ok(Json(v))
 }
 
 async fn list_projects(State(s): State<AppState>, p: Principal) -> J {
@@ -528,7 +537,45 @@ async fn analytics_summary(State(s): State<AppState>, p: Principal, Path(project
 
 async fn analytics_timeseries(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
     let (a, extra) = analytics_params(project, raw);
-    Ok(Json(query::analytics_timeseries(&s, &p, a, extra.get("interval").map(|s| s.as_str())).await?))
+    Ok(Json(query::analytics_timeseries(&s, &p, a, crate::timeseries::SeriesOpts::from_map(&extra)).await?))
+}
+
+async fn errors_timeseries(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<BTreeMap<String, String>>) -> J {
+    let g = |k: &str| q.get(k).cloned();
+    let a = crate::timeseries::ErrorSeriesParams {
+        project,
+        since: g("since"),
+        until: g("until"),
+        level: g("level"),
+        release: g("release"),
+        environment: g("environment"),
+        issue: g("issue"),
+        exception_type: g("exception_type"),
+        handled: g("handled"),
+    };
+    Ok(Json(crate::timeseries::errors_timeseries(&s, &p, a, crate::timeseries::SeriesOpts::from_map(&q)).await?))
+}
+
+async fn perf_timeseries(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<BTreeMap<String, String>>) -> J {
+    let g = |k: &str| q.get(k).cloned();
+    let a = crate::perf::PerfParams {
+        project,
+        since: g("since"),
+        until: g("until"),
+        environment: g("environment"),
+        release: g("release"),
+        op: g("op"),
+        transaction: g("transaction"),
+        limit: None,
+        sort: None,
+    };
+    Ok(Json(crate::timeseries::performance_timeseries(&s, &p, a, crate::timeseries::SeriesOpts::from_map(&q)).await?))
+}
+
+async fn sessions_timeseries(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<BTreeMap<String, String>>) -> J {
+    let g = |k: &str| q.get(k).cloned();
+    let a = crate::timeseries::SessionSeriesParams { project, since: g("since"), until: g("until"), release: g("release"), environment: g("environment") };
+    Ok(Json(crate::timeseries::sessions_timeseries(&s, &p, a, crate::timeseries::SeriesOpts::from_map(&q)).await?))
 }
 
 async fn analytics_breakdown(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {

@@ -142,7 +142,7 @@ get them computed when read; `POST /projects/{p}/ownership/apply` stores them.
 | Method & path | Description |
 | --- | --- |
 | `GET /projects/{p}/analytics/summary` | Visitors, pageviews, screen views, custom events, identified users, with the previous period |
-| `GET /projects/{p}/analytics/timeseries` | Same metrics per `interval` (hour\|day\|week\|month) |
+| `GET /projects/{p}/analytics/timeseries` | Same metrics per `interval` (see [Time series](#time-series)); `group_by` a dimension adds one series per top value |
 | `GET /projects/{p}/analytics/breakdown` | Top values of `dimension`, ranked by visitors; `limit` |
 | `GET /projects/{p}/analytics/realtime` | The last `minutes` (default 5, max 60): visitors, pageviews, active sessions, errors, top pages, referrers, countries and events, and visitors per minute for the last 30 minutes |
 | `GET /projects/{p}/stream` | Server-Sent Events: each new error, analytics event or span as it is stored. `types` (error,event,span), `event_types`, `environment`, `root_spans_only`. See [realtime.md](realtime.md) |
@@ -161,6 +161,35 @@ excludes them).
 curl -H "Authorization: Bearer $VAKA_TOKEN" \
   "{{ENDPOINT}}/api/v1/projects/web/analytics/breakdown?dimension=prop:plan&filter=event:signup&since=30d"
 ```
+
+## Time series
+
+Every `.../timeseries` endpoint returns `series` (one row per bucket, each with a `bucket` start
+time) and takes the same options:
+
+- `interval`: `minute`, `hour`, `day`, `week` (Monday), `month`, or a duration such as `5m`, `15m`,
+  `6h`, `1d` (rounded up to whole minutes). Default: hourly up to two days, daily beyond. At most
+  2000 buckets per request (`400` otherwise). Fixed buckets are aligned to the unix epoch, in UTC.
+- `fill=true`: return every bucket in the window, with `0` (or `null` for percentiles and rates)
+  where nothing happened. Graphing and alerting tools want this.
+- `group_by` and `limit` (default 10, max 50): add `groups`, one `{key, total, series}` per top
+  value, largest first. `series` stays the total.
+
+| Method & path | Description |
+| --- | --- |
+| `GET /projects/{p}/analytics/timeseries` | Visitors, pageviews, screen views, custom events, events, identified users. Analytics filters apply; `group_by` takes any dimension |
+| `GET /projects/{p}/errors/timeseries` | `errors`, `unhandled`, `fatal`, `users` (affected), `issues` (distinct). Filters: `issue` (id or short id), `level`, `release`, `environment`, `exception_type`, `handled` (true\|false). `group_by`: `issue` (groups get `key` = short id, `title`, `status`), `release`, `level`, `environment`, `exception_type`, `platform`, `os`, `browser`, `country`. Default window 24h |
+| `GET /projects/{p}/performance/timeseries` | Root spans (transactions): `count`, `per_minute`, `p50_ms`..`p99_ms`, `avg_ms`, `errors`, `error_rate`. With `op`, every span with that op counts (`op=db*` for database latency). Filters: `transaction`, `release`, `environment`. `group_by`: `transaction`, `op`, `release`, `environment`, `service`, `http_status` |
+| `GET /projects/{p}/sessions/timeseries` | By session start: `sessions`, `crashed`, `errored`, `users`, `crashed_users`, `crash_free_sessions`, `crash_free_users`. Filters: `release`, `environment`. `group_by`: `release`, `environment`, `platform` (default `limit` 5). Default window 7d |
+
+```sh
+# Errors per 5 minutes for the last 6 hours, one series per top issue
+curl -H "Authorization: Bearer $VAKA_TOKEN" \
+  "{{ENDPOINT}}/api/v1/projects/web/errors/timeseries?since=6h&interval=5m&fill=true&group_by=issue&limit=5"
+```
+
+`GET /me` lists `capabilities` (for example `errors_timeseries`, `stream`) and `server_version`,
+so clients can tell what a server supports.
 
 ## Product analytics
 

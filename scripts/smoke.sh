@@ -346,6 +346,21 @@ BD=$(curl -sf "${A[@]}" "$PERF/breakdown?since=1h&transaction=GET%20/api/carts/:
 [ "$(echo "$BD" | j '(d["spans"][0]["op"], d["spans"][0]["per_transaction"])')" = "('db', 1.0)" ] || fail "span breakdown: $BD"
 CMP=$(curl -sf "${A[@]}" "$PERF/compare?base=p1&target=p2")
 [ "$(echo "$CMP" | j '(d["regressed"], [r["transaction"] for r in d["regressions"]], [v["metric"] for v in d["web_vitals"] if v["regressed"]])')" = "(True, ['GET /api/carts/:id'], ['lcp'])" ] || fail "compare performance: $CMP"
+# Time series (Grafana): minute buckets, zero fill, group_by
+TS="$VAKA/api/v1/projects/$SLUG"
+curl -sf "${A[@]}" "$VAKA/api/v1/me" | j '"errors_timeseries" in d["capabilities"]' | grep -q True || fail "me capabilities"
+NERR=$(curl -sf "${A[@]}" "$TS/events?since=1h&limit=500" | j 'len(d["events"])')
+ET=$(curl -sf "${A[@]}" "$TS/errors/timeseries?since=1h&interval=1m&fill=true")
+[ "$(echo "$ET" | j '(d["interval"], len(d["series"]) in (60, 61), sum(r["errors"] for r in d["series"]))')" = "('minute', True, $NERR)" ] || fail "errors timeseries ($NERR errors): $ET"
+EG=$(curl -sf "${A[@]}" "$TS/errors/timeseries?since=1h&interval=5m&group_by=issue&limit=3")
+[ "$(echo "$EG" | j '(len(d["groups"]) <= 3, d["groups"][0]["key"].startswith(d["project"].upper()), d["groups"][0]["total"] >= d["groups"][-1]["total"], "title" in d["groups"][0])')" = "(True, True, True, True)" ] || fail "errors timeseries by issue: $EG"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "${A[@]}" "$TS/errors/timeseries?since=30d&interval=minute")" = "400" ] || fail "too many buckets accepted"
+PT=$(curl -sf "${A[@]}" "$TS/performance/timeseries?since=1h&interval=5m&op=http.server&group_by=release&fill=true")
+[ "$(echo "$PT" | j '(sum(r["count"] for r in d["series"]), sorted(g["key"] for g in d["groups"]), max(r["p95_ms"] or 0 for r in d["groups"][0]["series"]) > 0)')" = "(50, ['p1', 'p2'], True)" ] || fail "performance timeseries: $PT"
+ST=$(curl -sf "${A[@]}" "$TS/sessions/timeseries?since=1h&interval=hour&group_by=release")
+[ "$(echo "$ST" | j '(sum(r["sessions"] for r in d["series"]) >= 2, "1.0.0" in [g["key"] for g in d["groups"]], all(0 <= r["crash_free_sessions"] <= 1 for r in d["series"]))')" = "(True, True, True)" ] || fail "sessions timeseries: $ST"
+AT=$(curl -sf "${A[@]}" "$TS/analytics/timeseries?since=1h&interval=15m&fill=true&group_by=path&type=pageview")
+[ "$(echo "$AT" | j '(d["interval"], len(d["series"]) in (4, 5), sum(r["pageviews"] for r in d["series"]) == sum(r["pageviews"] for g in d["groups"] for r in g["series"]))')" = "('15m', True, True)" ] || fail "analytics timeseries: $AT"
 PR=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules" -d "{\"project\":\"$SLUG\",\"trigger\":\"perf_regression\",\"channel\":\"webhook\",\"target\":\"http://127.0.0.1:$HOOK_PORT/perf\"}" | j 'd["id"]') || fail "perf rule"
 curl -sf "${A[@]}" -X POST "$VAKA/api/v1/alert-rules/$PR/test" >/dev/null || fail "perf rule test"
 for i in $(seq 1 10); do grep -q '^/perf ' "$HOOKS" && break; sleep 0.5; done

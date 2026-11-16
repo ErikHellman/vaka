@@ -358,7 +358,26 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
         "release_health" => query::release_health(state, p, &req(&a, "project")?, s(&a, "release").as_deref(), s(&a, "since").as_deref()).await?,
         "compare_releases" => query::compare_releases(state, p, &req(&a, "project")?, &req(&a, "base")?, &req(&a, "target")?).await?,
         "analytics_summary" => query::analytics_summary(state, p, analytics_args(&a)?).await?,
-        "analytics_timeseries" => query::analytics_timeseries(state, p, analytics_args(&a)?, s(&a, "interval").as_deref()).await?,
+        "analytics_timeseries" => query::analytics_timeseries(state, p, analytics_args(&a)?, crate::timeseries::SeriesOpts::from_json(&a)).await?,
+        "errors_timeseries" => {
+            let args = crate::timeseries::ErrorSeriesParams {
+                project: req(&a, "project")?,
+                since: s(&a, "since"),
+                until: s(&a, "until"),
+                level: s(&a, "level"),
+                release: s(&a, "release"),
+                environment: s(&a, "environment"),
+                issue: s(&a, "issue"),
+                exception_type: s(&a, "exception_type"),
+                handled: a.get("handled").and_then(|v| v.as_bool()).map(|b| b.to_string()),
+            };
+            crate::timeseries::errors_timeseries(state, p, args, crate::timeseries::SeriesOpts::from_json(&a)).await?
+        }
+        "performance_timeseries" => crate::timeseries::performance_timeseries(state, p, perf_args(&a)?, crate::timeseries::SeriesOpts::from_json(&a)).await?,
+        "sessions_timeseries" => {
+            let args = crate::timeseries::SessionSeriesParams { project: req(&a, "project")?, since: s(&a, "since"), until: s(&a, "until"), release: s(&a, "release"), environment: s(&a, "environment") };
+            crate::timeseries::sessions_timeseries(state, p, args, crate::timeseries::SeriesOpts::from_json(&a)).await?
+        }
         "analytics_breakdown" => query::analytics_breakdown(state, p, analytics_args(&a)?, &req(&a, "dimension")?, i(&a, "limit")).await?,
         "top_pages" => query::analytics_breakdown(state, p, analytics_args(&a)?, "path", i(&a, "limit")).await?,
         "analytics_funnel" => {
@@ -647,6 +666,14 @@ fn flag_props(create: bool) -> Vec<(&'static str, Value)> {
     ]
 }
 
+fn interval_prop() -> Value {
+    prop("string", "minute, hour, day, week, month or a duration like 5m, 15m, 6h (default: hour up to 2 days, else day; at most 2000 buckets)")
+}
+
+fn fill_prop() -> Value {
+    prop("boolean", "Return every bucket in the window, with zeros where nothing happened")
+}
+
 fn perf_props(extra: &[(&'static str, Value)]) -> Vec<(&'static str, Value)> {
     let mut v = vec![
         ("project", prop("string", "Project slug or id (see list_projects)")),
@@ -792,8 +819,60 @@ pub fn tools() -> Vec<Value> {
         tool(
             "analytics_timeseries",
             "Analytics time series",
-            "Analytics metrics bucketed by hour, day, week or month.",
-            vec![("project", project()), ("since", since()), ("until", until()), ("interval", prop("string", "hour, day, week or month (auto by default)")), ("type", prop("string", "pageview, screen_view or custom")), ("filters", filters())],
+            "Analytics metrics bucketed by minute, hour, day, week, month or a duration like 5m. group_by splits it per value of a dimension.",
+            vec![
+                ("project", project()),
+                ("since", since()),
+                ("until", until()),
+                ("interval", interval_prop()),
+                ("fill", fill_prop()),
+                ("group_by", prop("string", "Optional dimension (country, path, release, prop:<name>, ...): one series per top value")),
+                ("limit", prop("integer", "Groups to return with group_by (default 10, max 50)")),
+                ("type", prop("string", "pageview, screen_view or custom")),
+                ("filters", filters()),
+            ],
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "errors_timeseries",
+            "Errors over time",
+            "Error counts per bucket (errors, unhandled, fatal, affected users, distinct issues), optionally split by issue, release, level, environment, exception_type, platform, os, browser or country. Use it to see when an issue started or whether a fix worked.",
+            vec![
+                ("project", project()),
+                ("since", prop("string", "Start: ISO time or relative like 24h, 7d (default 24h)")),
+                ("until", until()),
+                ("interval", interval_prop()),
+                ("fill", fill_prop()),
+                ("group_by", prop("string", "issue, release, level, environment, exception_type, platform, os, browser or country")),
+                ("limit", prop("integer", "Groups to return with group_by (default 10, max 50)")),
+                ("issue", prop("string", "Only this issue (id or short id like WEB-12)")),
+                ("level", prop("string", "error, fatal, warning, ...")),
+                ("release", prop("string", "Release")),
+                ("environment", prop("string", "Environment")),
+                ("exception_type", prop("string", "Exception type")),
+                ("handled", prop("boolean", "true: only handled errors, false: only unhandled")),
+            ],
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "sessions_timeseries",
+            "Sessions over time",
+            "Sessions, users and crash-free session/user rates per bucket (by session start). group_by=release shows crash-free rate per release over time.",
+            vec![
+                ("project", project()),
+                ("since", prop("string", "Start (default 7d)")),
+                ("until", until()),
+                ("interval", interval_prop()),
+                ("fill", fill_prop()),
+                ("group_by", prop("string", "release, environment or platform")),
+                ("limit", prop("integer", "Groups to return with group_by (default 5, max 50)")),
+                ("release", prop("string", "Release")),
+                ("environment", prop("string", "Environment")),
+            ],
             &["project"],
             true,
             false,
@@ -1137,6 +1216,20 @@ pub fn tools() -> Vec<Value> {
             "Performance summary",
             "Latency per transaction (root span: page load, screen, HTTP endpoint, job): count, per-minute throughput, p50/p75/p95/p99, error rate, plus the overall numbers. Start here for 'is the app slow'.",
             perf_props(&[("op", prop("string", "Only this op, e.g. http.server, pageload, navigation, app.start.cold; a trailing * matches a prefix")), ("sort", prop("string", "p95 (default), p50, p99, count, errors or total"))]),
+            &["project"],
+            true,
+            false,
+        ),
+        tool(
+            "performance_timeseries",
+            "Performance over time",
+            "Latency per bucket for transactions (root spans): count, per_minute, p50/p75/p95/p99, avg and error rate. With op, every span with that op counts (e.g. db.query). group_by transaction, op, release, environment, service or http_status.",
+            perf_props(&[
+                ("op", prop("string", "Only this op; a trailing * matches a prefix. Includes child spans")),
+                ("interval", interval_prop()),
+                ("fill", fill_prop()),
+                ("group_by", prop("string", "transaction, op, release, environment, service or http_status")),
+            ]),
             &["project"],
             true,
             false,

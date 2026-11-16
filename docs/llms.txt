@@ -51,6 +51,10 @@ Source links need either `set-commits` (repository) or `set_code_mappings`; owne
 `slow_endpoints`, `web_vitals`, `app_startup`, then `span_breakdown` or `list_slow_traces` +
 `get_trace` for where the time goes, and `compare_release_performance` between releases.
 
+For trends over time (when did it start, did the fix work, latency per hour) use `errors_timeseries`
+(`group_by=issue` or `release`), `performance_timeseries` and `sessions_timeseries` (crash-free rate per
+release over time).
+
 ## Feature flags and experiments
 
 `list_flags`, `create_flag`, `update_flag` (rollout, kill switch, forced variant). "Is the new

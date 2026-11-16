@@ -43,6 +43,7 @@ mod sms;
 mod state;
 mod symbolicate;
 mod timeline;
+mod timeseries;
 mod util;
 
 use axum::http::{HeaderValue, Method};
