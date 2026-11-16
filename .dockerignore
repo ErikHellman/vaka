@@ -1,9 +1,15 @@
-target
-.git
+# Allowlist: the server image (root Dockerfile, also used by Fly.io and docker-compose) only needs
+# the Cargo workspace plus the files it embeds with include_str!/include_bytes! (docs/ and the
+# built JS SDK). Everything else (.claude/, .git/, target/, node_modules, other SDKs, site/) stays
+# out of the build context. If a build fails with "file not found", add the path below.
+*
+!Cargo.toml
+!Cargo.lock
+!crates/
+!docs/
+!sdks/js/dist/
+
+# Never ship build output or local junk, even inside allowed directories.
+**/target
 **/node_modules
-**/build
-**/.gradle
-.build
-.swiftpm
-data
-.env
+**/.DS_Store
