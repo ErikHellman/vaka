@@ -15,7 +15,7 @@ VAKA_USER=${VAKA_USER:-vaka}
 VAKA_DIR=${VAKA_DIR:-/opt/vaka}
 VAKA_DOMAIN=${VAKA_DOMAIN:-}
 VAKA_ADMIN_EMAIL=${VAKA_ADMIN_EMAIL:-}
-VAKA_VERSION=${VAKA_VERSION:-0.4.0}
+VAKA_VERSION=${VAKA_VERSION:-0.5.0}
 SWAP_GB=${SWAP_GB:-2}
 
 [ "$(id -u)" = 0 ] || { echo "setup.sh: run as root" >&2; exit 1; }
