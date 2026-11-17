@@ -8,7 +8,9 @@ use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 
 fn num(v: &Value) -> f64 {
-    v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).unwrap_or(0.0)
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(0.0)
 }
 
 fn share(n: f64, d: f64) -> f64 {
@@ -31,15 +33,32 @@ pub async fn release_adoption(
 ) -> QResult<Value> {
     let project = project_for(state, p, project).await?;
     let now = now_ms();
-    let since = since.and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 14 * 86_400_000);
+    let since = since
+        .and_then(|s| parse_time_expr(s, now))
+        .unwrap_or(now - 14 * 86_400_000);
     let interval = match interval {
         Some("hour") => "hour",
         Some("day") => "day",
-        None => if now - since <= 2 * 86_400_000 { "hour" } else { "day" },
-        Some(other) => return Err(ApiError::bad(format!("unknown interval `{other}`: hour or day"))),
+        None => {
+            if now - since <= 2 * 86_400_000 {
+                "hour"
+            } else {
+                "day"
+            }
+        }
+        Some(other) => {
+            return Err(ApiError::bad(format!(
+                "unknown interval `{other}`: hour or day"
+            )))
+        }
     };
-    let bucket = if interval == "hour" { "toStartOfHour(started)" } else { "toStartOfDay(started)" };
-    let mut cond = "project_id = {p:String} AND started >= fromUnixTimestamp64Milli({since:Int64})".to_string();
+    let bucket = if interval == "hour" {
+        "toStartOfHour(started)"
+    } else {
+        "toStartOfDay(started)"
+    };
+    let mut cond = "project_id = {p:String} AND started >= fromUnixTimestamp64Milli({since:Int64})"
+        .to_string();
     let mut ps = vec![("p", project.id.clone()), ("since", since.to_string())];
     if let Some(env) = environment.filter(|e| !e.is_empty()) {
         cond.push_str(" AND environment = {env:String}");
@@ -63,17 +82,39 @@ pub async fn release_adoption(
         )
         .await?;
     let limit = limit.unwrap_or(5).clamp(1, 20) as usize;
-    let mut ranked: Vec<(String, f64, String)> =
-        firsts.iter().map(|r| (r["release"].as_str().unwrap_or("").to_string(), num(&r["sessions"]), r["first_session"].as_str().unwrap_or("").to_string())).collect();
+    let mut ranked: Vec<(String, f64, String)> = firsts
+        .iter()
+        .map(|r| {
+            (
+                r["release"].as_str().unwrap_or("").to_string(),
+                num(&r["sessions"]),
+                r["first_session"].as_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect();
     ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     let top: Vec<String> = ranked.iter().take(limit).map(|r| r.0.clone()).collect();
-    let label = |r: &str| if top.iter().any(|t| t == r) { if r.is_empty() { "(none)".to_string() } else { r.to_string() } } else { "other".to_string() };
+    let label = |r: &str| {
+        if top.iter().any(|t| t == r) {
+            if r.is_empty() {
+                "(none)".to_string()
+            } else {
+                r.to_string()
+            }
+        } else {
+            "other".to_string()
+        }
+    };
 
     // bucket -> release label -> (sessions, users)
     let mut buckets: BTreeMap<String, BTreeMap<String, (f64, f64)>> = BTreeMap::new();
     for r in &rows {
-        let b = buckets.entry(r["t"].as_str().unwrap_or("").to_string()).or_default();
-        let e = b.entry(label(r["release"].as_str().unwrap_or(""))).or_default();
+        let b = buckets
+            .entry(r["t"].as_str().unwrap_or("").to_string())
+            .or_default();
+        let e = b
+            .entry(label(r["release"].as_str().unwrap_or("")))
+            .or_default();
         e.0 += num(&r["sessions"]);
         // Users can span releases; summing per label over-counts slightly for "other" only.
         e.1 += num(&r["users"]);
@@ -92,7 +133,14 @@ pub async fn release_adoption(
     let mut summary = Vec::new();
     for (rel, sessions, first) in ranked.iter().take(limit) {
         let name = label(rel);
-        let shares: Vec<f64> = series.iter().map(|s| s["releases"][&name]["share_sessions"].as_f64().unwrap_or(0.0)).collect();
+        let shares: Vec<f64> = series
+            .iter()
+            .map(|s| {
+                s["releases"][&name]["share_sessions"]
+                    .as_f64()
+                    .unwrap_or(0.0)
+            })
+            .collect();
         summary.push(json!({
             "release": name,
             "sessions": *sessions as i64,
@@ -112,11 +160,20 @@ pub async fn release_adoption(
 }
 
 /// Who is on the site or app right now: the last few minutes of traffic.
-pub async fn realtime(state: &AppState, p: &Principal, project: &str, minutes: Option<i64>) -> QResult<Value> {
+pub async fn realtime(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    minutes: Option<i64>,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     let minutes = minutes.unwrap_or(5).clamp(1, 60);
     let now = now_ms();
-    let a = AnalyticsParams { project: proj.id.clone(), since: Some((now - minutes * 60_000).to_string()), ..Default::default() };
+    let a = AnalyticsParams {
+        project: proj.id.clone(),
+        since: Some((now - minutes * 60_000).to_string()),
+        ..Default::default()
+    };
     let w = analytics_where(state, &proj.id, &a).await?;
     let totals = state
         .ch
@@ -125,12 +182,24 @@ pub async fn realtime(state: &AppState, p: &Principal, project: &str, minutes: O
             &w.params,
         )
         .await?;
-    let top = |expr: &str, n: u32| format!("SELECT {expr} AS value, uniq(visitor_id) AS visitors, count() AS events FROM events WHERE {} AND value != '' GROUP BY value ORDER BY visitors DESC, events DESC LIMIT {n}", w.sql);
-    let pages = state.ch.query(&top("if(type = 'screen_view', props['screen'], path)", 10), &w.params).await?;
+    let top = |expr: &str, n: u32| {
+        format!("SELECT {expr} AS value, uniq(visitor_id) AS visitors, count() AS events FROM events WHERE {} AND value != '' GROUP BY value ORDER BY visitors DESC, events DESC LIMIT {n}", w.sql)
+    };
+    let pages = state
+        .ch
+        .query(
+            &top("if(type = 'screen_view', props['screen'], path)", 10),
+            &w.params,
+        )
+        .await?;
     let referrers = state.ch.query(&top("referrer_host", 5), &w.params).await?;
     let countries = state.ch.query(&top("country", 5), &w.params).await?;
     let events = state.ch.query(&format!("SELECT name AS value, count() AS events FROM events WHERE {} AND type = 'custom' GROUP BY value ORDER BY events DESC LIMIT 5", w.sql), &w.params).await?;
-    let ps = vec![("p", proj.id.clone()), ("since", (now - minutes * 60_000).to_string()), ("since30", (now - 30 * 60_000).to_string())];
+    let ps = vec![
+        ("p", proj.id.clone()),
+        ("since", (now - minutes * 60_000).to_string()),
+        ("since30", (now - 30 * 60_000).to_string()),
+    ];
     let per_minute = state
         .ch
         .query(

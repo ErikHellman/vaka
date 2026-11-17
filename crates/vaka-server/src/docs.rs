@@ -8,7 +8,18 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 
-pub const INSTALL_PLATFORMS: &[&str] = &["javascript", "android", "ios", "rust", "go", "jvm", "node", "python", "dotnet", "http"];
+pub const INSTALL_PLATFORMS: &[&str] = &[
+    "javascript",
+    "android",
+    "ios",
+    "rust",
+    "go",
+    "jvm",
+    "node",
+    "python",
+    "dotnet",
+    "http",
+];
 
 macro_rules! doc {
     ($name:literal) => {
@@ -48,7 +59,10 @@ pub const DOCS: &[(&str, &str)] = &[
 ];
 
 const INSTALL: &[(&str, &str)] = &[
-    ("javascript", include_str!("../../../docs/install/javascript.md")),
+    (
+        "javascript",
+        include_str!("../../../docs/install/javascript.md"),
+    ),
     ("android", include_str!("../../../docs/install/android.md")),
     ("ios", include_str!("../../../docs/install/ios.md")),
     ("rust", include_str!("../../../docs/install/rust.md")),
@@ -62,7 +76,12 @@ const INSTALL: &[(&str, &str)] = &[
 
 const LLMS_TXT: &str = include_str!("../../../docs/llms.txt");
 
-pub fn install_markdown(platform: &str, endpoint: &str, key: &str, project: &str) -> Option<String> {
+pub fn install_markdown(
+    platform: &str,
+    endpoint: &str,
+    key: &str,
+    project: &str,
+) -> Option<String> {
     let platform = match platform {
         "javascript" | "js" | "browser" | "web" => "javascript",
         "android" | "kotlin" => "android",
@@ -82,14 +101,22 @@ pub fn install_markdown(platform: &str, endpoint: &str, key: &str, project: &str
 }
 
 fn fill(t: &str, endpoint: &str, key: &str, project: &str) -> String {
-    t.replace("{{ENDPOINT}}", endpoint).replace("{{KEY}}", key).replace("{{PROJECT}}", project)
+    t.replace("{{ENDPOINT}}", endpoint)
+        .replace("{{KEY}}", key)
+        .replace("{{PROJECT}}", project)
 }
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/llms.txt", get(llms))
-        .route("/docs", get(|| async { axum::response::Redirect::to("/docs/") }))
-        .route("/docs/", get(|State(s): State<AppState>| async move { markdown(&s, "index.md") }))
+        .route(
+            "/docs",
+            get(|| async { axum::response::Redirect::to("/docs/") }),
+        )
+        .route(
+            "/docs/",
+            get(|State(s): State<AppState>| async move { markdown(&s, "index.md") }),
+        )
         .route("/docs/{name}", get(doc_page))
         .route("/docs/install/{name}", get(install_page))
         .route("/sdk/vaka.js", get(|| async { js(JS_SDK) }))
@@ -97,22 +124,44 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn llms(State(s): State<AppState>) -> Response {
-    markdown_raw(fill(LLMS_TXT, &s.config.public_url, "<ingest key>", "<project>"))
+    markdown_raw(fill(
+        LLMS_TXT,
+        &s.config.public_url,
+        "<ingest key>",
+        "<project>",
+    ))
 }
 
 fn markdown(s: &AppState, name: &str) -> Response {
     match DOCS.iter().find(|(n, _)| *n == name) {
-        Some((_, body)) => markdown_raw(fill(body, &s.config.public_url, "<ingest key>", "<project>")),
-        None => (StatusCode::NOT_FOUND, format!("no doc named {name}; see /docs/")).into_response(),
+        Some((_, body)) => markdown_raw(fill(
+            body,
+            &s.config.public_url,
+            "<ingest key>",
+            "<project>",
+        )),
+        None => (
+            StatusCode::NOT_FOUND,
+            format!("no doc named {name}; see /docs/"),
+        )
+            .into_response(),
     }
 }
 
 fn markdown_raw(body: String) -> Response {
-    ([(header::CONTENT_TYPE, "text/markdown; charset=utf-8")], body).into_response()
+    (
+        [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+        body,
+    )
+        .into_response()
 }
 
 async fn doc_page(State(s): State<AppState>, Path(name): Path<String>) -> Response {
-    let name = if name.ends_with(".md") { name } else { format!("{name}.md") };
+    let name = if name.ends_with(".md") {
+        name
+    } else {
+        format!("{name}.md")
+    };
     markdown(&s, &name)
 }
 
@@ -130,7 +179,10 @@ const JS_FEEDBACK: &str = include_str!("../../../sdks/js/dist/vaka-feedback.min.
 fn js(body: &'static str) -> Response {
     (
         [
-            (header::CONTENT_TYPE, "application/javascript; charset=utf-8"),
+            (
+                header::CONTENT_TYPE,
+                "application/javascript; charset=utf-8",
+            ),
             (header::CACHE_CONTROL, "public, max-age=3600"),
             (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
         ],

@@ -20,8 +20,14 @@ pub fn short_id(project_slug: &str, n: i64) -> String {
 }
 
 /// Resolve a project the principal may read.
-pub async fn project_for(state: &AppState, p: &Principal, id_or_slug: &str) -> QResult<ProjectInfo> {
-    let project = crate::projects::find(state, id_or_slug).await?.ok_or_else(|| ApiError::not_found("project"))?;
+pub async fn project_for(
+    state: &AppState,
+    p: &Principal,
+    id_or_slug: &str,
+) -> QResult<ProjectInfo> {
+    let project = crate::projects::find(state, id_or_slug)
+        .await?
+        .ok_or_else(|| ApiError::not_found("project"))?;
     if !p.can_read(&project.id) {
         return Err(ApiError::not_found("project"));
     }
@@ -39,7 +45,11 @@ pub async fn list_projects(state: &AppState, p: &Principal) -> QResult<Value> {
     Ok(json!({ "projects": out }))
 }
 
-pub async fn project_json(state: &AppState, proj: &ProjectInfo, include_keys: bool) -> QResult<Value> {
+pub async fn project_json(
+    state: &AppState,
+    proj: &ProjectInfo,
+    include_keys: bool,
+) -> QResult<Value> {
     let mut v = json!({
         "id": proj.id,
         "slug": proj.slug,
@@ -107,19 +117,18 @@ pub async fn get_issue_row(state: &AppState, id: &str) -> anyhow::Result<Option<
         .fetch_optional(&state.db)
         .await?
     } else {
-        sqlx::query(&format!(
-            "{} WHERE i.id = $1",
-            issue_select()
-        ))
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?
+        sqlx::query(&format!("{} WHERE i.id = $1", issue_select()))
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
     };
     Ok(row.map(|r| issue_json(state, &r)))
 }
 
 pub async fn issue_for(state: &AppState, p: &Principal, id: &str) -> QResult<Value> {
-    let issue = get_issue_row(state, id).await?.ok_or_else(|| ApiError::not_found("issue"))?;
+    let issue = get_issue_row(state, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("issue"))?;
     if !p.can_read(issue["project_id"].as_str().unwrap_or("")) {
         return Err(ApiError::not_found("issue"));
     }
@@ -142,16 +151,27 @@ pub struct IssueListParams {
     pub limit: Option<i64>,
 }
 
-pub async fn list_issues(state: &AppState, p: &Principal, params: IssueListParams) -> QResult<Value> {
+pub async fn list_issues(
+    state: &AppState,
+    p: &Principal,
+    params: IssueListParams,
+) -> QResult<Value> {
     let project = project_for(state, p, &params.project).await?;
     let now = now_ms();
-    let since = params.since.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 86_400_000);
+    let since = params
+        .since
+        .as_deref()
+        .and_then(|s| parse_time_expr(s, now))
+        .unwrap_or(now - 86_400_000);
     let limit = params.limit.unwrap_or(25).clamp(1, 200);
     let status = params.status.clone().unwrap_or_else(|| "open".into());
     let sort = params.sort.clone().unwrap_or_else(|| "last_seen".into());
 
     // Event counts in the window from ClickHouse.
-    let mut conds = vec!["project_id = {p:String}".to_string(), "timestamp >= fromUnixTimestamp64Milli({since:Int64})".to_string()];
+    let mut conds = vec![
+        "project_id = {p:String}".to_string(),
+        "timestamp >= fromUnixTimestamp64Milli({since:Int64})".to_string(),
+    ];
     let mut ch_params = vec![("p", project.id.clone()), ("since", since.to_string())];
     if let Some(r) = params.release.as_ref().filter(|r| !r.is_empty()) {
         conds.push("release = {release:String}".into());
@@ -174,7 +194,15 @@ pub async fn list_issues(state: &AppState, p: &Principal, params: IssueListParam
         .await?;
     let count_map: std::collections::HashMap<String, (i64, i64)> = counts
         .iter()
-        .map(|r| (r["issue_id"].as_str().unwrap_or("").to_string(), (r["events"].as_i64().unwrap_or(0), r["users"].as_i64().unwrap_or(0))))
+        .map(|r| {
+            (
+                r["issue_id"].as_str().unwrap_or("").to_string(),
+                (
+                    r["events"].as_i64().unwrap_or(0),
+                    r["users"].as_i64().unwrap_or(0),
+                ),
+            )
+        })
         .collect();
 
     let mut sql = format!("{} WHERE i.project_id = $1", issue_select());
@@ -233,7 +261,15 @@ const EVENT_COLS: &str = "toString(event_id) AS event_id, issue_id, toUnixTimest
     session_id, device_model, os_name, os_version, browser, country, url, sdk_name, sdk_version, symbolicated";
 
 fn parse_json_str(v: &Value) -> Value {
-    v.as_str().and_then(|s| if s.is_empty() { None } else { serde_json::from_str(s).ok() }).unwrap_or(Value::Null)
+    v.as_str()
+        .and_then(|s| {
+            if s.is_empty() {
+                None
+            } else {
+                serde_json::from_str(s).ok()
+            }
+        })
+        .unwrap_or(Value::Null)
 }
 
 fn event_json(r: &Value, full: bool) -> Value {
@@ -274,11 +310,25 @@ async fn late_symbolicate(state: &AppState, project_id: &str, ev: &mut Value) {
     if ev["symbolicated"] == json!(true) {
         return;
     }
-    let Ok(mut exceptions) = serde_json::from_value::<Vec<crate::models::ExceptionData>>(ev["exceptions"].clone()) else { return };
-    let images: Vec<crate::models::DebugImage> = serde_json::from_value(ev["debug_images"].clone()).unwrap_or_default();
+    let Ok(mut exceptions) =
+        serde_json::from_value::<Vec<crate::models::ExceptionData>>(ev["exceptions"].clone())
+    else {
+        return;
+    };
+    let images: Vec<crate::models::DebugImage> =
+        serde_json::from_value(ev["debug_images"].clone()).unwrap_or_default();
     let release = ev["release"].as_str().unwrap_or("").to_string();
     let platform = ev["platform"].as_str().unwrap_or("").to_string();
-    if crate::symbolicate::symbolicate(state, project_id, &release, &platform, &mut exceptions, &images).await {
+    if crate::symbolicate::symbolicate(
+        state,
+        project_id,
+        &release,
+        &platform,
+        &mut exceptions,
+        &images,
+    )
+    .await
+    {
         ev["exceptions"] = json!(exceptions);
         ev["symbolicated"] = json!(true);
         ev["symbolicated_on_read"] = json!(true);
@@ -294,17 +344,29 @@ pub async fn get_issue(state: &AppState, p: &Principal, id: &str) -> QResult<Val
         .ch
         .query(&format!("SELECT {EVENT_COLS} FROM errors WHERE project_id = {{p:String}} AND issue_id = {{i:String}} ORDER BY timestamp DESC LIMIT 1"), &params)
         .await?;
-    let mut latest_event = latest.first().map(|r| event_json(r, true)).unwrap_or(Value::Null);
+    let mut latest_event = latest
+        .first()
+        .map(|r| event_json(r, true))
+        .unwrap_or(Value::Null);
     if !latest_event.is_null() {
         late_symbolicate(state, &project_id, &mut latest_event).await;
         crate::fixctx::annotate_event(state, &project_id, &mut latest_event).await;
         // Issues created before ownership rules existed get owners computed on read.
-        if issue["owners"].as_array().map(|o| o.is_empty()).unwrap_or(true) {
+        if issue["owners"]
+            .as_array()
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             if let Ok(text) = crate::ownership::rules_for(state, &project_id).await {
                 let (rules, _) = crate::ownership::parse_rules(&text);
-                if let Some((owners, why)) = crate::ownership::owners_for(&rules, &latest_event["exceptions"], &latest_event["tags"]) {
+                if let Some((owners, why)) = crate::ownership::owners_for(
+                    &rules,
+                    &latest_event["exceptions"],
+                    &latest_event["tags"],
+                ) {
                     issue["owners"] = json!(owners);
-                    issue["owners_source"] = json!(format!("ownership rules (computed on read; {why})"));
+                    issue["owners_source"] =
+                        json!(format!("ownership rules (computed on read; {why})"));
                 }
             }
         }
@@ -326,8 +388,17 @@ pub async fn get_issue(state: &AppState, p: &Principal, id: &str) -> QResult<Val
     };
     let releases = state.ch.query(&by("release"), &params).await?;
     let environments = state.ch.query(&by("environment"), &params).await?;
-    let os = state.ch.query(&by("concat(os_name, ' ', os_version)"), &params).await?;
-    let devices = state.ch.query(&by("if(device_model != '', device_model, browser)"), &params).await?;
+    let os = state
+        .ch
+        .query(&by("concat(os_name, ' ', os_version)"), &params)
+        .await?;
+    let devices = state
+        .ch
+        .query(
+            &by("if(device_model != '', device_model, browser)"),
+            &params,
+        )
+        .await?;
     let daily = state
         .ch
         .query(
@@ -356,19 +427,32 @@ pub async fn get_issue(state: &AppState, p: &Principal, id: &str) -> QResult<Val
     issue["suspect_commits"] = if latest_event.is_null() {
         json!([])
     } else {
-        crate::ownership::suspect_commits(state, &project_id, &first_release, &latest_event["exceptions"]).await.unwrap_or_else(|e| {
+        crate::ownership::suspect_commits(
+            state,
+            &project_id,
+            &first_release,
+            &latest_event["exceptions"],
+        )
+        .await
+        .unwrap_or_else(|e| {
             tracing::warn!("suspect commits failed: {e:#}");
             json!([])
         })
     };
     if !latest_event.is_null() {
-        issue["timeline_before_crash"] = crate::timeline::before_event(state, &project_id, &latest_event, 10, 30).await;
+        issue["timeline_before_crash"] =
+            crate::timeline::before_event(state, &project_id, &latest_event, 10, 30).await;
     }
     issue["latest_event"] = latest_event;
     Ok(issue)
 }
 
-pub async fn list_issue_events(state: &AppState, p: &Principal, id: &str, limit: Option<i64>) -> QResult<Value> {
+pub async fn list_issue_events(
+    state: &AppState,
+    p: &Principal,
+    id: &str,
+    limit: Option<i64>,
+) -> QResult<Value> {
     let issue = issue_for(state, p, id).await?;
     let rows = state
         .ch
@@ -381,10 +465,17 @@ pub async fn list_issue_events(state: &AppState, p: &Principal, id: &str, limit:
             ],
         )
         .await?;
-    Ok(json!({"issue": issue["short_id"], "events": rows.iter().map(|r| event_json(r, false)).collect::<Vec<_>>()}))
+    Ok(
+        json!({"issue": issue["short_id"], "events": rows.iter().map(|r| event_json(r, false)).collect::<Vec<_>>()}),
+    )
 }
 
-pub async fn get_event(state: &AppState, p: &Principal, project: &str, event_id: &str) -> QResult<Value> {
+pub async fn get_event(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    event_id: &str,
+) -> QResult<Value> {
     let project = project_for(state, p, project).await?;
     let rows = state
         .ch
@@ -393,7 +484,10 @@ pub async fn get_event(state: &AppState, p: &Principal, project: &str, event_id:
             &[("p", project.id.clone()), ("e", event_id.to_string())],
         )
         .await?;
-    let mut ev = rows.first().map(|r| event_json(r, true)).ok_or_else(|| ApiError::not_found("event"))?;
+    let mut ev = rows
+        .first()
+        .map(|r| event_json(r, true))
+        .ok_or_else(|| ApiError::not_found("event"))?;
     late_symbolicate(state, &project.id, &mut ev).await;
     crate::fixctx::annotate_event(state, &project.id, &mut ev).await;
     Ok(ev)
@@ -413,17 +507,33 @@ pub struct EventSearchParams {
     pub limit: Option<i64>,
 }
 
-pub async fn search_events(state: &AppState, p: &Principal, params: EventSearchParams) -> QResult<Value> {
+pub async fn search_events(
+    state: &AppState,
+    p: &Principal,
+    params: EventSearchParams,
+) -> QResult<Value> {
     let project = project_for(state, p, &params.project).await?;
     let now = now_ms();
-    let since = params.since.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 7 * 86_400_000);
-    let until = params.until.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now);
+    let since = params
+        .since
+        .as_deref()
+        .and_then(|s| parse_time_expr(s, now))
+        .unwrap_or(now - 7 * 86_400_000);
+    let until = params
+        .until
+        .as_deref()
+        .and_then(|s| parse_time_expr(s, now))
+        .unwrap_or(now);
     let mut conds = vec![
         "project_id = {p:String}".to_string(),
         "timestamp >= fromUnixTimestamp64Milli({since:Int64})".to_string(),
         "timestamp <= fromUnixTimestamp64Milli({until:Int64})".to_string(),
     ];
-    let mut ps = vec![("p", project.id.clone()), ("since", since.to_string()), ("until", until.to_string())];
+    let mut ps = vec![
+        ("p", project.id.clone()),
+        ("since", since.to_string()),
+        ("until", until.to_string()),
+    ];
     let mut add = |name: &'static str, col: &str, v: &Option<String>| {
         if let Some(v) = v.as_ref().filter(|v| !v.is_empty()) {
             conds.push(format!("{col} = {{{name}:String}}"));
@@ -463,7 +573,12 @@ pub struct IssueUpdate {
     pub ignore_for: Option<String>,
 }
 
-pub async fn update_issue(state: &AppState, p: &Principal, id: &str, upd: IssueUpdate) -> QResult<Value> {
+pub async fn update_issue(
+    state: &AppState,
+    p: &Principal,
+    id: &str,
+    upd: IssueUpdate,
+) -> QResult<Value> {
     let issue = issue_for(state, p, id).await?;
     let issue_id = issue["id"].as_str().unwrap_or("").to_string();
     if !p.can_write(issue["project_id"].as_str().unwrap_or("")) {
@@ -481,34 +596,84 @@ pub async fn update_issue(state: &AppState, p: &Principal, id: &str, upd: IssueU
                     .bind(now).bind(upd.resolved_in_release.clone()).bind(&issue_id).execute(&state.db).await?;
             }
             "ignored" => {
-                let until = upd.ignore_for.as_deref().and_then(|d| parse_time_expr(d, 0)).map(|neg| now - neg);
-                sqlx::query("UPDATE issues SET status = 'ignored', ignored_until = $1 WHERE id = $2")
-                    .bind(until).bind(&issue_id).execute(&state.db).await?;
+                let until = upd
+                    .ignore_for
+                    .as_deref()
+                    .and_then(|d| parse_time_expr(d, 0))
+                    .map(|neg| now - neg);
+                sqlx::query(
+                    "UPDATE issues SET status = 'ignored', ignored_until = $1 WHERE id = $2",
+                )
+                .bind(until)
+                .bind(&issue_id)
+                .execute(&state.db)
+                .await?;
             }
-            other => return Err(ApiError::bad(format!("unknown status `{other}`: use open, resolved or ignored"))),
+            other => {
+                return Err(ApiError::bad(format!(
+                    "unknown status `{other}`: use open, resolved or ignored"
+                )))
+            }
         }
     }
     if let Some(assignee) = &upd.assignee {
         let user_id = if assignee.is_empty() {
             None
         } else {
-            let row = sqlx::query("SELECT id FROM users WHERE email = $1").bind(assignee.to_lowercase()).fetch_optional(&state.db).await?;
-            Some(row.ok_or_else(|| ApiError::bad(format!("no user with email {assignee}")))?.s("id"))
+            let row = sqlx::query("SELECT id FROM users WHERE email = $1")
+                .bind(assignee.to_lowercase())
+                .fetch_optional(&state.db)
+                .await?;
+            Some(
+                row.ok_or_else(|| ApiError::bad(format!("no user with email {assignee}")))?
+                    .s("id"),
+            )
         };
-        sqlx::query("UPDATE issues SET assignee_id = $1 WHERE id = $2").bind(user_id).bind(&issue_id).execute(&state.db).await?;
+        sqlx::query("UPDATE issues SET assignee_id = $1 WHERE id = $2")
+            .bind(user_id)
+            .bind(&issue_id)
+            .execute(&state.db)
+            .await?;
     }
     let project_id = issue["project_id"].as_str().unwrap_or("").to_string();
     if upd.status.as_deref() == Some("resolved") && issue["status"] != "resolved" {
-        crate::alerts::notify_issue_by_project(state, &project_id, &issue_id, "issue_resolved", Some(json!({"actor": p.label(), "resolved_in_release": upd.resolved_in_release})));
+        crate::alerts::notify_issue_by_project(
+            state,
+            &project_id,
+            &issue_id,
+            "issue_resolved",
+            Some(json!({"actor": p.label(), "resolved_in_release": upd.resolved_in_release})),
+        );
     }
     if let Some(a) = upd.assignee.as_deref().filter(|a| !a.is_empty()) {
-        crate::alerts::notify_issue_by_project(state, &project_id, &issue_id, "issue_assigned", Some(json!({"actor": p.label(), "assignee": a})));
+        crate::alerts::notify_issue_by_project(
+            state,
+            &project_id,
+            &issue_id,
+            "issue_assigned",
+            Some(json!({"actor": p.label(), "assignee": a})),
+        );
     }
-    crate::auth::audit(state, &p.label(), "update_issue", &issue_id, &serde_json::to_string(&json!({"status": upd.status, "assignee": upd.assignee})).unwrap_or_default()).await;
-    Ok(get_issue_row(state, &issue_id).await?.unwrap_or(Value::Null))
+    crate::auth::audit(
+        state,
+        &p.label(),
+        "update_issue",
+        &issue_id,
+        &serde_json::to_string(&json!({"status": upd.status, "assignee": upd.assignee}))
+            .unwrap_or_default(),
+    )
+    .await;
+    Ok(get_issue_row(state, &issue_id)
+        .await?
+        .unwrap_or(Value::Null))
 }
 
-pub async fn comment_issue(state: &AppState, p: &Principal, id: &str, body: &str) -> QResult<Value> {
+pub async fn comment_issue(
+    state: &AppState,
+    p: &Principal,
+    id: &str,
+    body: &str,
+) -> QResult<Value> {
     let issue = issue_for(state, p, id).await?;
     if !p.can_write(issue["project_id"].as_str().unwrap_or("")) {
         return Err(ApiError::forbidden());
@@ -535,7 +700,8 @@ pub async fn comment_issue(state: &AppState, p: &Principal, id: &str, body: &str
 }
 
 /// An error event that is an ANR (Android) or app hang (iOS); see docs/ingest.md.
-const IS_ANR: &str = "(tags['mechanism'] IN ('anr', 'hang') OR exception_type IN ('ANR', 'AppHang'))";
+const IS_ANR: &str =
+    "(tags['mechanism'] IN ('anr', 'hang') OR exception_type IN ('ANR', 'AppHang'))";
 
 fn health_sql(group: &str, cond: &str) -> String {
     format!(
@@ -549,19 +715,33 @@ fn health_sql(group: &str, cond: &str) -> String {
     )
 }
 
-pub async fn release_health(state: &AppState, p: &Principal, project: &str, release: Option<&str>, since: Option<&str>) -> QResult<Value> {
+pub async fn release_health(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    release: Option<&str>,
+    since: Option<&str>,
+) -> QResult<Value> {
     let project = project_for(state, p, project).await?;
     let now = now_ms();
-    let since = since.and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 14 * 86_400_000);
-    let mut cond = "project_id = {p:String} AND started >= fromUnixTimestamp64Milli({since:Int64})".to_string();
+    let since = since
+        .and_then(|s| parse_time_expr(s, now))
+        .unwrap_or(now - 14 * 86_400_000);
+    let mut cond = "project_id = {p:String} AND started >= fromUnixTimestamp64Milli({since:Int64})"
+        .to_string();
     let mut ps = vec![("p", project.id.clone()), ("since", since.to_string())];
     if let Some(r) = release.filter(|r| !r.is_empty()) {
         cond.push_str(" AND release = {r:String}");
         ps.push(("r", r.to_string()));
     }
-    let rows = state.ch.query(&format!("{} LIMIT 50", health_sql("s_release", &cond)), &ps).await?;
+    let rows = state
+        .ch
+        .query(&format!("{} LIMIT 50", health_sql("s_release", &cond)), &ps)
+        .await?;
     // Error counts and new issues per release.
-    let mut econd = "project_id = {p:String} AND timestamp >= fromUnixTimestamp64Milli({since:Int64})".to_string();
+    let mut econd =
+        "project_id = {p:String} AND timestamp >= fromUnixTimestamp64Milli({since:Int64})"
+            .to_string();
     if release.filter(|r| !r.is_empty()).is_some() {
         econd.push_str(" AND release = {r:String}");
     }
@@ -588,24 +768,36 @@ pub async fn release_health(state: &AppState, p: &Principal, project: &str, rele
     let mut out = Vec::new();
     for mut r in rows {
         let rel = r["release"].as_str().unwrap_or("").to_string();
-        let e = errs.iter().find(|e| e["release"].as_str() == Some(rel.as_str()));
+        let e = errs
+            .iter()
+            .find(|e| e["release"].as_str() == Some(rel.as_str()));
         r["errors"] = e.map(|e| e["errors"].clone()).unwrap_or(json!(0));
         r["issues_seen"] = e.map(|e| e["issues"].clone()).unwrap_or(json!(0));
         r["anrs"] = e.map(|e| e["anrs"].clone()).unwrap_or(json!(0));
-        let a = anr.iter().find(|a| a["release"].as_str() == Some(rel.as_str()));
-        let num = |v: &Value| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).unwrap_or(0.0);
-        let (anr_sessions, anr_users) = a.map(|a| (num(&a["anr_sessions"]), num(&a["anr_users"]))).unwrap_or((0.0, 0.0));
+        let a = anr
+            .iter()
+            .find(|a| a["release"].as_str() == Some(rel.as_str()));
+        let num = |v: &Value| {
+            v.as_f64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                .unwrap_or(0.0)
+        };
+        let (anr_sessions, anr_users) = a
+            .map(|a| (num(&a["anr_sessions"]), num(&a["anr_users"])))
+            .unwrap_or((0.0, 0.0));
         let rate = |n: f64, d: &Value| ((n / num(d).max(1.0)) * 10_000.0).round() / 10_000.0;
         r["anr_sessions"] = json!(anr_sessions as i64);
         r["anr_users"] = json!(anr_users as i64);
         r["anr_rate_sessions"] = json!(rate(anr_sessions, &r["sessions"]));
         r["anr_rate_users"] = json!(rate(anr_users, &r["users"]));
-        let new_issues = sqlx::query("SELECT COUNT(*) AS n FROM issues WHERE project_id = $1 AND first_release = $2")
-            .bind(&project.id)
-            .bind(&rel)
-            .fetch_one(&state.db)
-            .await?
-            .i("n");
+        let new_issues = sqlx::query(
+            "SELECT COUNT(*) AS n FROM issues WHERE project_id = $1 AND first_release = $2",
+        )
+        .bind(&project.id)
+        .bind(&rel)
+        .fetch_one(&state.db)
+        .await?
+        .i("n");
         r["new_issues"] = json!(new_issues);
         out.push(r);
     }
@@ -617,7 +809,13 @@ pub async fn release_health(state: &AppState, p: &Principal, project: &str, rele
     }))
 }
 
-pub async fn compare_releases(state: &AppState, p: &Principal, project: &str, base: &str, target: &str) -> QResult<Value> {
+pub async fn compare_releases(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    base: &str,
+    target: &str,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     let health = |r: String| {
         let proj = proj.slug.clone();
@@ -625,7 +823,11 @@ pub async fn compare_releases(state: &AppState, p: &Principal, project: &str, ba
     };
     let a = health(base.to_string()).await?;
     let b = health(target.to_string()).await?;
-    let ps = [("p", proj.id.clone()), ("a", base.to_string()), ("b", target.to_string())];
+    let ps = [
+        ("p", proj.id.clone()),
+        ("a", base.to_string()),
+        ("b", target.to_string()),
+    ];
     let issues = state
         .ch
         .query(
@@ -640,8 +842,13 @@ pub async fn compare_releases(state: &AppState, p: &Principal, project: &str, ba
     let mut increased = Vec::new();
     for r in issues {
         let id = r["issue_id"].as_str().unwrap_or("");
-        let Some(mut issue) = get_issue_row(state, id).await? else { continue };
-        let (ba, ta) = (r["base_events"].as_i64().unwrap_or(0), r["target_events"].as_i64().unwrap_or(0));
+        let Some(mut issue) = get_issue_row(state, id).await? else {
+            continue;
+        };
+        let (ba, ta) = (
+            r["base_events"].as_i64().unwrap_or(0),
+            r["target_events"].as_i64().unwrap_or(0),
+        );
         issue["base_events"] = json!(ba);
         issue["target_events"] = json!(ta);
         let slim = json!({"short_id": issue["short_id"], "id": issue["id"], "title": issue["title"], "culprit": issue["culprit"], "status": issue["status"], "base_events": ba, "target_events": ta});
@@ -725,9 +932,32 @@ pub fn dimension_expr(d: &str) -> Option<String> {
 }
 
 pub const DIMENSIONS: &[&str] = &[
-    "path", "url", "hostname", "referrer", "referrer_url", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-    "country", "device", "device_model", "browser", "browser_version", "os", "os_version", "app_version", "release", "environment",
-    "platform", "event", "type", "screen", "prop:<name>", "cohort (filter only: saved cohort name, `!name` to exclude)",
+    "path",
+    "url",
+    "hostname",
+    "referrer",
+    "referrer_url",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "country",
+    "device",
+    "device_model",
+    "browser",
+    "browser_version",
+    "os",
+    "os_version",
+    "app_version",
+    "release",
+    "environment",
+    "platform",
+    "event",
+    "type",
+    "screen",
+    "prop:<name>",
+    "cohort (filter only: saved cohort name, `!name` to exclude)",
 ];
 
 pub(crate) struct Where {
@@ -737,16 +967,32 @@ pub(crate) struct Where {
     pub until: i64,
 }
 
-pub(crate) async fn analytics_where(state: &AppState, project_id: &str, a: &AnalyticsParams) -> QResult<Where> {
+pub(crate) async fn analytics_where(
+    state: &AppState,
+    project_id: &str,
+    a: &AnalyticsParams,
+) -> QResult<Where> {
     let now = now_ms();
-    let since = a.since.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 30 * 86_400_000);
-    let until = a.until.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now);
+    let since = a
+        .since
+        .as_deref()
+        .and_then(|s| parse_time_expr(s, now))
+        .unwrap_or(now - 30 * 86_400_000);
+    let until = a
+        .until
+        .as_deref()
+        .and_then(|s| parse_time_expr(s, now))
+        .unwrap_or(now);
     let mut conds = vec![
         "project_id = {p:String}".to_string(),
         "timestamp >= fromUnixTimestamp64Milli({since:Int64})".to_string(),
         "timestamp <= fromUnixTimestamp64Milli({until:Int64})".to_string(),
     ];
-    let mut params: Vec<(&'static str, String)> = vec![("p", project_id.to_string()), ("since", since.to_string()), ("until", until.to_string())];
+    let mut params: Vec<(&'static str, String)> = vec![
+        ("p", project_id.to_string()),
+        ("since", since.to_string()),
+        ("until", until.to_string()),
+    ];
     if let Some(t) = a.r#type.as_ref().filter(|t| !t.is_empty()) {
         conds.push("type = {etype:String}".into());
         params.push(("etype", t.clone()));
@@ -759,25 +1005,41 @@ pub(crate) async fn analytics_where(state: &AppState, project_id: &str, a: &Anal
                 Some(n) => (true, n),
                 None => (false, val.as_str()),
             };
-            let c = crate::cohorts::resolve(state, project_id, name, crate::cohorts::POOL_FILTER).await?;
+            let c = crate::cohorts::resolve(state, project_id, name, crate::cohorts::POOL_FILTER)
+                .await?;
             conds.push(c.condition(negate));
             params.extend(c.params);
             continue;
         }
-        let name = *FILTER_NAMES.get(i).ok_or_else(|| ApiError::bad("at most 8 filters"))?;
+        let name = *FILTER_NAMES
+            .get(i)
+            .ok_or_else(|| ApiError::bad("at most 8 filters"))?;
         let (cond, value) = filter_cond(dim, val, name)?;
         conds.push(cond);
         params.push((name, value));
     }
-    Ok(Where { sql: conds.join(" AND "), params, since, until })
+    Ok(Where {
+        sql: conds.join(" AND "),
+        params,
+        since,
+        until,
+    })
 }
 
 /// One `dimension=value` filter as SQL with a named parameter. A value starting with `~` means
 /// contains (case-insensitive), `!` means not equal.
 pub(crate) fn filter_cond(dim: &str, val: &str, name: &str) -> QResult<(String, String)> {
-    let expr = dimension_expr(dim).ok_or_else(|| ApiError::bad(format!("unknown dimension `{dim}`; valid: {}", DIMENSIONS.join(", "))))?;
+    let expr = dimension_expr(dim).ok_or_else(|| {
+        ApiError::bad(format!(
+            "unknown dimension `{dim}`; valid: {}",
+            DIMENSIONS.join(", ")
+        ))
+    })?;
     Ok(if let Some(v) = val.strip_prefix('~') {
-        (format!("positionCaseInsensitive({expr}, {{{name}:String}}) > 0"), v.to_string())
+        (
+            format!("positionCaseInsensitive({expr}, {{{name}:String}}) > 0"),
+            v.to_string(),
+        )
     } else if let Some(v) = val.strip_prefix('!') {
         (format!("{expr} != {{{name}:String}}"), v.to_string())
     } else {
@@ -788,17 +1050,33 @@ pub(crate) fn filter_cond(dim: &str, val: &str, name: &str) -> QResult<(String, 
 const METRICS: &str = "uniq(visitor_id) AS visitors, countIf(type = 'pageview') AS pageviews, countIf(type = 'screen_view') AS screen_views, \
     countIf(type = 'custom') AS custom_events, count() AS events, uniqIf(user_id, user_id != '') AS identified_users";
 
-pub async fn analytics_summary(state: &AppState, p: &Principal, a: AnalyticsParams) -> QResult<Value> {
+pub async fn analytics_summary(
+    state: &AppState,
+    p: &Principal,
+    a: AnalyticsParams,
+) -> QResult<Value> {
     let project = project_for(state, p, &a.project).await?;
     let w = analytics_where(state, &project.id, &a).await?;
-    let rows = state.ch.query(&format!("SELECT {METRICS} FROM events WHERE {}", w.sql), &w.params).await?;
+    let rows = state
+        .ch
+        .query(
+            &format!("SELECT {METRICS} FROM events WHERE {}", w.sql),
+            &w.params,
+        )
+        .await?;
     // Previous period for comparison.
     let len = w.until - w.since;
     let mut prev = a.clone();
     prev.since = Some((w.since - len).to_string());
     prev.until = Some(w.since.to_string());
     let pw = analytics_where(state, &project.id, &prev).await?;
-    let prev_rows = state.ch.query(&format!("SELECT {METRICS} FROM events WHERE {}", pw.sql), &pw.params).await?;
+    let prev_rows = state
+        .ch
+        .query(
+            &format!("SELECT {METRICS} FROM events WHERE {}", pw.sql),
+            &pw.params,
+        )
+        .await?;
     Ok(json!({
         "project": project.slug,
         "window": {"since": iso_time(w.since), "until": iso_time(w.until)},
@@ -808,21 +1086,45 @@ pub async fn analytics_summary(state: &AppState, p: &Principal, a: AnalyticsPara
     }))
 }
 
-pub async fn analytics_timeseries(state: &AppState, p: &Principal, a: AnalyticsParams, opts: crate::timeseries::SeriesOpts) -> QResult<Value> {
+pub async fn analytics_timeseries(
+    state: &AppState,
+    p: &Principal,
+    a: AnalyticsParams,
+    opts: crate::timeseries::SeriesOpts,
+) -> QResult<Value> {
     use crate::timeseries as ts;
     let project = project_for(state, p, &a.project).await?;
     let w = analytics_where(state, &project.id, &a).await?;
     let b = ts::parse_interval(opts.interval.as_deref(), w.since, w.until)?;
     let bucket = b.sql("timestamp");
-    let empty = ts::empty_row(&["visitors", "pageviews", "screen_views", "custom_events", "events", "identified_users"], &[]);
+    let empty = ts::empty_row(
+        &[
+            "visitors",
+            "pageviews",
+            "screen_views",
+            "custom_events",
+            "events",
+            "identified_users",
+        ],
+        &[],
+    );
     let mut out = json!({"project": project.slug, "interval": b.name(), "bucket_seconds": b.seconds(), "window": {"since": iso_time(w.since), "until": iso_time(w.until)}, "filters": a.filters});
     let rows = state
         .ch
         .query(&format!("SELECT {bucket} AS bucket, {METRICS} FROM events WHERE {} GROUP BY bucket ORDER BY bucket", w.sql), &w.params)
         .await?;
-    out["series"] = json!(if opts.fill { ts::fill(rows, &b, w.since, w.until, &empty) } else { rows });
+    out["series"] = json!(if opts.fill {
+        ts::fill(rows, &b, w.since, w.until, &empty)
+    } else {
+        rows
+    });
     if let Some(dim) = opts.group_by.as_deref().filter(|d| !d.is_empty()) {
-        let expr = dimension_expr(dim).ok_or_else(|| ApiError::bad(format!("unknown dimension `{dim}`; valid: {}", DIMENSIONS.join(", "))))?;
+        let expr = dimension_expr(dim).ok_or_else(|| {
+            ApiError::bad(format!(
+                "unknown dimension `{dim}`; valid: {}",
+                DIMENSIONS.join(", ")
+            ))
+        })?;
         let mut ps = w.params.clone();
         ps.push(("glim", opts.limit.unwrap_or(10).clamp(1, 50).to_string()));
         let rows = state
@@ -846,28 +1148,57 @@ pub async fn analytics_timeseries(state: &AppState, p: &Principal, a: AnalyticsP
     Ok(out)
 }
 
-pub async fn analytics_breakdown(state: &AppState, p: &Principal, a: AnalyticsParams, dimension: &str, limit: Option<i64>) -> QResult<Value> {
+pub async fn analytics_breakdown(
+    state: &AppState,
+    p: &Principal,
+    a: AnalyticsParams,
+    dimension: &str,
+    limit: Option<i64>,
+) -> QResult<Value> {
     let project = project_for(state, p, &a.project).await?;
-    let expr = dimension_expr(dimension).ok_or_else(|| ApiError::bad(format!("unknown dimension `{dimension}`; valid: {}", DIMENSIONS.join(", "))))?;
+    let expr = dimension_expr(dimension).ok_or_else(|| {
+        ApiError::bad(format!(
+            "unknown dimension `{dimension}`; valid: {}",
+            DIMENSIONS.join(", ")
+        ))
+    })?;
     let mut w = analytics_where(state, &project.id, &a).await?;
-    w.params.push(("lim", limit.unwrap_or(10).clamp(1, 1000).to_string()));
+    w.params
+        .push(("lim", limit.unwrap_or(10).clamp(1, 1000).to_string()));
     let rows = state
         .ch
         .query(&format!("SELECT {expr} AS value, {METRICS} FROM events WHERE {} GROUP BY value ORDER BY visitors DESC, events DESC LIMIT {{lim:UInt32}}", w.sql), &w.params)
         .await?;
-    Ok(json!({"project": project.slug, "dimension": dimension, "window": {"since": iso_time(w.since), "until": iso_time(w.until)}, "filters": a.filters, "rows": rows}))
+    Ok(
+        json!({"project": project.slug, "dimension": dimension, "window": {"since": iso_time(w.since), "until": iso_time(w.until)}, "filters": a.filters, "rows": rows}),
+    )
 }
 
 /// Explain why errors spiked: compare a recent window with a baseline and show what changed.
-pub async fn explain_spike(state: &AppState, p: &Principal, project: &str, window: Option<&str>, baseline: Option<&str>) -> QResult<Value> {
+pub async fn explain_spike(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    window: Option<&str>,
+    baseline: Option<&str>,
+) -> QResult<Value> {
     let project = project_for(state, p, project).await?;
     let now = now_ms();
-    let win_start = window.and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 3_600_000);
+    let win_start = window
+        .and_then(|s| parse_time_expr(s, now))
+        .unwrap_or(now - 3_600_000);
     let win_len = now - win_start;
-    let base_start = baseline.and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 24 * 3_600_000 - win_len);
+    let base_start = baseline
+        .and_then(|s| parse_time_expr(s, now))
+        .unwrap_or(now - 24 * 3_600_000 - win_len);
     let base_len = (win_start - base_start).max(1);
     let scale = win_len as f64 / base_len as f64;
-    let ps = vec![("p", project.id.clone()), ("ws", win_start.to_string()), ("bs", base_start.to_string()), ("scale", format!("{scale:.6}"))];
+    let ps = vec![
+        ("p", project.id.clone()),
+        ("ws", win_start.to_string()),
+        ("bs", base_start.to_string()),
+        ("scale", format!("{scale:.6}")),
+    ];
     let totals = state
         .ch
         .query(
@@ -898,7 +1229,10 @@ pub async fn explain_spike(state: &AppState, p: &Principal, project: &str, windo
         ("release", "release"),
         ("environment", "environment"),
         ("os", "concat(os_name, ' ', os_version)"),
-        ("device_or_browser", "if(device_model != '', device_model, browser)"),
+        (
+            "device_or_browser",
+            "if(device_model != '', device_model, browser)",
+        ),
         ("country", "country"),
         ("exception_type", "exception_type"),
     ] {

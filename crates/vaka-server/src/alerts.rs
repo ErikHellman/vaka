@@ -24,10 +24,23 @@ pub const TRIGGERS: &[&str] = &[
     "monitor_up",
     "tls_expiring",
 ];
-pub const CHANNELS: &[&str] = &["webhook", "slack", "email", "sms", "github_dispatch", "github_issue"];
+pub const CHANNELS: &[&str] = &[
+    "webhook",
+    "slack",
+    "email",
+    "sms",
+    "github_dispatch",
+    "github_issue",
+];
 const SPIKE_COOLDOWN_MS: i64 = 6 * 3_600_000;
 /// Retry schedule after a failed delivery (attempt 1 is the first try).
-const BACKOFF_MS: &[i64] = &[60_000, 5 * 60_000, 30 * 60_000, 2 * 3_600_000, 6 * 3_600_000];
+const BACKOFF_MS: &[i64] = &[
+    60_000,
+    5 * 60_000,
+    30 * 60_000,
+    2 * 3_600_000,
+    6 * 3_600_000,
+];
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Rule {
@@ -80,20 +93,57 @@ pub fn rule_from_row(r: &sqlx::any::AnyRow) -> Rule {
 
 pub const RULE_COLS: &str = "id, project_id, name, trigger, channel, target, secret, threshold, enabled, filters, max_per_hour, schedule, created_at";
 
-pub const FILTER_KEYS: &[&str] = &["environment", "min_level", "release", "owner", "unhandled_only", "tags", "mention", "sentiment", "topic", "linked_to_issue", "has_screenshot", "monitors", "monitor_kind"];
+pub const FILTER_KEYS: &[&str] = &[
+    "environment",
+    "min_level",
+    "release",
+    "owner",
+    "unhandled_only",
+    "tags",
+    "mention",
+    "sentiment",
+    "topic",
+    "linked_to_issue",
+    "has_screenshot",
+    "monitors",
+    "monitor_kind",
+];
 
 /// Check rule filters; returns a description of the problem for invalid filters.
 pub fn validate_filters(f: &Value) -> Result<(), String> {
-    let Some(o) = f.as_object() else { return Err("filters must be an object".into()) };
+    let Some(o) = f.as_object() else {
+        return Err("filters must be an object".into());
+    };
     for (k, v) in o {
         if !FILTER_KEYS.contains(&k.as_str()) {
-            return Err(format!("unknown filter `{k}`; use {}", FILTER_KEYS.join(", ")));
+            return Err(format!(
+                "unknown filter `{k}`; use {}",
+                FILTER_KEYS.join(", ")
+            ));
         }
         match k.as_str() {
-            "unhandled_only" if !v.is_boolean() => return Err("unhandled_only must be true or false".into()),
-            "tags" if !v.as_object().map(|t| t.values().all(|x| x.is_string())).unwrap_or(false) => return Err("tags must be an object of strings".into()),
-            "min_level" if !matches!(v.as_str(), Some("debug" | "info" | "warning" | "error" | "fatal")) => return Err("min_level must be debug, info, warning, error or fatal".into()),
-            "linked_to_issue" | "has_screenshot" if !v.is_boolean() => return Err(format!("{k} must be true or false")),
+            "unhandled_only" if !v.is_boolean() => {
+                return Err("unhandled_only must be true or false".into())
+            }
+            "tags"
+                if !v
+                    .as_object()
+                    .map(|t| t.values().all(|x| x.is_string()))
+                    .unwrap_or(false) =>
+            {
+                return Err("tags must be an object of strings".into())
+            }
+            "min_level"
+                if !matches!(
+                    v.as_str(),
+                    Some("debug" | "info" | "warning" | "error" | "fatal")
+                ) =>
+            {
+                return Err("min_level must be debug, info, warning, error or fatal".into())
+            }
+            "linked_to_issue" | "has_screenshot" if !v.is_boolean() => {
+                return Err(format!("{k} must be true or false"))
+            }
             "sentiment" => {
                 let list: Vec<&Value> = match v {
                     Value::Array(a) => a.iter().collect(),
@@ -102,14 +152,23 @@ pub fn validate_filters(f: &Value) -> Result<(), String> {
                 for x in list {
                     match x.as_str() {
                         Some(s) if crate::feedback::SENTIMENTS.contains(&s) || s == "untagged" => {}
-                        _ => return Err(format!("sentiment must be one or a list of {}, untagged", crate::feedback::SENTIMENTS.join(", "))),
+                        _ => {
+                            return Err(format!(
+                                "sentiment must be one or a list of {}, untagged",
+                                crate::feedback::SENTIMENTS.join(", ")
+                            ))
+                        }
                     }
                 }
             }
             "monitors" => {
                 let ok = match v {
                     Value::String(s) => !s.is_empty(),
-                    Value::Array(a) => !a.is_empty() && a.iter().all(|x| x.as_str().map(|s| !s.is_empty()).unwrap_or(false)),
+                    Value::Array(a) => {
+                        !a.is_empty()
+                            && a.iter()
+                                .all(|x| x.as_str().map(|s| !s.is_empty()).unwrap_or(false))
+                    }
                     _ => false,
                 };
                 if !ok {
@@ -138,38 +197,78 @@ fn level_rank(l: &str) -> i32 {
 /// Does an issue (and, when known, the event that triggered the alert) pass a rule's filters?
 /// Event-level filters (environment, unhandled_only, tags) pass when there is no event.
 pub fn filters_match(filters: &Value, issue: &Value, event: Option<&Value>) -> bool {
-    let Some(f) = filters.as_object() else { return true };
+    let Some(f) = filters.as_object() else {
+        return true;
+    };
     if let Some(min) = f.get("min_level").and_then(|v| v.as_str()) {
-        let lvl = event.and_then(|e| e["level"].as_str()).or_else(|| issue["level"].as_str()).unwrap_or("error");
+        let lvl = event
+            .and_then(|e| e["level"].as_str())
+            .or_else(|| issue["level"].as_str())
+            .unwrap_or("error");
         if level_rank(lvl) < level_rank(min) {
             return false;
         }
     }
-    if let Some(r) = f.get("release").and_then(|v| v.as_str()).filter(|r| !r.is_empty()) {
-        let rel = event.and_then(|e| e["release"].as_str()).or_else(|| issue["last_release"].as_str()).unwrap_or("");
+    if let Some(r) = f
+        .get("release")
+        .and_then(|v| v.as_str())
+        .filter(|r| !r.is_empty())
+    {
+        let rel = event
+            .and_then(|e| e["release"].as_str())
+            .or_else(|| issue["last_release"].as_str())
+            .unwrap_or("");
         if !crate::ownership::glob(r, rel) {
             return false;
         }
     }
-    if let Some(o) = f.get("owner").and_then(|v| v.as_str()).filter(|o| !o.is_empty()) {
-        let owners: Vec<&str> = issue["owners"].as_array().into_iter().flatten().filter_map(|x| x.as_str()).collect();
-        if !owners.iter().any(|x| x.eq_ignore_ascii_case(o)) && !issue["assignee"].as_str().map(|a| a.eq_ignore_ascii_case(o)).unwrap_or(false) {
+    if let Some(o) = f
+        .get("owner")
+        .and_then(|v| v.as_str())
+        .filter(|o| !o.is_empty())
+    {
+        let owners: Vec<&str> = issue["owners"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str())
+            .collect();
+        if !owners.iter().any(|x| x.eq_ignore_ascii_case(o))
+            && !issue["assignee"]
+                .as_str()
+                .map(|a| a.eq_ignore_ascii_case(o))
+                .unwrap_or(false)
+        {
             return false;
         }
     }
     if let Some(ev) = event {
-        if let Some(env) = f.get("environment").and_then(|v| v.as_str()).filter(|e| !e.is_empty()) {
-            if ev["environment"].as_str().map(|e| !crate::ownership::glob(env, e)).unwrap_or(false) {
+        if let Some(env) = f
+            .get("environment")
+            .and_then(|v| v.as_str())
+            .filter(|e| !e.is_empty())
+        {
+            if ev["environment"]
+                .as_str()
+                .map(|e| !crate::ownership::glob(env, e))
+                .unwrap_or(false)
+            {
                 return false;
             }
         }
-        if f.get("unhandled_only").and_then(|v| v.as_bool()) == Some(true) && ev["handled"].as_bool() == Some(true) {
+        if f.get("unhandled_only").and_then(|v| v.as_bool()) == Some(true)
+            && ev["handled"].as_bool() == Some(true)
+        {
             return false;
         }
         if let Some(tags) = f.get("tags").and_then(|v| v.as_object()) {
             for (k, v) in tags {
                 let want = v.as_str().unwrap_or("");
-                if !ev["tags"][k].as_str().map(|x| crate::ownership::glob(want, x)).unwrap_or(false) {
+                if !ev["tags"][k]
+                    .as_str()
+                    .map(|x| crate::ownership::glob(want, x))
+                    .unwrap_or(false)
+                {
                     return false;
                 }
             }
@@ -197,7 +296,13 @@ async fn rules_for(
 
 /// Fire-and-forget notification for an issue event. `event` describes the error event or the
 /// action that caused it ({environment, level, release, handled, tags} or {actor, ...}).
-pub fn notify_issue(state: &AppState, project: &ProjectInfo, issue_id: &str, trigger: &str, event: Option<Value>) {
+pub fn notify_issue(
+    state: &AppState,
+    project: &ProjectInfo,
+    issue_id: &str,
+    trigger: &str,
+    event: Option<Value>,
+) {
     let state = state.clone();
     let project = project.clone();
     let issue_id = issue_id.to_string();
@@ -214,7 +319,13 @@ pub fn notify_issue(state: &AppState, project: &ProjectInfo, issue_id: &str, tri
 }
 
 /// Like `notify_issue` for a project id (looks the project up).
-pub fn notify_issue_by_project(state: &AppState, project_id: &str, issue_id: &str, trigger: &str, event: Option<Value>) {
+pub fn notify_issue_by_project(
+    state: &AppState,
+    project_id: &str,
+    issue_id: &str,
+    trigger: &str,
+    event: Option<Value>,
+) {
     let state2 = state.clone();
     let project_id = project_id.to_string();
     let issue_id = issue_id.to_string();
@@ -240,7 +351,14 @@ async fn system_fix_context(state: &AppState, issue_id: &str) -> Option<Value> {
     }
 }
 
-async fn dispatch(state: &AppState, project: &ProjectInfo, issue_id: &str, trigger: &str, extra: Option<Value>, event: Option<Value>) -> anyhow::Result<()> {
+async fn dispatch(
+    state: &AppState,
+    project: &ProjectInfo,
+    issue_id: &str,
+    trigger: &str,
+    extra: Option<Value>,
+    event: Option<Value>,
+) -> anyhow::Result<()> {
     let rules = rules_for(state, &project.id, trigger).await?;
     if rules.is_empty() {
         return Ok(());
@@ -289,7 +407,9 @@ async fn dispatch(state: &AppState, project: &ProjectInfo, issue_id: &str, trigg
 
 /// Does a feedback item pass a `new_feedback` rule's filters? Issue-only filters are ignored.
 pub fn feedback_filters_match(filters: &Value, fb: &Value) -> bool {
-    let Some(f) = filters.as_object() else { return true };
+    let Some(f) = filters.as_object() else {
+        return true;
+    };
     if let Some(s) = f.get("sentiment") {
         let want: Vec<&str> = match s {
             Value::Array(a) => a.iter().filter_map(|x| x.as_str()).collect(),
@@ -300,8 +420,18 @@ pub fn feedback_filters_match(filters: &Value, fb: &Value) -> bool {
             return false;
         }
     }
-    if let Some(t) = f.get("topic").and_then(|v| v.as_str()).filter(|t| !t.is_empty()) {
-        if !fb["topics"].as_array().into_iter().flatten().filter_map(|x| x.as_str()).any(|x| crate::ownership::glob(&t.to_lowercase(), x)) {
+    if let Some(t) = f
+        .get("topic")
+        .and_then(|v| v.as_str())
+        .filter(|t| !t.is_empty())
+    {
+        if !fb["topics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str())
+            .any(|x| crate::ownership::glob(&t.to_lowercase(), x))
+        {
             return false;
         }
     }
@@ -311,12 +441,20 @@ pub fn feedback_filters_match(filters: &Value, fb: &Value) -> bool {
         }
     }
     if let Some(b) = f.get("has_screenshot").and_then(|v| v.as_bool()) {
-        if b != fb["attachments"].as_array().map(|a| !a.is_empty()).unwrap_or(false) {
+        if b != fb["attachments"]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false)
+        {
             return false;
         }
     }
     for (key, field) in [("release", "release"), ("environment", "environment")] {
-        if let Some(g) = f.get(key).and_then(|v| v.as_str()).filter(|g| !g.is_empty()) {
+        if let Some(g) = f
+            .get(key)
+            .and_then(|v| v.as_str())
+            .filter(|g| !g.is_empty())
+        {
             if !crate::ownership::glob(g, fb[field].as_str().unwrap_or("")) {
                 return false;
             }
@@ -324,7 +462,11 @@ pub fn feedback_filters_match(filters: &Value, fb: &Value) -> bool {
     }
     if let Some(tags) = f.get("tags").and_then(|v| v.as_object()) {
         for (k, v) in tags {
-            if !fb["tags"][k].as_str().map(|x| crate::ownership::glob(v.as_str().unwrap_or(""), x)).unwrap_or(false) {
+            if !fb["tags"][k]
+                .as_str()
+                .map(|x| crate::ownership::glob(v.as_str().unwrap_or(""), x))
+                .unwrap_or(false)
+            {
                 return false;
             }
         }
@@ -333,7 +475,11 @@ pub fn feedback_filters_match(filters: &Value, fb: &Value) -> bool {
 }
 
 /// Notify `new_feedback` rules about a feedback item (contact details are never included).
-pub async fn notify_feedback(state: &AppState, project: &ProjectInfo, fb: &Value) -> anyhow::Result<()> {
+pub async fn notify_feedback(
+    state: &AppState,
+    project: &ProjectInfo,
+    fb: &Value,
+) -> anyhow::Result<()> {
     let rules = rules_for(state, &project.id, "new_feedback").await?;
     let id = fb["id"].as_str().unwrap_or("");
     for (rule, secret) in rules {
@@ -358,7 +504,12 @@ fn feedback_facts(fb: &Value) -> Vec<String> {
     if let Some(s) = fb["sentiment"].as_str() {
         facts.push(s.to_string());
     }
-    let topics: Vec<&str> = fb["topics"].as_array().into_iter().flatten().filter_map(|t| t.as_str()).collect();
+    let topics: Vec<&str> = fb["topics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|t| t.as_str())
+        .collect();
     if !topics.is_empty() {
         facts.push(topics.join(", "));
     }
@@ -381,8 +532,18 @@ pub fn slack_feedback_message(payload: &Value) -> Value {
     let url = payload["url"].as_str().unwrap_or("");
     let short = fb["short_id"].as_str().unwrap_or("");
     let msg = crate::util::truncate(fb["message"].as_str().unwrap_or(""), 600);
-    let quoted: Vec<String> = msg.lines().map(|l| format!("> {}", slack_escape(l))).collect();
-    let mut lines = vec![format!("*:speech_balloon: New feedback* in {} · <{url}|{}>", slack_escape(project), slack_escape(short)), quoted.join("\n")];
+    let quoted: Vec<String> = msg
+        .lines()
+        .map(|l| format!("> {}", slack_escape(l)))
+        .collect();
+    let mut lines = vec![
+        format!(
+            "*:speech_balloon: New feedback* in {} · <{url}|{}>",
+            slack_escape(project),
+            slack_escape(short)
+        ),
+        quoted.join("\n"),
+    ];
     let facts = feedback_facts(fb);
     if !facts.is_empty() {
         lines.push(slack_escape(&facts.join(" · ")));
@@ -394,15 +555,27 @@ pub fn slack_feedback_message(payload: &Value) -> Value {
     })
 }
 
-async fn send_feedback_email(state: &AppState, to: &str, payload: &Value) -> anyhow::Result<String> {
+async fn send_feedback_email(
+    state: &AppState,
+    to: &str,
+    payload: &Value,
+) -> anyhow::Result<String> {
     let Some(key) = &state.config.resend_api_key else {
         anyhow::bail!("email alerts need VAKA_RESEND_API_KEY");
     };
     let fb = &payload["feedback"];
     let project = payload["project"]["name"].as_str().unwrap_or("");
     let msg = fb["message"].as_str().unwrap_or("");
-    let subject = format!("[{project}] New feedback {}: {}", fb["short_id"].as_str().unwrap_or(""), crate::util::truncate(msg.lines().next().unwrap_or(""), 80));
-    let text = format!("New feedback in {project}\n\n{msg}\n\n{}\n\n{}\n", feedback_facts(fb).join(" · "), payload["url"].as_str().unwrap_or(""));
+    let subject = format!(
+        "[{project}] New feedback {}: {}",
+        fb["short_id"].as_str().unwrap_or(""),
+        crate::util::truncate(msg.lines().next().unwrap_or(""), 80)
+    );
+    let text = format!(
+        "New feedback in {project}\n\n{msg}\n\n{}\n\n{}\n",
+        feedback_facts(fb).join(" · "),
+        payload["url"].as_str().unwrap_or("")
+    );
     resend(state, key, to, &subject, &text).await
 }
 
@@ -442,7 +615,11 @@ fn url_encode(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
 
-async fn recently_delivered(state: &AppState, rule_id: &str, issue_id: &str) -> anyhow::Result<bool> {
+async fn recently_delivered(
+    state: &AppState,
+    rule_id: &str,
+    issue_id: &str,
+) -> anyhow::Result<bool> {
     let row = sqlx::query("SELECT COUNT(*) AS n FROM alert_deliveries WHERE rule_id = $1 AND issue_id = $2 AND created_at > $3 AND status = 'ok'")
         .bind(rule_id)
         .bind(issue_id)
@@ -453,7 +630,14 @@ async fn recently_delivered(state: &AppState, rule_id: &str, issue_id: &str) -> 
 }
 
 /// Record a delivery and attempt it now; failures are retried by the delivery worker.
-pub async fn deliver_new(state: &AppState, rule: &Rule, secret: &str, trigger: &str, issue_id: &str, payload: Value) -> anyhow::Result<String> {
+pub async fn deliver_new(
+    state: &AppState,
+    rule: &Rule,
+    secret: &str,
+    trigger: &str,
+    issue_id: &str,
+    payload: Value,
+) -> anyhow::Result<String> {
     let id = new_id();
     let now = now_ms();
     if rule.max_per_hour > 0 {
@@ -464,27 +648,57 @@ pub async fn deliver_new(state: &AppState, rule: &Rule, secret: &str, trigger: &
             .await?
             .i("n");
         if sent >= rule.max_per_hour {
-            insert_delivery(state, &id, rule, issue_id, trigger, "rate_limited", &format!("max_per_hour {} reached", rule.max_per_hour), &payload, 0, None).await?;
+            insert_delivery(
+                state,
+                &id,
+                rule,
+                issue_id,
+                trigger,
+                "rate_limited",
+                &format!("max_per_hour {} reached", rule.max_per_hour),
+                &payload,
+                0,
+                None,
+            )
+            .await?;
             return Ok("rate limited".into());
         }
     }
     let result = send(state, rule, secret, trigger, issue_id, &payload, &id).await;
     let (status, detail, next) = match &result {
         Ok(d) => ("ok", d.clone(), None),
-        Err(e) if retryable(&rule.channel, e) => ("retrying", e.to_string(), Some(now + BACKOFF_MS[0])),
+        Err(e) if retryable(&rule.channel, e) => {
+            ("retrying", e.to_string(), Some(now + BACKOFF_MS[0]))
+        }
         Err(e) => ("failed", e.to_string(), None),
     };
-    insert_delivery(state, &id, rule, issue_id, trigger, status, &detail, &payload, 1, next).await?;
+    insert_delivery(
+        state, &id, rule, issue_id, trigger, status, &detail, &payload, 1, next,
+    )
+    .await?;
     result
 }
 
 fn retryable(channel: &str, e: &anyhow::Error) -> bool {
     let msg = e.to_string();
-    !(channel == "email" && msg.contains("VAKA_RESEND_API_KEY")) && !msg.contains("needs a GitHub token") && !msg.contains(crate::sms::NO_RETRY)
+    !(channel == "email" && msg.contains("VAKA_RESEND_API_KEY"))
+        && !msg.contains("needs a GitHub token")
+        && !msg.contains(crate::sms::NO_RETRY)
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn insert_delivery(state: &AppState, id: &str, rule: &Rule, issue_id: &str, trigger: &str, status: &str, detail: &str, payload: &Value, attempts: i64, next: Option<i64>) -> anyhow::Result<()> {
+async fn insert_delivery(
+    state: &AppState,
+    id: &str,
+    rule: &Rule,
+    issue_id: &str,
+    trigger: &str,
+    status: &str,
+    detail: &str,
+    payload: &Value,
+    attempts: i64,
+    next: Option<i64>,
+) -> anyhow::Result<()> {
     let mut body = serde_json::to_string(payload)?;
     if body.len() > 256 * 1024 {
         let mut slim = payload.clone();
@@ -528,7 +742,9 @@ fn is_monitor_trigger(trigger: &str) -> bool {
 
 /// Does a monitor pass a monitor rule's filters?
 pub fn monitor_filters_match(filters: &Value, monitor: &crate::monitors::Monitor) -> bool {
-    let Some(f) = filters.as_object() else { return true };
+    let Some(f) = filters.as_object() else {
+        return true;
+    };
     if let Some(m) = f.get("monitors") {
         let ok = match m {
             Value::String(s) => s == &monitor.slug,
@@ -554,12 +770,21 @@ pub fn monitor_filters_match(filters: &Value, monitor: &crate::monitors::Monitor
 
 /// Deliver a monitor event (`monitor_down`, `monitor_up`) to every matching rule. The
 /// incident id goes in the delivery's `issue_id` column.
-pub async fn notify_monitor(state: &AppState, project: &ProjectInfo, monitor: &crate::monitors::Monitor, trigger: &str, incident_id: &str, payload: Value) -> anyhow::Result<()> {
+pub async fn notify_monitor(
+    state: &AppState,
+    project: &ProjectInfo,
+    monitor: &crate::monitors::Monitor,
+    trigger: &str,
+    incident_id: &str,
+    payload: Value,
+) -> anyhow::Result<()> {
     for (rule, secret) in rules_for(state, &project.id, trigger).await? {
         if !monitor_filters_match(&rule.filters, monitor) {
             continue;
         }
-        if let Err(e) = deliver_new(state, &rule, &secret, trigger, incident_id, payload.clone()).await {
+        if let Err(e) =
+            deliver_new(state, &rule, &secret, trigger, incident_id, payload.clone()).await
+        {
             tracing::warn!("monitor alert via {} failed: {e:#}", rule.channel);
         }
     }
@@ -609,7 +834,15 @@ pub fn human_duration(ms: i64) -> String {
 }
 
 /// Send one payload through a rule's channel.
-async fn send(state: &AppState, rule: &Rule, secret: &str, trigger: &str, issue_id: &str, payload: &Value, delivery_id: &str) -> anyhow::Result<String> {
+async fn send(
+    state: &AppState,
+    rule: &Rule,
+    secret: &str,
+    trigger: &str,
+    issue_id: &str,
+    payload: &Value,
+    delivery_id: &str,
+) -> anyhow::Result<String> {
     match (rule.channel.as_str(), trigger) {
         ("webhook", _) => send_webhook(state, &rule.target, secret, trigger, delivery_id, payload).await,
         ("slack", "digest") => send_slack(state, &rule.target, &slack_digest_message(payload, &state.config.public_url)).await,
@@ -700,7 +933,11 @@ async fn retry_due(state: &AppState) -> anyhow::Result<()> {
         .await;
         let (status, detail, next) = match &result {
             Ok(d) => ("ok", d.clone(), None),
-            Err(e) if (attempts as usize) <= BACKOFF_MS.len() && retryable(&rule.channel, e) => ("retrying", e.to_string(), Some(now_ms() + BACKOFF_MS[attempts as usize - 1])),
+            Err(e) if (attempts as usize) <= BACKOFF_MS.len() && retryable(&rule.channel, e) => (
+                "retrying",
+                e.to_string(),
+                Some(now_ms() + BACKOFF_MS[attempts as usize - 1]),
+            ),
             Err(e) => ("failed", e.to_string(), None),
         };
         sqlx::query("UPDATE alert_deliveries SET status = $1, detail = $2, attempts = $3, next_attempt_at = $4 WHERE id = $5")
@@ -774,11 +1011,27 @@ async fn check_thresholds(state: &AppState) -> anyhow::Result<()> {
         .fetch_all(&state.db)
         .await?;
         for i in issues {
-            let Some(project) = crate::projects::find(state, &i.s("project_id")).await? else { continue };
-            let Some(issue) = crate::query::get_issue_row(state, &i.s("id")).await? else { continue };
+            let Some(project) = crate::projects::find(state, &i.s("project_id")).await? else {
+                continue;
+            };
+            let Some(issue) = crate::query::get_issue_row(state, &i.s("id")).await? else {
+                continue;
+            };
             if !filters_match(&rule.filters, &issue, None) {
                 // Record a skip so the issue is not checked again.
-                insert_delivery(state, &new_id(), &rule, &i.s("id"), "threshold", "skipped", "filters did not match", &Value::Null, 0, None).await?;
+                insert_delivery(
+                    state,
+                    &new_id(),
+                    &rule,
+                    &i.s("id"),
+                    "threshold",
+                    "skipped",
+                    "filters did not match",
+                    &Value::Null,
+                    0,
+                    None,
+                )
+                .await?;
                 continue;
             }
             let mut payload = json!({
@@ -791,7 +1044,9 @@ async fn check_thresholds(state: &AppState) -> anyhow::Result<()> {
                 "sent_at": crate::util::iso_time(now_ms()),
             });
             if wants_fix_context(&rule.channel) {
-                payload["fix_context"] = system_fix_context(state, &i.s("id")).await.unwrap_or(Value::Null);
+                payload["fix_context"] = system_fix_context(state, &i.s("id"))
+                    .await
+                    .unwrap_or(Value::Null);
             }
             let _ = deliver_new(
                 state,
@@ -814,10 +1069,29 @@ pub fn perf_text(payload: &Value) -> String {
         .into_iter()
         .flatten()
         .take(3)
-        .map(|r| format!("{} p95 {} → {} ms ({:+.0}%)", r["transaction"].as_str().unwrap_or(""), r["base"]["p95_ms"], r["target"]["p95_ms"], r["p95_change"].as_f64().unwrap_or(0.0) * 100.0))
+        .map(|r| {
+            format!(
+                "{} p95 {} → {} ms ({:+.0}%)",
+                r["transaction"].as_str().unwrap_or(""),
+                r["base"]["p95_ms"],
+                r["target"]["p95_ms"],
+                r["p95_change"].as_f64().unwrap_or(0.0) * 100.0
+            )
+        })
         .collect();
-    for v in payload["web_vitals"].as_array().into_iter().flatten().filter(|v| v["regressed"] == true).take(2) {
-        parts.push(format!("{} p75 {} → {}", v["metric"].as_str().unwrap_or("").to_uppercase(), v["base_p75"], v["target_p75"]));
+    for v in payload["web_vitals"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|v| v["regressed"] == true)
+        .take(2)
+    {
+        parts.push(format!(
+            "{} p75 {} → {}",
+            v["metric"].as_str().unwrap_or("").to_uppercase(),
+            v["base_p75"],
+            v["target_p75"]
+        ));
     }
     format!(
         "Performance regression in {} {} (vs {}): {}",
@@ -853,16 +1127,32 @@ pub async fn check_perf_regressions(state: &AppState, force: bool) -> anyhow::Re
     Ok(out)
 }
 
-async fn perf_regression_for_rule(state: &AppState, rule: &Rule, secret: &str, force: bool) -> anyhow::Result<Vec<String>> {
+async fn perf_regression_for_rule(
+    state: &AppState,
+    rule: &Rule,
+    secret: &str,
+    force: bool,
+) -> anyhow::Result<Vec<String>> {
     let projects: Vec<String> = match rule.project_id.as_deref().filter(|p| !p.is_empty()) {
         Some(p) => vec![p.to_string()],
-        None => sqlx::query("SELECT id FROM projects").fetch_all(&state.db).await?.iter().map(|r| r.s("id")).collect(),
+        None => sqlx::query("SELECT id FROM projects")
+            .fetch_all(&state.db)
+            .await?
+            .iter()
+            .map(|r| r.s("id"))
+            .collect(),
     };
     let min_count = 20;
     let mut out = Vec::new();
     for pid in projects {
-        let Some(project) = crate::projects::find(state, &pid).await? else { continue };
-        let Some((target, base)) = crate::perf::latest_two_releases(state, &project.id, min_count).await? else { continue };
+        let Some(project) = crate::projects::find(state, &pid).await? else {
+            continue;
+        };
+        let Some((target, base)) =
+            crate::perf::latest_two_releases(state, &project.id, min_count).await?
+        else {
+            continue;
+        };
         if let Some(g) = rule.filters["release"].as_str().filter(|g| !g.is_empty()) {
             if !crate::ownership::glob(g, &target) {
                 continue;
@@ -870,13 +1160,25 @@ async fn perf_regression_for_rule(state: &AppState, rule: &Rule, secret: &str, f
         }
         let key = format!("perf:{target}");
         if !force {
-            let sent = sqlx::query("SELECT COUNT(*) AS n FROM alert_deliveries WHERE rule_id = $1 AND issue_id = $2").bind(&rule.id).bind(&key).fetch_one(&state.db).await?.i("n");
+            let sent = sqlx::query(
+                "SELECT COUNT(*) AS n FROM alert_deliveries WHERE rule_id = $1 AND issue_id = $2",
+            )
+            .bind(&rule.id)
+            .bind(&key)
+            .fetch_one(&state.db)
+            .await?
+            .i("n");
             if sent > 0 {
                 continue;
             }
         }
-        let threshold = if rule.threshold > 0 { rule.threshold as f64 / 100.0 } else { 0.2 };
-        let cmp = crate::perf::compare_inner(state, &project, &base, &target, min_count, threshold).await?;
+        let threshold = if rule.threshold > 0 {
+            rule.threshold as f64 / 100.0
+        } else {
+            0.2
+        };
+        let cmp = crate::perf::compare_inner(state, &project, &base, &target, min_count, threshold)
+            .await?;
         if cmp["regressed"] != true && !force {
             continue;
         }
@@ -919,12 +1221,26 @@ pub(crate) mod hmac_lite {
             ipad[i] ^= k[i];
             opad[i] ^= k[i];
         }
-        let inner = Sha256::new().chain_update(ipad).chain_update(msg).finalize();
-        Sha256::new().chain_update(opad).chain_update(inner).finalize().into()
+        let inner = Sha256::new()
+            .chain_update(ipad)
+            .chain_update(msg)
+            .finalize();
+        Sha256::new()
+            .chain_update(opad)
+            .chain_update(inner)
+            .finalize()
+            .into()
     }
 }
 
-async fn send_webhook(state: &AppState, url: &str, secret: &str, trigger: &str, delivery_id: &str, payload: &Value) -> anyhow::Result<String> {
+async fn send_webhook(
+    state: &AppState,
+    url: &str,
+    secret: &str,
+    trigger: &str,
+    delivery_id: &str,
+    payload: &Value,
+) -> anyhow::Result<String> {
     let body = serde_json::to_vec(payload)?;
     let ts = (now_ms() / 1000).to_string();
     crate::netguard::check_url(url, state.config.allow_private_alert_targets)
@@ -938,7 +1254,10 @@ async fn send_webhook(state: &AppState, url: &str, secret: &str, trigger: &str, 
         .header("x-vaka-timestamp", &ts)
         .timeout(Duration::from_secs(10));
     if !secret.is_empty() {
-        req = req.header("x-vaka-signature", format!("sha256={}", sign(secret, &body)));
+        req = req.header(
+            "x-vaka-signature",
+            format!("sha256={}", sign(secret, &body)),
+        );
     }
     let resp = req.body(body).send().await?;
     let status = resp.status();
@@ -948,7 +1267,12 @@ async fn send_webhook(state: &AppState, url: &str, secret: &str, trigger: &str, 
     Ok(format!("HTTP {status}"))
 }
 
-async fn send_email(state: &AppState, to: &str, trigger: &str, payload: &serde_json::Value) -> anyhow::Result<String> {
+async fn send_email(
+    state: &AppState,
+    to: &str,
+    trigger: &str,
+    payload: &serde_json::Value,
+) -> anyhow::Result<String> {
     let Some(key) = &state.config.resend_api_key else {
         anyhow::bail!("email alerts need VAKA_RESEND_API_KEY");
     };
@@ -964,7 +1288,11 @@ async fn send_email(state: &AppState, to: &str, trigger: &str, payload: &serde_j
         "perf_regression" => "Performance regression",
         _ => "Alert",
     };
-    let subject = format!("[{}] {what}: {}", payload["project"]["name"].as_str().unwrap_or(""), issue["title"].as_str().unwrap_or(""));
+    let subject = format!(
+        "[{}] {what}: {}",
+        payload["project"]["name"].as_str().unwrap_or(""),
+        issue["title"].as_str().unwrap_or("")
+    );
     let url = payload["url"].as_str().unwrap_or("");
     let text = format!(
         "{what} in {}\n\n{}\n{}\n\nSeen {} times, last in release {}.\n\n{url}\n",
@@ -982,8 +1310,17 @@ async fn send_email(state: &AppState, to: &str, trigger: &str, payload: &serde_j
 }
 
 /// Send a plain-text email through Resend.
-async fn resend(state: &AppState, key: &str, to: &str, subject: &str, text: &str) -> anyhow::Result<String> {
-    let html = format!("<pre style=\"font-family:ui-monospace,monospace;white-space:pre-wrap\">{}</pre>", html_escape(text));
+async fn resend(
+    state: &AppState,
+    key: &str,
+    to: &str,
+    subject: &str,
+    text: &str,
+) -> anyhow::Result<String> {
+    let html = format!(
+        "<pre style=\"font-family:ui-monospace,monospace;white-space:pre-wrap\">{}</pre>",
+        html_escape(text)
+    );
     let resp = state
         .http
         .post(format!("{}/emails", state.config.resend_api_url))
@@ -1007,16 +1344,25 @@ async fn resend(state: &AppState, key: &str, to: &str, subject: &str, text: &str
 }
 
 pub fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn owners_line(issue: &serde_json::Value) -> Option<String> {
-    let owners: Vec<&str> = issue["owners"].as_array()?.iter().filter_map(|o| o.as_str()).collect();
+    let owners: Vec<&str> = issue["owners"]
+        .as_array()?
+        .iter()
+        .filter_map(|o| o.as_str())
+        .collect();
     (!owners.is_empty()).then(|| owners.join(", "))
 }
 
 fn slack_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// A Slack incoming-webhook message for an issue alert.
@@ -1037,11 +1383,23 @@ pub fn slack_issue_message(trigger: &str, payload: &serde_json::Value) -> serde_
     let title = slack_escape(issue["title"].as_str().unwrap_or(""));
     let url = payload["url"].as_str().unwrap_or("");
     let short = issue["short_id"].as_str().unwrap_or("");
-    let mut lines = vec![format!("*{what}* in {}", slack_escape(project)), format!("*<{url}|{} {title}>*", slack_escape(short))];
+    let mut lines = vec![
+        format!("*{what}* in {}", slack_escape(project)),
+        format!("*<{url}|{} {title}>*", slack_escape(short)),
+    ];
     if let Some(c) = issue["culprit"].as_str().filter(|c| !c.is_empty()) {
         lines.push(format!("`{}`", c.replace('`', "'")));
     }
-    let mut facts = vec![format!("seen {} times", issue["times_seen"]), format!("release {}", issue["last_release"].as_str().filter(|r| !r.is_empty()).unwrap_or("-"))];
+    let mut facts = vec![
+        format!("seen {} times", issue["times_seen"]),
+        format!(
+            "release {}",
+            issue["last_release"]
+                .as_str()
+                .filter(|r| !r.is_empty())
+                .unwrap_or("-")
+        ),
+    ];
     if let Some(h) = payload["details"]["last_hour"].as_i64() {
         facts.push(format!("{h} in the last hour"));
     }
@@ -1128,11 +1486,20 @@ fn utc() -> String {
     "UTC".into()
 }
 
-const WEEKDAYS: &[&str] = &["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const WEEKDAYS: &[&str] = &[
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+];
 
 impl Schedule {
     pub fn parse(v: &Value) -> Result<Schedule, String> {
-        let s: Schedule = serde_json::from_value(v.clone()).map_err(|e| format!("bad schedule: {e}"))?;
+        let s: Schedule =
+            serde_json::from_value(v.clone()).map_err(|e| format!("bad schedule: {e}"))?;
         if !matches!(s.frequency.as_str(), "daily" | "weekly") {
             return Err("schedule.frequency must be daily or weekly".into());
         }
@@ -1144,13 +1511,23 @@ impl Schedule {
                 return Err("schedule.weekday must be a day name like monday".into());
             }
         }
-        jiff::tz::TimeZone::get(&s.timezone).map_err(|_| format!("unknown time zone `{}`; use an IANA name like Europe/Stockholm", s.timezone))?;
+        jiff::tz::TimeZone::get(&s.timezone).map_err(|_| {
+            format!(
+                "unknown time zone `{}`; use an IANA name like Europe/Stockholm",
+                s.timezone
+            )
+        })?;
         Ok(s)
     }
 
     /// For a rule without a schedule: daily at `threshold` UTC.
     pub fn of(rule: &Rule) -> Schedule {
-        Schedule::parse(&rule.schedule).unwrap_or(Schedule { frequency: daily(), hour: rule.threshold.clamp(0, 23), weekday: None, timezone: utc() })
+        Schedule::parse(&rule.schedule).unwrap_or(Schedule {
+            frequency: daily(),
+            hour: rule.threshold.clamp(0, 23),
+            weekday: None,
+            timezone: utc(),
+        })
     }
 
     pub fn window_ms(&self) -> i64 {
@@ -1173,12 +1550,20 @@ impl Schedule {
     pub fn last_due(&self, now: i64) -> anyhow::Result<i64> {
         let tz = jiff::tz::TimeZone::get(&self.timezone)?;
         let local = jiff::Timestamp::from_millisecond(now)?.to_zoned(tz.clone());
-        let wd = WEEKDAYS.iter().position(|d| Some(*d) == self.weekday.as_deref().map(str::to_lowercase).as_deref()).unwrap_or(0);
+        let wd = WEEKDAYS
+            .iter()
+            .position(|d| Some(*d) == self.weekday.as_deref().map(str::to_lowercase).as_deref())
+            .unwrap_or(0);
         let mut date = local.date();
         for _ in 0..9 {
-            let ok_day = self.frequency != "weekly" || date.weekday().to_monday_zero_offset() as usize == wd;
+            let ok_day =
+                self.frequency != "weekly" || date.weekday().to_monday_zero_offset() as usize == wd;
             if ok_day {
-                let at = date.at(self.hour as i8, 0, 0, 0).to_zoned(tz.clone())?.timestamp().as_millisecond();
+                let at = date
+                    .at(self.hour as i8, 0, 0, 0)
+                    .to_zoned(tz.clone())?
+                    .timestamp()
+                    .as_millisecond();
                 if at <= now {
                     return Ok(at);
                 }
@@ -1192,7 +1577,11 @@ impl Schedule {
         let when = format!("{:02}:00 {}", self.hour, self.timezone);
         if self.frequency == "weekly" {
             let d = self.weekday.clone().unwrap_or_else(|| "monday".into());
-            format!("weekly on {}{} at {when}", d[..1].to_uppercase(), &d[1..].to_lowercase())
+            format!(
+                "weekly on {}{} at {when}",
+                d[..1].to_uppercase(),
+                &d[1..].to_lowercase()
+            )
         } else {
             format!("daily at {when}")
         }
@@ -1207,7 +1596,9 @@ async fn run_digests(state: &AppState, now: i64) -> anyhow::Result<()> {
     .await?;
     for row in rows {
         let rule = rule_from_row(&row);
-        let Ok(due) = Schedule::of(&rule).last_due(now) else { continue };
+        let Ok(due) = Schedule::of(&rule).last_due(now) else {
+            continue;
+        };
         // Not before the first scheduled time after the rule was created.
         if due < rule.created_at {
             continue;
@@ -1236,28 +1627,59 @@ async fn run_digests(state: &AppState, now: i64) -> anyhow::Result<()> {
 }
 
 /// Build and send one digest now. Returns the delivery detail.
-pub async fn send_digest(state: &AppState, rule: &Rule, secret: &str, now: i64) -> anyhow::Result<String> {
-    let payload = build_digest(state, rule.project_id.as_deref(), &Schedule::of(rule), now, true).await?;
+pub async fn send_digest(
+    state: &AppState,
+    rule: &Rule,
+    secret: &str,
+    now: i64,
+) -> anyhow::Result<String> {
+    let payload = build_digest(
+        state,
+        rule.project_id.as_deref(),
+        &Schedule::of(rule),
+        now,
+        true,
+    )
+    .await?;
     deliver_new(state, rule, secret, "digest", "", payload).await
 }
 
 /// The digest payload for one project (or all), with anomalies and a narrative.
-pub async fn build_digest(state: &AppState, project_id: Option<&str>, schedule: &Schedule, now: i64, with_narrative: bool) -> anyhow::Result<Value> {
+pub async fn build_digest(
+    state: &AppState,
+    project_id: Option<&str>,
+    schedule: &Schedule,
+    now: i64,
+    with_narrative: bool,
+) -> anyhow::Result<Value> {
     let projects = match project_id {
-        Some(pid) => crate::projects::find(state, pid).await?.into_iter().collect(),
+        Some(pid) => crate::projects::find(state, pid)
+            .await?
+            .into_iter()
+            .collect(),
         None => crate::projects::list(state).await?,
     };
     let w = schedule.window_ms();
     let mut items = Vec::new();
     for p in &projects {
         let d = project_digest(state, p, now, w).await?;
-        let quiet = d["errors"].as_i64() == Some(0) && d["visitors"].as_i64() == Some(0) && d["sessions"].as_i64() == Some(0) && d["anomalies"].as_array().map(|a| a.is_empty()).unwrap_or(true)
+        let quiet = d["errors"].as_i64() == Some(0)
+            && d["visitors"].as_i64() == Some(0)
+            && d["sessions"].as_i64() == Some(0)
+            && d["anomalies"]
+                .as_array()
+                .map(|a| a.is_empty())
+                .unwrap_or(true)
             && d["feedback"]["count"].as_i64().unwrap_or(0) == 0;
         if !quiet {
             items.push(d);
         }
     }
-    let label = if w == 86_400_000 { "the last 24 hours" } else { "the last 7 days" };
+    let label = if w == 86_400_000 {
+        "the last 24 hours"
+    } else {
+        "the last 7 days"
+    };
     let mut payload = json!({
         "trigger": "digest",
         "title": schedule.title(),
@@ -1275,11 +1697,23 @@ pub async fn build_digest(state: &AppState, project_id: Option<&str>, schedule: 
 }
 
 fn n(v: &serde_json::Value) -> i64 {
-    v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)).or_else(|| v.as_str().and_then(|s| s.parse().ok())).unwrap_or(0)
+    v.as_i64()
+        .or_else(|| v.as_f64().map(|f| f as i64))
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(0)
 }
 
-async fn project_digest(state: &AppState, p: &ProjectInfo, now: i64, w: i64) -> anyhow::Result<serde_json::Value> {
-    let ps = [("p", p.id.clone()), ("d1", (now - w).to_string()), ("d2", (now - 2 * w).to_string())];
+async fn project_digest(
+    state: &AppState,
+    p: &ProjectInfo,
+    now: i64,
+    w: i64,
+) -> anyhow::Result<serde_json::Value> {
+    let ps = [
+        ("p", p.id.clone()),
+        ("d1", (now - w).to_string()),
+        ("d2", (now - 2 * w).to_string()),
+    ];
     let t1 = "fromUnixTimestamp64Milli({d1:Int64})";
     let t2 = "fromUnixTimestamp64Milli({d2:Int64})";
     let errs = state
@@ -1322,7 +1756,13 @@ async fn project_digest(state: &AppState, p: &ProjectInfo, now: i64, w: i64) -> 
         .bind(now - w)
         .fetch_all(&state.db)
         .await?;
-    let new_count = sqlx::query("SELECT COUNT(*) AS n FROM issues WHERE project_id = $1 AND first_seen >= $2").bind(&p.id).bind(now - w).fetch_one(&state.db).await?.i("n");
+    let new_count =
+        sqlx::query("SELECT COUNT(*) AS n FROM issues WHERE project_id = $1 AND first_seen >= $2")
+            .bind(&p.id)
+            .bind(now - w)
+            .fetch_one(&state.db)
+            .await?
+            .i("n");
     let slim = |i: &serde_json::Value| json!({"short_id": i["short_id"], "title": i["title"], "culprit": i["culprit"], "status": i["status"], "url": i["url"], "owners": i["owners"]});
     let mut new_issues = Vec::new();
     for r in &new_rows {
@@ -1332,7 +1772,9 @@ async fn project_digest(state: &AppState, p: &ProjectInfo, now: i64, w: i64) -> 
     }
     let mut top_issues = Vec::new();
     for r in &top {
-        if let Some(i) = crate::query::get_issue_row(state, r["issue_id"].as_str().unwrap_or("")).await? {
+        if let Some(i) =
+            crate::query::get_issue_row(state, r["issue_id"].as_str().unwrap_or("")).await?
+        {
             let mut v = slim(&i);
             v["events"] = json!(n(&r["events"]));
             v["users"] = json!(n(&r["users"]));
@@ -1344,7 +1786,10 @@ async fn project_digest(state: &AppState, p: &ProjectInfo, now: i64, w: i64) -> 
     let s = sessions.first().cloned().unwrap_or(json!({}));
     let (sess, crashed) = (n(&s["sessions"]), n(&s["crashed"]));
     let anomalies = match crate::anomalies::detect_for(state, p, now, w).await {
-        Ok(a) => a["anomalies"].as_array().map(|v| v.iter().take(8).cloned().collect::<Vec<_>>()).unwrap_or_default(),
+        Ok(a) => a["anomalies"]
+            .as_array()
+            .map(|v| v.iter().take(8).cloned().collect::<Vec<_>>())
+            .unwrap_or_default(),
         Err(e) => {
             tracing::warn!("anomaly detection for {} failed: {e:#}", p.slug);
             Vec::new()
@@ -1375,35 +1820,79 @@ fn delta(now: i64, prev: i64) -> String {
 pub fn digest_lines(payload: &serde_json::Value, slack: bool) -> Vec<String> {
     let mut out = Vec::new();
     let projects = payload["projects"].as_array().cloned().unwrap_or_default();
-    let esc = |s: &str| if slack { slack_escape(s) } else { s.to_string() };
-    if let Some(t) = payload["narrative"].as_str().filter(|t| !t.is_empty() && !projects.is_empty()) {
+    let esc = |s: &str| {
+        if slack {
+            slack_escape(s)
+        } else {
+            s.to_string()
+        }
+    };
+    if let Some(t) = payload["narrative"]
+        .as_str()
+        .filter(|t| !t.is_empty() && !projects.is_empty())
+    {
         out.push(esc(t));
         out.push(String::new());
     }
     if projects.is_empty() {
-        out.push(format!("No activity in {}.", payload["period"]["label"].as_str().unwrap_or("the last 24 hours")));
+        out.push(format!(
+            "No activity in {}.",
+            payload["period"]["label"]
+                .as_str()
+                .unwrap_or("the last 24 hours")
+        ));
     }
     for p in projects {
         let name = esc(p["project"]["name"].as_str().unwrap_or(""));
-        out.push(if slack { format!("*{name}*") } else { format!("== {name} ==") });
-        let mut facts = vec![format!("{} errors{}", n(&p["errors"]), delta(n(&p["errors"]), n(&p["errors_prev"]))), format!("{} new issues", n(&p["new_issue_count"]))];
+        out.push(if slack {
+            format!("*{name}*")
+        } else {
+            format!("== {name} ==")
+        });
+        let mut facts = vec![
+            format!(
+                "{} errors{}",
+                n(&p["errors"]),
+                delta(n(&p["errors"]), n(&p["errors_prev"]))
+            ),
+            format!("{} new issues", n(&p["new_issue_count"])),
+        ];
         if let Some(cf) = p["crash_free_sessions"].as_f64() {
-            facts.push(format!("{:.2}% crash-free of {} sessions", cf * 100.0, n(&p["sessions"])));
+            facts.push(format!(
+                "{:.2}% crash-free of {} sessions",
+                cf * 100.0,
+                n(&p["sessions"])
+            ));
         }
         if n(&p["visitors"]) > 0 || n(&p["visitors_prev"]) > 0 {
-            facts.push(format!("{} visitors{}, {} pageviews{}", n(&p["visitors"]), delta(n(&p["visitors"]), n(&p["visitors_prev"])), n(&p["pageviews"]), delta(n(&p["pageviews"]), n(&p["pageviews_prev"]))));
+            facts.push(format!(
+                "{} visitors{}, {} pageviews{}",
+                n(&p["visitors"]),
+                delta(n(&p["visitors"]), n(&p["visitors_prev"])),
+                n(&p["pageviews"]),
+                delta(n(&p["pageviews"]), n(&p["pageviews_prev"]))
+            ));
         }
         out.push(facts.join(" · "));
         let unusual: Vec<_> = p["anomalies"].as_array().cloned().unwrap_or_default();
         if !unusual.is_empty() {
             out.push("Unusual:".into());
-            out.extend(unusual.iter().map(|a| format!("{} {}", if slack { "•" } else { " " }, esc(a["sentence"].as_str().unwrap_or("")))));
+            out.extend(unusual.iter().map(|a| {
+                format!(
+                    "{} {}",
+                    if slack { "•" } else { " " },
+                    esc(a["sentence"].as_str().unwrap_or(""))
+                )
+            }));
         }
         let issue_line = |i: &serde_json::Value, extra: String| {
             let short = i["short_id"].as_str().unwrap_or("");
             let title = esc(i["title"].as_str().unwrap_or(""));
             if slack {
-                format!("• <{}|{short}> {title}{extra}", i["url"].as_str().unwrap_or(""))
+                format!(
+                    "• <{}|{short}> {title}{extra}",
+                    i["url"].as_str().unwrap_or("")
+                )
             } else {
                 format!("  {short} {title}{extra}")
             }
@@ -1416,11 +1905,20 @@ pub fn digest_lines(payload: &serde_json::Value, slack: bool) -> Vec<String> {
         let top: Vec<_> = p["top_issues"].as_array().cloned().unwrap_or_default();
         if !top.is_empty() {
             out.push("Top issues:".into());
-            out.extend(top.iter().map(|i| issue_line(i, format!(" ({} events, {} users)", n(&i["events"]), n(&i["users"])))));
+            out.extend(top.iter().map(|i| {
+                issue_line(
+                    i,
+                    format!(" ({} events, {} users)", n(&i["events"]), n(&i["users"])),
+                )
+            }));
         }
         let fb = &p["feedback"];
         if n(&fb["count"]) > 0 {
-            let mut line = format!("Feedback: {}{}", n(&fb["count"]), delta(n(&fb["count"]), n(&fb["previous"])));
+            let mut line = format!(
+                "Feedback: {}{}",
+                n(&fb["count"]),
+                delta(n(&fb["count"]), n(&fb["previous"]))
+            );
             let split: Vec<String> = ["negative", "mixed", "neutral", "positive"]
                 .iter()
                 .filter(|k| n(&fb["sentiment"][**k]) > 0)
@@ -1429,13 +1927,27 @@ pub fn digest_lines(payload: &serde_json::Value, slack: bool) -> Vec<String> {
             if !split.is_empty() {
                 line.push_str(&format!(" ({})", split.join(", ")));
             }
-            let topics: Vec<String> = fb["top_topics"].as_array().into_iter().flatten().map(|t| format!("{} ({})", t["topic"].as_str().unwrap_or(""), n(&t["count"]))).collect();
+            let topics: Vec<String> = fb["top_topics"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|t| format!("{} ({})", t["topic"].as_str().unwrap_or(""), n(&t["count"])))
+                .collect();
             if !topics.is_empty() {
                 line.push_str(&format!(" · top topics: {}", topics.join(", ")));
             }
             out.push(esc(&line));
             for q in fb["negative_quotes"].as_array().into_iter().flatten() {
-                out.push(format!("{} {}: \"{}\"", if slack { "•" } else { " " }, q["short_id"].as_str().unwrap_or(""), esc(q["message"].as_str().unwrap_or("").replace('\n', " ").as_str())));
+                out.push(format!(
+                    "{} {}: \"{}\"",
+                    if slack { "•" } else { " " },
+                    q["short_id"].as_str().unwrap_or(""),
+                    esc(q["message"]
+                        .as_str()
+                        .unwrap_or("")
+                        .replace('\n', " ")
+                        .as_str())
+                ));
             }
         }
         out.push(String::new());
@@ -1456,13 +1968,23 @@ fn slack_digest_message(payload: &serde_json::Value, _public_url: &str) -> serde
     })
 }
 
-async fn send_digest_email(state: &AppState, to: &str, payload: &serde_json::Value) -> anyhow::Result<String> {
+async fn send_digest_email(
+    state: &AppState,
+    to: &str,
+    payload: &serde_json::Value,
+) -> anyhow::Result<String> {
     let Some(key) = &state.config.resend_api_key else {
         anyhow::bail!("email digests need VAKA_RESEND_API_KEY");
     };
-    let title = payload["title"].as_str().unwrap_or("Vaka daily digest").to_string();
+    let title = payload["title"]
+        .as_str()
+        .unwrap_or("Vaka daily digest")
+        .to_string();
     let text = format!("{title}\n\n{}", digest_lines(payload, false).join("\n"));
-    let html = format!("<pre style=\"font-family:ui-monospace,monospace\">{}</pre>", html_escape(&text));
+    let html = format!(
+        "<pre style=\"font-family:ui-monospace,monospace\">{}</pre>",
+        html_escape(&text)
+    );
     let resp = state
         .http
         .post(format!("{}/emails", state.config.resend_api_url))
@@ -1479,7 +2001,10 @@ async fn send_digest_email(state: &AppState, to: &str, payload: &serde_json::Val
         .await?;
     let status = resp.status();
     if !status.is_success() {
-        anyhow::bail!("Resend returned {status}: {}", resp.text().await.unwrap_or_default());
+        anyhow::bail!(
+            "Resend returned {status}: {}",
+            resp.text().await.unwrap_or_default()
+        );
     }
     Ok(format!("Resend {status}"))
 }
@@ -1501,10 +2026,12 @@ pub fn spawn_spike_detector(state: AppState) {
 }
 
 async fn detect_spikes(state: &AppState) -> anyhow::Result<()> {
-    let has_rules = sqlx::query("SELECT COUNT(*) AS n FROM alert_rules WHERE enabled = 1 AND trigger = 'spike'")
-        .fetch_one(&state.db)
-        .await?
-        .i("n");
+    let has_rules = sqlx::query(
+        "SELECT COUNT(*) AS n FROM alert_rules WHERE enabled = 1 AND trigger = 'spike'",
+    )
+    .fetch_one(&state.db)
+    .await?
+    .i("n");
     if has_rules == 0 {
         return Ok(());
     }
@@ -1522,7 +2049,15 @@ async fn detect_spikes(state: &AppState) -> anyhow::Result<()> {
         let project_id = r["project_id"].as_str().unwrap_or("");
         let issue_id = r["issue_id"].as_str().unwrap_or("");
         if let Some(project) = crate::projects::find(state, project_id).await? {
-            dispatch(state, &project, issue_id, "spike", Some(json!({"last_hour": r["last_hour"], "hourly_avg_prev_24h": r["hourly_avg"]})), None).await?;
+            dispatch(
+                state,
+                &project,
+                issue_id,
+                "spike",
+                Some(json!({"last_hour": r["last_hour"], "hourly_avg_prev_24h": r["hourly_avg"]})),
+                None,
+            )
+            .await?;
         }
     }
     Ok(())
@@ -1569,7 +2104,16 @@ pub async fn test_rule(state: &AppState, rule_id: &str) -> anyhow::Result<String
             "url": state.config.public_url,
             "sent_at": crate::util::iso_time(now_ms()),
         });
-        return send(state, &rule, &crate::secretbox::open(&row.s("secret"))?, &rule.trigger, "", &payload, &format!("test-{}", new_id())).await;
+        return send(
+            state,
+            &rule,
+            &crate::secretbox::open(&row.s("secret"))?,
+            &rule.trigger,
+            "",
+            &payload,
+            &format!("test-{}", new_id()),
+        )
+        .await;
     }
     if rule.trigger == "new_feedback" {
         let payload = json!({
@@ -1627,8 +2171,13 @@ mod tests {
         let sthlm = Schedule::parse(&json!({"hour": 8, "timezone": "Europe/Stockholm"})).unwrap();
         assert_eq!(sthlm.last_due(day + 9 * h).unwrap(), day + 7 * h);
         // 2025-11-13 is a Thursday; the last Monday 08:00 UTC is three days earlier.
-        let weekly = Schedule::parse(&json!({"frequency": "weekly", "weekday": "Monday", "hour": 8})).unwrap();
-        assert_eq!(weekly.last_due(day + 9 * h).unwrap(), day - 3 * 86_400_000 + 8 * h);
+        let weekly =
+            Schedule::parse(&json!({"frequency": "weekly", "weekday": "Monday", "hour": 8}))
+                .unwrap();
+        assert_eq!(
+            weekly.last_due(day + 9 * h).unwrap(),
+            day - 3 * 86_400_000 + 8 * h
+        );
         assert_eq!(weekly.window_ms(), 7 * 86_400_000);
         assert_eq!(weekly.describe(), "weekly on Monday at 08:00 UTC");
         assert!(Schedule::parse(&json!({"timezone": "Mars/Olympus"})).is_err());
@@ -1646,15 +2195,27 @@ mod tests {
         assert!(slack.contains("*Web &lt;prod&gt;*"), "{slack}");
         assert!(slack.contains("12 errors (+20%)"), "{slack}");
         assert!(slack.contains("<https://v/x|WEB-3> TypeError"), "{slack}");
-        let msg = slack_issue_message("new_issue", &json!({"project": {"name": "Web"}, "url": "https://v/i", "issue": {"short_id": "WEB-3", "title": "a < b", "times_seen": 2, "owners": ["a@x.se"]}}));
-        assert!(msg["blocks"][0]["text"]["text"].as_str().unwrap().contains("a &lt; b"));
-        assert!(msg["blocks"][0]["text"]["text"].as_str().unwrap().contains("owners a@x.se"));
+        let msg = slack_issue_message(
+            "new_issue",
+            &json!({"project": {"name": "Web"}, "url": "https://v/i", "issue": {"short_id": "WEB-3", "title": "a < b", "times_seen": 2, "owners": ["a@x.se"]}}),
+        );
+        assert!(msg["blocks"][0]["text"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("a &lt; b"));
+        assert!(msg["blocks"][0]["text"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("owners a@x.se"));
     }
 
     #[test]
     fn hmac_matches_known_vector() {
         // RFC 4231 test case 2
         let mac = super::sign("Jefe", b"what do ya want for nothing?");
-        assert_eq!(mac, "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
+        assert_eq!(
+            mac,
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
     }
 }

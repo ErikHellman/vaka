@@ -11,6 +11,8 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home /data vaka && mkdir -p /data && chown vaka /data
 COPY --from=build /usr/local/bin/vaka-server /usr/local/bin/vaka /usr/local/bin/
+# DB-IP IP to Country Lite (CC BY 4.0), refreshed monthly in the repo; see geoip/README.md.
+COPY geoip/dbip-country-lite.mmdb geoip/README.md /usr/share/vaka/
 USER vaka
 ENV VAKA_DATA_DIR=/data VAKA_LISTEN=0.0.0.0:8080
 VOLUME /data

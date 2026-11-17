@@ -37,10 +37,16 @@ pub fn normalize_http_name(name: &str) -> String {
     };
     let path = rest.split(['?', '#']).next().unwrap_or("");
     let path = match path.find("://") {
-        Some(i) => path[i + 3..].find('/').map(|j| &path[i + 3 + j..]).unwrap_or("/"),
+        Some(i) => path[i + 3..]
+            .find('/')
+            .map(|j| &path[i + 3 + j..])
+            .unwrap_or("/"),
         None => path,
     };
-    let norm: Vec<&str> = path.split('/').map(|seg| if is_id_segment(seg) { ":id" } else { seg }).collect();
+    let norm: Vec<&str> = path
+        .split('/')
+        .map(|seg| if is_id_segment(seg) { ":id" } else { seg })
+        .collect();
     let p = norm.join("/");
     match method {
         Some(m) => format!("{m} {p}"),
@@ -54,7 +60,9 @@ fn status_of(s: &SpanItem) -> String {
         Some("error" | "internal_error" | "unknown_error" | "failed") => "error".into(),
         Some("cancelled" | "canceled" | "aborted") => "cancelled".into(),
         _ if code >= 500 => "error".into(),
-        Some(other) if !other.is_empty() && other != "ok" && other != "unset" => truncate(other, 32),
+        Some(other) if !other.is_empty() && other != "ok" && other != "unset" => {
+            truncate(other, 32)
+        }
         _ => "ok".into(),
     }
 }
@@ -71,23 +79,39 @@ pub fn span_row(project: &ProjectInfo, s: &SpanItem, received_at: i64) -> Result
         (Some(a), Some(b)) if b >= a => Some((b - a) as f64),
         _ => None,
     });
-    let start = start.or_else(|| end.map(|e| e - duration.unwrap_or(0.0) as i64)).unwrap_or(received_at);
+    let start = start
+        .or_else(|| end.map(|e| e - duration.unwrap_or(0.0) as i64))
+        .unwrap_or(received_at);
     let op = truncate(s.op.as_deref().unwrap_or("default").trim(), 64);
     let parent = s.parent_span_id.clone().unwrap_or_default();
-    let is_root = parent.is_empty() || s.is_transaction.unwrap_or(s.kind.as_deref() == Some("server"));
+    let is_root = parent.is_empty()
+        || s.is_transaction
+            .unwrap_or(s.kind.as_deref() == Some("server"));
     let http = s.http.clone().unwrap_or_default();
     let mut name = truncate(s.name.trim(), 500);
-    let grouped = op.starts_with("http") || matches!(op.as_str(), "pageload" | "navigation" | "web.vitals");
+    let grouped =
+        op.starts_with("http") || matches!(op.as_str(), "pageload" | "navigation" | "web.vitals");
     if grouped {
         name = normalize_http_name(&name);
     }
-    let transaction = s.transaction.clone().filter(|t| !t.is_empty()).map(|t| if grouped { normalize_http_name(&t) } else { truncate(&t, 500) });
+    let transaction = s.transaction.clone().filter(|t| !t.is_empty()).map(|t| {
+        if grouped {
+            normalize_http_name(&t)
+        } else {
+            truncate(&t, 500)
+        }
+    });
     Ok(SpanRow {
         project_id: project.id.clone(),
         trace_id,
-        span_id: s.span_id.clone().filter(|i| !i.is_empty()).unwrap_or_else(|| crate::util::new_id()[..16].to_string()),
+        span_id: s
+            .span_id
+            .clone()
+            .filter(|i| !i.is_empty())
+            .unwrap_or_else(|| crate::util::new_id()[..16].to_string()),
         parent_span_id: parent,
-        transaction: transaction.unwrap_or_else(|| if is_root { name.clone() } else { String::new() }),
+        transaction: transaction
+            .unwrap_or_else(|| if is_root { name.clone() } else { String::new() }),
         name,
         op,
         kind: truncate(s.kind.as_deref().unwrap_or(""), 16),
@@ -97,14 +121,33 @@ pub fn span_row(project: &ProjectInfo, s: &SpanItem, received_at: i64) -> Result
         duration_ms: duration.unwrap_or(0.0).max(0.0),
         release: s.release.clone().unwrap_or_default(),
         environment: s.environment.clone().unwrap_or_else(|| "production".into()),
-        platform: s.platform.clone().unwrap_or_else(|| project.platform.clone()),
+        platform: s
+            .platform
+            .clone()
+            .unwrap_or_else(|| project.platform.clone()),
         service: truncate(s.service.as_deref().unwrap_or(""), 128),
         session_id: s.session_id.clone().unwrap_or_default(),
         user_id: s.user_id.clone().unwrap_or_default(),
         http_method: http.method.unwrap_or_default().to_uppercase(),
         http_status: http.status_code.unwrap_or(0),
-        attributes: s.attributes.iter().take(64).map(|(k, v)| (truncate(k, 128), truncate(&crate::models::value_to_string(v), 1024))).collect(),
-        measurements: s.measurements.iter().take(32).filter(|(_, v)| v.is_finite()).map(|(k, v)| (truncate(&k.to_lowercase(), 64), *v)).collect(),
+        attributes: s
+            .attributes
+            .iter()
+            .take(64)
+            .map(|(k, v)| {
+                (
+                    truncate(k, 128),
+                    truncate(&crate::models::value_to_string(v), 1024),
+                )
+            })
+            .collect(),
+        measurements: s
+            .measurements
+            .iter()
+            .take(32)
+            .filter(|(_, v)| v.is_finite())
+            .map(|(k, v)| (truncate(&k.to_lowercase(), 64), *v))
+            .collect(),
         retention_days: project.retention_days as u16,
     })
 }
@@ -135,14 +178,26 @@ pub(crate) struct W {
 
 pub(crate) fn where_for(project_id: &str, a: &PerfParams, roots_only: bool) -> W {
     let now = now_ms();
-    let since = a.since.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 86_400_000);
-    let until = a.until.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now + 60_000);
+    let since = a
+        .since
+        .as_deref()
+        .and_then(|s| parse_time_expr(s, now))
+        .unwrap_or(now - 86_400_000);
+    let until = a
+        .until
+        .as_deref()
+        .and_then(|s| parse_time_expr(s, now))
+        .unwrap_or(now + 60_000);
     let mut conds = vec![
         "project_id = {p:String}".to_string(),
         "start >= fromUnixTimestamp64Milli({since:Int64})".to_string(),
         "start < fromUnixTimestamp64Milli({until:Int64})".to_string(),
     ];
-    let mut params: Vec<(&'static str, String)> = vec![("p", project_id.to_string()), ("since", since.to_string()), ("until", until.to_string())];
+    let mut params: Vec<(&'static str, String)> = vec![
+        ("p", project_id.to_string()),
+        ("since", since.to_string()),
+        ("until", until.to_string()),
+    ];
     if roots_only {
         conds.push("is_root = 1".into());
     }
@@ -167,7 +222,12 @@ pub(crate) fn where_for(project_id: &str, a: &PerfParams, roots_only: bool) -> W
         conds.push("transaction = {tx:String}".into());
         params.push(("tx", t.to_string()));
     }
-    W { sql: conds.join(" AND "), params, since, until }
+    W {
+        sql: conds.join(" AND "),
+        params,
+        since,
+        until,
+    }
 }
 
 fn round(v: &Value, digits: i32) -> Value {
@@ -181,7 +241,9 @@ fn round(v: &Value, digits: i32) -> Value {
 }
 
 fn num(v: &Value) -> f64 {
-    v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).unwrap_or(0.0)
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(0.0)
 }
 
 const STATS: &str = "count() AS count, round(count() / greatest(dateDiff('minute', fromUnixTimestamp64Milli({since:Int64}), least(now64(3), fromUnixTimestamp64Milli({until:Int64}))), 1), 3) AS per_minute, \
@@ -219,7 +281,13 @@ pub async fn summary(state: &AppState, p: &Principal, a: PerfParams) -> QResult<
             &params,
         )
         .await?;
-    let total = state.ch.query(&format!("SELECT {STATS} FROM spans WHERE {}", w.sql), &w.params).await?;
+    let total = state
+        .ch
+        .query(
+            &format!("SELECT {STATS} FROM spans WHERE {}", w.sql),
+            &w.params,
+        )
+        .await?;
     let txs: Vec<Value> = rows
         .iter()
         .map(|r| {
@@ -229,11 +297,18 @@ pub async fn summary(state: &AppState, p: &Principal, a: PerfParams) -> QResult<
             v
         })
         .collect();
-    Ok(json!({"project": proj.slug, "since": iso_time(w.since), "until": iso_time(w.until.min(now_ms())), "overall": total.first().map(stats_json).unwrap_or(Value::Null), "transactions": txs}))
+    Ok(
+        json!({"project": proj.slug, "since": iso_time(w.since), "until": iso_time(w.until.min(now_ms())), "overall": total.first().map(stats_json).unwrap_or(Value::Null), "transactions": txs}),
+    )
 }
 
 /// Slowest HTTP server endpoints by p95 (at least `min_count` requests).
-pub async fn slow_endpoints(state: &AppState, p: &Principal, mut a: PerfParams, min_count: Option<i64>) -> QResult<Value> {
+pub async fn slow_endpoints(
+    state: &AppState,
+    p: &Principal,
+    mut a: PerfParams,
+    min_count: Option<i64>,
+) -> QResult<Value> {
     let proj = project_for(state, p, &a.project).await?;
     if a.op.as_deref().unwrap_or("").is_empty() {
         a.op = Some("http.server*".into());
@@ -263,8 +338,10 @@ pub async fn slow_endpoints(state: &AppState, p: &Principal, mut a: PerfParams, 
             v
         })
         .collect();
-    Ok(json!({"project": proj.slug, "since": iso_time(w.since), "endpoints": endpoints,
-        "hint": "Use span_breakdown with an endpoint as `transaction` to see where its time goes, and list_slow_traces + get_trace for examples."}))
+    Ok(
+        json!({"project": proj.slug, "since": iso_time(w.since), "endpoints": endpoints,
+        "hint": "Use span_breakdown with an endpoint as `transaction` to see where its time goes, and list_slow_traces + get_trace for examples."}),
+    )
 }
 
 /// Cold and warm app start durations by release.
@@ -294,8 +371,10 @@ pub async fn app_startup(state: &AppState, p: &Principal, mut a: PerfParams) -> 
             v
         })
         .collect();
-    Ok(json!({"project": proj.slug, "since": iso_time(w.since), "app_starts": out,
-        "hint": "Send spans with op app.start.cold / app.start.warm (duration from process start to first frame)."}))
+    Ok(
+        json!({"project": proj.slug, "since": iso_time(w.since), "app_starts": out,
+        "hint": "Send spans with op app.start.cold / app.start.warm (duration from process start to first frame)."}),
+    )
 }
 
 fn vital_sql() -> String {
@@ -334,7 +413,12 @@ fn vital_rows(rows: &[Value]) -> Vec<Value> {
 }
 
 /// Web Vitals (p75 and good/poor shares) overall and for the pages with the most samples.
-pub async fn web_vitals(state: &AppState, p: &Principal, mut a: PerfParams, by_page: Option<bool>) -> QResult<Value> {
+pub async fn web_vitals(
+    state: &AppState,
+    p: &Principal,
+    mut a: PerfParams,
+    by_page: Option<bool>,
+) -> QResult<Value> {
     let proj = project_for(state, p, &a.project).await?;
     a.op = None;
     let page_filter = a.transaction.take();
@@ -347,7 +431,16 @@ pub async fn web_vitals(state: &AppState, p: &Principal, mut a: PerfParams, by_p
     }
     let known: Vec<String> = VITALS.iter().map(|v| format!("'{}'", v.0)).collect();
     let base = format!("FROM spans ARRAY JOIN mapKeys(measurements) AS k, mapValues(measurements) AS v WHERE {cond} AND k IN ({})", known.join(", "));
-    let overall = state.ch.query(&format!("SELECT {}, '' AS page {base} GROUP BY metric ORDER BY metric", vital_sql()), &params).await?;
+    let overall = state
+        .ch
+        .query(
+            &format!(
+                "SELECT {}, '' AS page {base} GROUP BY metric ORDER BY metric",
+                vital_sql()
+            ),
+            &params,
+        )
+        .await?;
     let mut out = json!({"project": proj.slug, "since": iso_time(w.since), "overall": vital_rows(&overall),
         "thresholds": VITALS.iter().map(|v| json!({"metric": v.0, "good_up_to": v.1, "poor_above": v.2, "unit": v.3})).collect::<Vec<_>>()});
     if by_page.unwrap_or(true) {
@@ -365,15 +458,26 @@ pub async fn web_vitals(state: &AppState, p: &Principal, mut a: PerfParams, by_p
             .await?;
         let mut grouped: BTreeMap<String, Vec<Value>> = BTreeMap::new();
         for v in vital_rows(&pages) {
-            grouped.entry(v["page"].as_str().unwrap_or("").to_string()).or_default().push(v);
+            grouped
+                .entry(v["page"].as_str().unwrap_or("").to_string())
+                .or_default()
+                .push(v);
         }
-        out["pages"] = json!(grouped.into_iter().map(|(page, metrics)| json!({"page": page, "metrics": metrics})).collect::<Vec<_>>());
+        out["pages"] = json!(grouped
+            .into_iter()
+            .map(|(page, metrics)| json!({"page": page, "metrics": metrics}))
+            .collect::<Vec<_>>());
     }
     Ok(out)
 }
 
 /// One trace as a tree, with errors that carry the trace id.
-pub async fn get_trace(state: &AppState, p: &Principal, project: &str, trace_id: &str) -> QResult<Value> {
+pub async fn get_trace(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    trace_id: &str,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     let tid = trace_id.trim().to_lowercase();
     let params = [("p", proj.id.clone()), ("t", tid.clone())];
@@ -396,9 +500,19 @@ pub async fn get_trace(state: &AppState, p: &Principal, project: &str, trace_id:
             &params,
         )
         .await?;
-    let t0 = rows.iter().map(|r| num(&r["start_ms"]) as i64).min().unwrap_or(0);
-    let t1 = rows.iter().map(|r| num(&r["start_ms"]) + num(&r["duration_ms"])).fold(0.0, f64::max);
-    let ids: std::collections::HashSet<String> = rows.iter().map(|r| r["span_id"].as_str().unwrap_or("").to_string()).collect();
+    let t0 = rows
+        .iter()
+        .map(|r| num(&r["start_ms"]) as i64)
+        .min()
+        .unwrap_or(0);
+    let t1 = rows
+        .iter()
+        .map(|r| num(&r["start_ms"]) + num(&r["duration_ms"]))
+        .fold(0.0, f64::max);
+    let ids: std::collections::HashSet<String> = rows
+        .iter()
+        .map(|r| r["span_id"].as_str().unwrap_or("").to_string())
+        .collect();
     let mut children: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let mut roots = Vec::new();
     for (i, r) in rows.iter().enumerate() {
@@ -410,7 +524,14 @@ pub async fn get_trace(state: &AppState, p: &Principal, project: &str, trace_id:
         }
     }
     let mut flat = Vec::new();
-    fn walk(i: usize, depth: usize, rows: &[Value], children: &BTreeMap<String, Vec<usize>>, t0: i64, out: &mut Vec<Value>) {
+    fn walk(
+        i: usize,
+        depth: usize,
+        rows: &[Value],
+        children: &BTreeMap<String, Vec<usize>>,
+        t0: i64,
+        out: &mut Vec<Value>,
+    ) {
         let r = &rows[i];
         let id = r["span_id"].as_str().unwrap_or("");
         let kids = children.get(id).cloned().unwrap_or_default();
@@ -463,7 +584,12 @@ pub async fn get_trace(state: &AppState, p: &Principal, project: &str, trace_id:
 }
 
 /// Slowest root spans (examples to open with get_trace).
-pub async fn slow_traces(state: &AppState, p: &Principal, a: PerfParams, min_ms: Option<f64>) -> QResult<Value> {
+pub async fn slow_traces(
+    state: &AppState,
+    p: &Principal,
+    a: PerfParams,
+    min_ms: Option<f64>,
+) -> QResult<Value> {
     let proj = project_for(state, p, &a.project).await?;
     let w = where_for(&proj.id, &a, true);
     let mut params = w.params.clone();
@@ -480,18 +606,27 @@ pub async fn slow_traces(state: &AppState, p: &Principal, a: PerfParams, min_ms:
             &params,
         )
         .await?;
-    Ok(json!({"project": proj.slug, "traces": rows.iter().map(|r| json!({"trace_id": r["trace_id"], "transaction": r["transaction"], "op": r["op"], "status": r["status"],
-        "duration_ms": round(&r["duration_ms"], 1), "release": r["release"], "start": iso_time(num(&r["start_ms"]) as i64), "http_status": r["http_status"]})).collect::<Vec<_>>()}))
+    Ok(
+        json!({"project": proj.slug, "traces": rows.iter().map(|r| json!({"trace_id": r["trace_id"], "transaction": r["transaction"], "op": r["op"], "status": r["status"],
+        "duration_ms": round(&r["duration_ms"], 1), "release": r["release"], "start": iso_time(num(&r["start_ms"]) as i64), "http_status": r["http_status"]})).collect::<Vec<_>>()}),
+    )
 }
 
 /// Where a transaction's time goes: child spans grouped by op and name.
 pub async fn span_breakdown(state: &AppState, p: &Principal, a: PerfParams) -> QResult<Value> {
     let proj = project_for(state, p, &a.project).await?;
-    let tx = a.transaction.clone().filter(|t| !t.is_empty()).ok_or_else(|| ApiError::bad("`transaction` is required"))?;
+    let tx = a
+        .transaction
+        .clone()
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| ApiError::bad("`transaction` is required"))?;
     let w = where_for(&proj.id, &a, true);
     let mut params = w.params.clone();
     params.push(("lim", a.limit.unwrap_or(15).clamp(1, 100).to_string()));
-    let roots = format!("SELECT trace_id FROM spans WHERE {} ORDER BY start DESC LIMIT 1000", w.sql);
+    let roots = format!(
+        "SELECT trace_id FROM spans WHERE {} ORDER BY start DESC LIMIT 1000",
+        w.sql
+    );
     let total = state
         .ch
         .query(&format!("SELECT count() AS n, sum(duration_ms) AS total FROM (SELECT duration_ms FROM spans WHERE {} ORDER BY start DESC LIMIT 1000)", w.sql), &params)
@@ -517,19 +652,48 @@ pub async fn span_breakdown(state: &AppState, p: &Principal, a: PerfParams) -> Q
                 "share_of_transaction_time": if total_ms > 0.0 { round(&json!(num(&r["total_ms"]) / total_ms), 3) } else { Value::Null }})
         })
         .collect();
-    Ok(json!({"project": proj.slug, "transaction": tx, "transactions_sampled": n, "avg_transaction_ms": if n > 0.0 { round(&json!(total_ms / n), 1) } else { Value::Null }, "spans": parts,
-        "hint": "Shares can add up to more than 1 when child spans run in parallel."}))
+    Ok(
+        json!({"project": proj.slug, "transaction": tx, "transactions_sampled": n, "avg_transaction_ms": if n > 0.0 { round(&json!(total_ms / n), 1) } else { Value::Null }, "spans": parts,
+        "hint": "Shares can add up to more than 1 when child spans run in parallel."}),
+    )
 }
 
 /// Compare transaction latency, app start and Web Vitals between two releases.
-pub async fn compare_releases(state: &AppState, p: &Principal, project: &str, base: &str, target: &str, min_count: Option<i64>, threshold: Option<f64>) -> QResult<Value> {
+pub async fn compare_releases(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    base: &str,
+    target: &str,
+    min_count: Option<i64>,
+    threshold: Option<f64>,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
-    let v = compare_inner(state, &proj, base, target, min_count.unwrap_or(20), threshold.unwrap_or(0.2)).await?;
+    let v = compare_inner(
+        state,
+        &proj,
+        base,
+        target,
+        min_count.unwrap_or(20),
+        threshold.unwrap_or(0.2),
+    )
+    .await?;
     Ok(v)
 }
 
-pub async fn compare_inner(state: &AppState, proj: &ProjectInfo, base: &str, target: &str, min_count: i64, threshold: f64) -> anyhow::Result<Value> {
-    let params = [("p", proj.id.clone()), ("b", base.to_string()), ("t", target.to_string())];
+pub async fn compare_inner(
+    state: &AppState,
+    proj: &ProjectInfo,
+    base: &str,
+    target: &str,
+    min_count: i64,
+    threshold: f64,
+) -> anyhow::Result<Value> {
+    let params = [
+        ("p", proj.id.clone()),
+        ("b", base.to_string()),
+        ("t", target.to_string()),
+    ];
     let rows = state
         .ch
         .query(
@@ -553,7 +717,9 @@ pub async fn compare_inner(state: &AppState, proj: &ProjectInfo, base: &str, tar
         .await?;
     let mut by: BTreeMap<String, (Option<Value>, Option<Value>)> = BTreeMap::new();
     for r in rows.iter() {
-        let e = by.entry(r["transaction"].as_str().unwrap_or("").to_string()).or_default();
+        let e = by
+            .entry(r["transaction"].as_str().unwrap_or("").to_string())
+            .or_default();
         if r["release"] == base {
             e.0 = Some(r.clone());
         } else {
@@ -578,12 +744,18 @@ pub async fn compare_inner(state: &AppState, proj: &ProjectInfo, base: &str, tar
         }
         table.push(row);
     }
-    let by_change = |a: &Value, b: &Value| num(&b["p95_change"]).partial_cmp(&num(&a["p95_change"])).unwrap_or(std::cmp::Ordering::Equal);
+    let by_change = |a: &Value, b: &Value| {
+        num(&b["p95_change"])
+            .partial_cmp(&num(&a["p95_change"]))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    };
     regressions.sort_by(by_change);
     improvements.sort_by(|a, b| by_change(b, a));
     let mut vit: BTreeMap<String, (f64, f64, f64, f64)> = BTreeMap::new();
     for r in &vitals {
-        let e = vit.entry(r["metric"].as_str().unwrap_or("").to_string()).or_default();
+        let e = vit
+            .entry(r["metric"].as_str().unwrap_or("").to_string())
+            .or_default();
         if r["release"] == base {
             e.0 = num(&r["p75"]);
             e.2 = num(&r["count"]);
@@ -611,7 +783,11 @@ pub async fn compare_inner(state: &AppState, proj: &ProjectInfo, base: &str, tar
 }
 
 /// The newest two releases with spans, newest first.
-pub async fn latest_two_releases(state: &AppState, project_id: &str, min_count: i64) -> anyhow::Result<Option<(String, String)>> {
+pub async fn latest_two_releases(
+    state: &AppState,
+    project_id: &str,
+    min_count: i64,
+) -> anyhow::Result<Option<(String, String)>> {
     let rows = state
         .ch
         .query(
@@ -623,7 +799,10 @@ pub async fn latest_two_releases(state: &AppState, project_id: &str, min_count: 
     if rows.len() < 2 {
         return Ok(None);
     }
-    Ok(Some((rows[0]["release"].as_str().unwrap_or("").to_string(), rows[1]["release"].as_str().unwrap_or("").to_string())))
+    Ok(Some((
+        rows[0]["release"].as_str().unwrap_or("").to_string(),
+        rows[1]["release"].as_str().unwrap_or("").to_string(),
+    )))
 }
 
 #[cfg(test)]
@@ -632,22 +811,52 @@ mod tests {
 
     #[test]
     fn http_names() {
-        assert_eq!(normalize_http_name("GET /users/123/orders/9f86d081884c7d659a2feaa0c55ad015?x=1"), "GET /users/:id/orders/:id");
-        assert_eq!(normalize_http_name("POST https://api.example.com/v1/carts/550e8400-e29b-41d4-a716-446655440000"), "POST /v1/carts/:id");
+        assert_eq!(
+            normalize_http_name("GET /users/123/orders/9f86d081884c7d659a2feaa0c55ad015?x=1"),
+            "GET /users/:id/orders/:id"
+        );
+        assert_eq!(
+            normalize_http_name(
+                "POST https://api.example.com/v1/carts/550e8400-e29b-41d4-a716-446655440000"
+            ),
+            "POST /v1/carts/:id"
+        );
         assert_eq!(normalize_http_name("/pricing"), "/pricing");
         assert_eq!(normalize_http_name("checkout"), "checkout");
     }
 
     #[test]
     fn rows_and_ratings() {
-        let proj = ProjectInfo { id: "p".into(), slug: "s".into(), name: "n".into(), platform: "javascript".into(), retention_days: 30, scrub_enabled: true, scrub_fields: String::new() };
+        let proj = ProjectInfo {
+            id: "p".into(),
+            slug: "s".into(),
+            name: "n".into(),
+            platform: "javascript".into(),
+            retention_days: 30,
+            scrub_enabled: true,
+            scrub_fields: String::new(),
+        };
         let item: SpanItem = serde_json::from_value(json!({"trace_id": "ABC", "name": "GET /a/42", "op": "http.server", "start": 1000.0, "end": 1000.25, "http": {"status_code": 503}})).unwrap();
         let r = span_row(&proj, &item, 0).unwrap();
-        assert_eq!((r.trace_id.as_str(), r.name.as_str(), r.transaction.as_str(), r.status.as_str(), r.is_root), ("abc", "GET /a/:id", "GET /a/:id", "error", 1));
+        assert_eq!(
+            (
+                r.trace_id.as_str(),
+                r.name.as_str(),
+                r.transaction.as_str(),
+                r.status.as_str(),
+                r.is_root
+            ),
+            ("abc", "GET /a/:id", "GET /a/:id", "error", 1)
+        );
         assert!((r.duration_ms - 250.0).abs() < 0.01, "{}", r.duration_ms);
         let child: SpanItem = serde_json::from_value(json!({"trace_id": "abc", "parent_span_id": "x", "name": "SELECT", "op": "db", "duration_ms": 5})).unwrap();
         assert_eq!(span_row(&proj, &child, 7).unwrap().transaction, "");
-        assert!(span_row(&proj, &serde_json::from_value(json!({"trace_id": "", "name": "x"})).unwrap(), 0).is_err());
+        assert!(span_row(
+            &proj,
+            &serde_json::from_value(json!({"trace_id": "", "name": "x"})).unwrap(),
+            0
+        )
+        .is_err());
         assert_eq!(rating("lcp", 2000.0), "good");
         assert_eq!(rating("lcp", 3000.0), "needs-improvement");
         assert_eq!(rating("cls", 0.3), "poor");

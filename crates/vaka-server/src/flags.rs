@@ -88,18 +88,30 @@ pub struct Identity<'a> {
 
 /// The evaluated value: `None` = off, `Some("on")` for boolean flags, or the variant key.
 pub fn evaluate(flag: &Flag, id: &Identity) -> (Option<String>, &'static str) {
-    let enabled = flag.environments.get(id.environment).copied().unwrap_or(flag.enabled);
+    let enabled = flag
+        .environments
+        .get(id.environment)
+        .copied()
+        .unwrap_or(flag.enabled);
     if !enabled {
         return (None, "disabled");
     }
     let mut rollout = flag.rollout;
     let mut reason = "rollout";
     for rule in &flag.rules {
-        let user_ok = rule.user_ids.is_empty() || id.user_id.map(|u| rule.user_ids.iter().any(|x| x == u)).unwrap_or(false) || rule.user_ids.iter().any(|x| x == id.distinct_id);
-        let props_ok = rule.properties.iter().all(|(k, v)| match v.strip_prefix('!') {
-            Some(neg) => id.properties.get(k).map(|p| p != neg).unwrap_or(true),
-            None => id.properties.get(k) == Some(v),
-        });
+        let user_ok = rule.user_ids.is_empty()
+            || id
+                .user_id
+                .map(|u| rule.user_ids.iter().any(|x| x == u))
+                .unwrap_or(false)
+            || rule.user_ids.iter().any(|x| x == id.distinct_id);
+        let props_ok = rule
+            .properties
+            .iter()
+            .all(|(k, v)| match v.strip_prefix('!') {
+                Some(neg) => id.properties.get(k).map(|p| p != neg).unwrap_or(true),
+                None => id.properties.get(k) == Some(v),
+            });
         if user_ok && props_ok {
             if let Some(v) = &rule.variant {
                 return (Some(v.clone()), "rule");
@@ -163,13 +175,31 @@ pub struct EvalRequest {
 }
 
 /// Evaluate every flag of a project for one identity (SDK endpoint).
-pub async fn evaluate_all(state: &AppState, project: &ProjectInfo, req: &EvalRequest) -> anyhow::Result<Value> {
-    let distinct = req.user_id.as_deref().filter(|u| !u.is_empty()).or(req.distinct_id.as_deref()).unwrap_or("");
+pub async fn evaluate_all(
+    state: &AppState,
+    project: &ProjectInfo,
+    req: &EvalRequest,
+) -> anyhow::Result<Value> {
+    let distinct = req
+        .user_id
+        .as_deref()
+        .filter(|u| !u.is_empty())
+        .or(req.distinct_id.as_deref())
+        .unwrap_or("");
     if distinct.is_empty() {
         anyhow::bail!("`distinct_id` or `user_id` is required");
     }
-    let props: BTreeMap<String, String> = req.properties.iter().map(|(k, v)| (k.clone(), crate::models::value_to_string(v))).collect();
-    let id = Identity { distinct_id: distinct, user_id: req.user_id.as_deref(), properties: &props, environment: req.environment.as_deref().unwrap_or("production") };
+    let props: BTreeMap<String, String> = req
+        .properties
+        .iter()
+        .map(|(k, v)| (k.clone(), crate::models::value_to_string(v)))
+        .collect();
+    let id = Identity {
+        distinct_id: distinct,
+        user_id: req.user_id.as_deref(),
+        properties: &props,
+        environment: req.environment.as_deref().unwrap_or("production"),
+    };
     let mut flags = serde_json::Map::new();
     let mut details = serde_json::Map::new();
     for f in flags_for(state, &project.id).await? {
@@ -197,8 +227,15 @@ pub struct FlagIn {
 
 fn validate(f: &FlagIn) -> QResult<()> {
     if let Some(k) = &f.key {
-        if k.is_empty() || k.len() > 64 || !k.chars().all(|c| c.is_ascii_alphanumeric() || "_-.".contains(c)) {
-            return Err(ApiError::bad("flag key must be 1 to 64 characters of letters, digits, _, - and ."));
+        if k.is_empty()
+            || k.len() > 64
+            || !k
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_-.".contains(c))
+        {
+            return Err(ApiError::bad(
+                "flag key must be 1 to 64 characters of letters, digits, _, - and .",
+            ));
         }
     }
     if f.rollout.unwrap_or(0) > 100 {
@@ -206,12 +243,20 @@ fn validate(f: &FlagIn) -> QResult<()> {
     }
     if let Some(vs) = &f.variants {
         if vs.len() > 10 || vs.len() == 1 {
-            return Err(ApiError::bad("give no variants (a boolean flag) or 2 to 10"));
+            return Err(ApiError::bad(
+                "give no variants (a boolean flag) or 2 to 10",
+            ));
         }
         let mut seen = std::collections::BTreeSet::new();
         for v in vs {
-            if v.key.is_empty() || v.key.len() > 64 || !seen.insert(v.key.clone()) || v.weight > 10_000 {
-                return Err(ApiError::bad("variant keys must be unique, 1 to 64 characters, weights 0 to 10000"));
+            if v.key.is_empty()
+                || v.key.len() > 64
+                || !seen.insert(v.key.clone())
+                || v.weight > 10_000
+            {
+                return Err(ApiError::bad(
+                    "variant keys must be unique, 1 to 64 characters, weights 0 to 10000",
+                ));
             }
         }
         if !vs.is_empty() && vs.iter().all(|v| v.weight == 0) {
@@ -225,7 +270,9 @@ fn validate(f: &FlagIn) -> QResult<()> {
         for r in rs {
             if let (Some(v), Some(vs)) = (&r.variant, &f.variants) {
                 if !vs.iter().any(|x| &x.key == v) {
-                    return Err(ApiError::bad(format!("rule variant `{v}` is not one of the flag's variants")));
+                    return Err(ApiError::bad(format!(
+                        "rule variant `{v}` is not one of the flag's variants"
+                    )));
                 }
             }
             if r.rollout.unwrap_or(0) > 100 {
@@ -264,16 +311,26 @@ pub async fn get_flag(state: &AppState, p: &Principal, project: &str, key: &str)
             &[("p", proj.id.clone()), ("k", f.key.clone())],
         )
         .await?;
-    Ok(json!({"project": proj.slug, "flag": f, "exposure_last_7d": exposure,
-        "hint": "flag_health compares crash-free sessions and errors per variant; experiment_results compares conversion."}))
+    Ok(
+        json!({"project": proj.slug, "flag": f, "exposure_last_7d": exposure,
+        "hint": "flag_health compares crash-free sessions and errors per variant; experiment_results compares conversion."}),
+    )
 }
 
-pub async fn create_flag(state: &AppState, p: &Principal, project: &str, f: FlagIn) -> QResult<Value> {
+pub async fn create_flag(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    f: FlagIn,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     if !p.can_write(&proj.id) {
         return Err(ApiError::forbidden());
     }
-    let key = f.key.clone().ok_or_else(|| ApiError::bad("`key` is required"))?;
+    let key = f
+        .key
+        .clone()
+        .ok_or_else(|| ApiError::bad("`key` is required"))?;
     validate(&f)?;
     let id = crate::util::new_id();
     let now = now_ms();
@@ -296,13 +353,21 @@ pub async fn create_flag(state: &AppState, p: &Principal, project: &str, f: Flag
     .execute(&state.db)
     .await?;
     if res.rows_affected() == 0 {
-        return Err(ApiError::bad(format!("a flag `{key}` already exists; use update_flag")));
+        return Err(ApiError::bad(format!(
+            "a flag `{key}` already exists; use update_flag"
+        )));
     }
     crate::auth::audit(state, &p.label(), "create_flag", &id, &key).await;
     Ok(json!(get_row(state, &proj.id, &key).await?))
 }
 
-pub async fn update_flag(state: &AppState, p: &Principal, project: &str, key: &str, f: FlagIn) -> QResult<Value> {
+pub async fn update_flag(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    key: &str,
+    f: FlagIn,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     if !p.can_write(&proj.id) {
         return Err(ApiError::forbidden());
@@ -333,12 +398,21 @@ pub async fn update_flag(state: &AppState, p: &Principal, project: &str, key: &s
     Ok(json!(get_row(state, &proj.id, &cur.key).await?))
 }
 
-pub async fn delete_flag(state: &AppState, p: &Principal, project: &str, key: &str) -> QResult<Value> {
+pub async fn delete_flag(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    key: &str,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     if !p.can_write(&proj.id) {
         return Err(ApiError::forbidden());
     }
-    let res = sqlx::query("DELETE FROM flags WHERE project_id = $1 AND (key = $2 OR id = $2)").bind(&proj.id).bind(key).execute(&state.db).await?;
+    let res = sqlx::query("DELETE FROM flags WHERE project_id = $1 AND (key = $2 OR id = $2)")
+        .bind(&proj.id)
+        .bind(key)
+        .execute(&state.db)
+        .await?;
     if res.rows_affected() == 0 {
         return Err(ApiError::not_found("flag"));
     }
@@ -351,7 +425,9 @@ pub async fn delete_flag(state: &AppState, p: &Principal, project: &str, key: &s
 // ---------------------------------------------------------------------------
 
 fn n(v: &Value) -> f64 {
-    v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).unwrap_or(0.0)
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(0.0)
 }
 
 fn r4(x: f64) -> f64 {
@@ -359,11 +435,24 @@ fn r4(x: f64) -> f64 {
 }
 
 /// Crash-free sessions, error rate and over-represented issues per variant of a flag.
-pub async fn flag_health(state: &AppState, p: &Principal, project: &str, key: &str, since: Option<&str>, release: Option<&str>) -> QResult<Value> {
+pub async fn flag_health(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    key: &str,
+    since: Option<&str>,
+    release: Option<&str>,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     let now = now_ms();
-    let since_ms = since.and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 7 * 86_400_000);
-    let mut params = vec![("p", proj.id.clone()), ("k", key.to_string()), ("since", since_ms.to_string())];
+    let since_ms = since
+        .and_then(|s| parse_time_expr(s, now))
+        .unwrap_or(now - 7 * 86_400_000);
+    let mut params = vec![
+        ("p", proj.id.clone()),
+        ("k", key.to_string()),
+        ("since", since_ms.to_string()),
+    ];
     let mut rel = String::new();
     if let Some(r) = release.filter(|r| !r.is_empty()) {
         rel = " AND release = {rel:String}".into();
@@ -417,24 +506,35 @@ pub async fn flag_health(state: &AppState, p: &Principal, project: &str, key: &s
     }
     for e in &errors {
         let v = e["variant"].as_str().unwrap_or("").to_string();
-        let entry = variants.entry(v.clone()).or_insert_with(|| json!({"variant": v, "sessions": 0, "session_share": 0.0}));
+        let entry = variants
+            .entry(v.clone())
+            .or_insert_with(|| json!({"variant": v, "sessions": 0, "session_share": 0.0}));
         entry["errors"] = e["n_errors"].clone();
         entry["unhandled_errors"] = e["unhandled"].clone();
         entry["issues"] = e["issues"].clone();
         let s = n(&entry["sessions"]);
-        entry["errors_per_session"] = if s > 0.0 { json!(r4(n(&e["n_errors"]) / s)) } else { Value::Null };
+        entry["errors_per_session"] = if s > 0.0 {
+            json!(r4(n(&e["n_errors"]) / s))
+        } else {
+            Value::Null
+        };
     }
     // Issues whose errors come from one variant much more than its share of sessions.
     let mut issue_tot: BTreeMap<String, f64> = BTreeMap::new();
     for r in &by_issue {
-        *issue_tot.entry(r["issue_id"].as_str().unwrap_or("").to_string()).or_default() += n(&r["n"]);
+        *issue_tot
+            .entry(r["issue_id"].as_str().unwrap_or("").to_string())
+            .or_default() += n(&r["n"]);
     }
     let mut over = Vec::new();
     for r in &by_issue {
         let issue = r["issue_id"].as_str().unwrap_or("");
         let v = r["variant"].as_str().unwrap_or("");
         let tot = issue_tot.get(issue).copied().unwrap_or(0.0);
-        let share = n(&variants.get(v).map(|x| x["session_share"].clone()).unwrap_or(json!(0)));
+        let share = n(&variants
+            .get(v)
+            .map(|x| x["session_share"].clone())
+            .unwrap_or(json!(0)));
         if tot < 3.0 || share <= 0.0 {
             if tot >= 3.0 && share <= 0.0 && n(&r["n"]) == tot && total_sessions > 0.0 {
                 over.push(json!({"issue_id": issue, "variant": v, "events": r["n"], "share_of_issue_events": 1.0, "session_share": 0.0, "lift": null}));
@@ -447,10 +547,18 @@ pub async fn flag_health(state: &AppState, p: &Principal, project: &str, key: &s
             over.push(json!({"issue_id": issue, "variant": v, "events": r["n"], "share_of_issue_events": r4(ev_share), "session_share": r4(share), "lift": (lift * 100.0).round() / 100.0}));
         }
     }
-    over.sort_by(|a, b| n(&b["events"]).partial_cmp(&n(&a["events"])).unwrap_or(std::cmp::Ordering::Equal));
+    over.sort_by(|a, b| {
+        n(&b["events"])
+            .partial_cmp(&n(&a["events"]))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     over.truncate(10);
     for o in &mut over {
-        if let Ok(Some(row)) = sqlx::query("SELECT short_id, title FROM issues WHERE id = $1").bind(o["issue_id"].as_str().unwrap_or("")).fetch_optional(&state.db).await {
+        if let Ok(Some(row)) = sqlx::query("SELECT short_id, title FROM issues WHERE id = $1")
+            .bind(o["issue_id"].as_str().unwrap_or(""))
+            .fetch_optional(&state.db)
+            .await
+        {
             o["short_id"] = json!(row.s("short_id"));
             o["title"] = json!(row.s("title"));
         }
@@ -478,7 +586,12 @@ pub struct ExperimentIn {
     pub description: Option<String>,
 }
 
-pub async fn create_experiment(state: &AppState, p: &Principal, project: &str, e: ExperimentIn) -> QResult<Value> {
+pub async fn create_experiment(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    e: ExperimentIn,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     if !p.can_write(&proj.id) {
         return Err(ApiError::forbidden());
@@ -489,7 +602,11 @@ pub async fn create_experiment(state: &AppState, p: &Principal, project: &str, e
     if name.is_empty() || name.len() > 100 {
         return Err(ApiError::bad("experiment name must be 1 to 100 characters"));
     }
-    let control = e.control.clone().or_else(|| flag.variants.first().map(|v| v.key.clone())).unwrap_or_else(|| "off".into());
+    let control = e
+        .control
+        .clone()
+        .or_else(|| flag.variants.first().map(|v| v.key.clone()))
+        .unwrap_or_else(|| "off".into());
     let id = crate::util::new_id();
     let res = sqlx::query(
         "INSERT INTO experiments (id, project_id, name, flag_key, goal, control, description, started_at, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
@@ -507,7 +624,9 @@ pub async fn create_experiment(state: &AppState, p: &Principal, project: &str, e
     .execute(&state.db)
     .await?;
     if res.rows_affected() == 0 {
-        return Err(ApiError::bad(format!("an experiment named `{name}` already exists")));
+        return Err(ApiError::bad(format!(
+            "an experiment named `{name}` already exists"
+        )));
     }
     Ok(json!({"id": id, "name": name, "flag": flag.key, "goal": e.goal.trim(), "control": control}))
 }
@@ -518,15 +637,21 @@ pub async fn list_experiments(state: &AppState, p: &Principal, project: &str) ->
         .bind(&proj.id)
         .fetch_all(&state.db)
         .await?;
-    Ok(json!({"project": proj.slug, "experiments": rows.iter().map(|r| json!({"id": r.s("id"), "name": r.s("name"), "flag": r.s("flag_key"), "goal": r.s("goal"),
-        "control": r.s("control"), "description": r.s("description"), "started_at": iso_time(r.i("started_at")), "created_by": r.s("created_by")})).collect::<Vec<_>>()}))
+    Ok(
+        json!({"project": proj.slug, "experiments": rows.iter().map(|r| json!({"id": r.s("id"), "name": r.s("name"), "flag": r.s("flag_key"), "goal": r.s("goal"),
+        "control": r.s("control"), "description": r.s("description"), "started_at": iso_time(r.i("started_at")), "created_by": r.s("created_by")})).collect::<Vec<_>>()}),
+    )
 }
 
 /// Standard normal CDF (Abramowitz-Stegun 7.1.26 erf approximation, error < 1.5e-7).
 pub fn norm_cdf(z: f64) -> f64 {
     let x = z.abs() / std::f64::consts::SQRT_2;
     let t = 1.0 / (1.0 + 0.3275911 * x);
-    let y = 1.0 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * (-x * x).exp();
+    let y = 1.0
+        - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t
+            + 0.254829592)
+            * t
+            * (-x * x).exp();
     if z >= 0.0 {
         0.5 * (1.0 + y)
     } else {
@@ -535,14 +660,23 @@ pub fn norm_cdf(z: f64) -> f64 {
 }
 
 /// Two-proportion z-test: (uplift, z, two-sided p, 95% CI of the difference).
-pub fn two_proportion(c_conv: f64, c_n: f64, t_conv: f64, t_n: f64) -> Option<(f64, f64, f64, (f64, f64))> {
+pub fn two_proportion(
+    c_conv: f64,
+    c_n: f64,
+    t_conv: f64,
+    t_n: f64,
+) -> Option<(f64, f64, f64, (f64, f64))> {
     if c_n <= 0.0 || t_n <= 0.0 {
         return None;
     }
     let (pc, pt) = (c_conv / c_n, t_conv / t_n);
     let pooled = (c_conv + t_conv) / (c_n + t_n);
     let se_pooled = (pooled * (1.0 - pooled) * (1.0 / c_n + 1.0 / t_n)).sqrt();
-    let z = if se_pooled > 0.0 { (pt - pc) / se_pooled } else { 0.0 };
+    let z = if se_pooled > 0.0 {
+        (pt - pc) / se_pooled
+    } else {
+        0.0
+    };
     let p = 2.0 * (1.0 - norm_cdf(z.abs()));
     let se = (pc * (1.0 - pc) / c_n + pt * (1.0 - pt) / t_n).sqrt();
     let uplift = if pc > 0.0 { (pt - pc) / pc } else { 0.0 };
@@ -563,9 +697,14 @@ pub struct ResultsParams {
 
 /// Conversion per variant: people exposed (any event carrying the flag) and how many of them did
 /// the goal event while exposed, with uplift against the control and significance.
-pub async fn experiment_results(state: &AppState, p: &Principal, a: ResultsParams) -> QResult<Value> {
+pub async fn experiment_results(
+    state: &AppState,
+    p: &Principal,
+    a: ResultsParams,
+) -> QResult<Value> {
     let proj = project_for(state, p, &a.project).await?;
-    let (flag_key, goal, control, started) = match a.experiment.as_deref().filter(|e| !e.is_empty()) {
+    let (flag_key, goal, control, started) = match a.experiment.as_deref().filter(|e| !e.is_empty())
+    {
         Some(name) => {
             let r = sqlx::query("SELECT flag_key, goal, control, started_at FROM experiments WHERE project_id = $1 AND (name = $2 OR id = $2)")
                 .bind(&proj.id)
@@ -573,27 +712,50 @@ pub async fn experiment_results(state: &AppState, p: &Principal, a: ResultsParam
                 .fetch_optional(&state.db)
                 .await?
                 .ok_or_else(|| ApiError::not_found("experiment"))?;
-            (r.s("flag_key"), r.s("goal"), a.control.clone().unwrap_or(r.s("control")), Some(r.i("started_at")))
+            (
+                r.s("flag_key"),
+                r.s("goal"),
+                a.control.clone().unwrap_or(r.s("control")),
+                Some(r.i("started_at")),
+            )
         }
         None => {
-            let flag = a.flag.clone().ok_or_else(|| ApiError::bad("give `experiment`, or `flag` and `goal`"))?;
-            let goal = a.goal.clone().ok_or_else(|| ApiError::bad("`goal` is required with `flag`"))?;
+            let flag = a
+                .flag
+                .clone()
+                .ok_or_else(|| ApiError::bad("give `experiment`, or `flag` and `goal`"))?;
+            let goal = a
+                .goal
+                .clone()
+                .ok_or_else(|| ApiError::bad("`goal` is required with `flag`"))?;
             (flag, goal, a.control.clone().unwrap_or_default(), None)
         }
     };
     let step = Step::parse(&goal)?;
     let now = now_ms();
-    let since = a.since.as_deref().and_then(|s| parse_time_expr(s, now)).or(started).unwrap_or(now - 14 * 86_400_000);
+    let since = a
+        .since
+        .as_deref()
+        .and_then(|s| parse_time_expr(s, now))
+        .or(started)
+        .unwrap_or(now - 14 * 86_400_000);
     let actor = match a.identity.as_deref().unwrap_or("auto") {
         "user" => "user_id",
         "visitor" => "visitor_id",
         _ => "if(user_id != '', user_id, visitor_id)",
     };
-    let mut params = vec![("p", proj.id.clone()), ("k", flag_key.clone()), ("since", since.to_string()), ("g", step.event.clone())];
+    let mut params = vec![
+        ("p", proj.id.clone()),
+        ("k", flag_key.clone()),
+        ("since", since.to_string()),
+        ("g", step.event.clone()),
+    ];
     const GN: [&str; 4] = ["g0", "g1", "g2", "g3"];
     let mut goal_conds = vec!["name = {g:String}".to_string()];
     for (i, (d, v)) in step.filters.iter().enumerate() {
-        let name = *GN.get(i).ok_or_else(|| ApiError::bad("at most 4 goal filters"))?;
+        let name = *GN
+            .get(i)
+            .ok_or_else(|| ApiError::bad("at most 4 goal filters"))?;
         let (c, val) = crate::query::filter_cond(d, v, name)?;
         goal_conds.push(c);
         params.push((name, val));
@@ -612,11 +774,20 @@ pub async fn experiment_results(state: &AppState, p: &Principal, a: ResultsParam
         )
         .await?;
     let control = if control.is_empty() || !rows.iter().any(|r| r["variant"] == control.as_str()) {
-        rows.iter().find(|r| matches!(r["variant"].as_str(), Some("control" | "off" | "false"))).or(rows.first()).and_then(|r| r["variant"].as_str()).unwrap_or("").to_string()
+        rows.iter()
+            .find(|r| matches!(r["variant"].as_str(), Some("control" | "off" | "false")))
+            .or(rows.first())
+            .and_then(|r| r["variant"].as_str())
+            .unwrap_or("")
+            .to_string()
     } else {
         control
     };
-    let base = rows.iter().find(|r| r["variant"] == control.as_str()).cloned().unwrap_or_default();
+    let base = rows
+        .iter()
+        .find(|r| r["variant"] == control.as_str())
+        .cloned()
+        .unwrap_or_default();
     let (cc, cn) = (n(&base["converted"]), n(&base["exposed"]));
     let mut variants = Vec::new();
     let mut best: Option<(String, f64)> = None;
@@ -634,7 +805,11 @@ pub async fn experiment_results(state: &AppState, p: &Principal, a: ResultsParam
                 out["p_value"] = json!(r4(pv));
                 out["significant"] = json!(enough && pv < 0.05);
                 out["enough_data"] = json!(enough);
-                if enough && pv < 0.05 && uplift > 0.0 && best.as_ref().map(|b| uplift > b.1).unwrap_or(true) {
+                if enough
+                    && pv < 0.05
+                    && uplift > 0.0
+                    && best.as_ref().map(|b| uplift > b.1).unwrap_or(true)
+                {
                     best = Some((v.clone(), uplift));
                 }
             }
@@ -642,9 +817,17 @@ pub async fn experiment_results(state: &AppState, p: &Principal, a: ResultsParam
         variants.push(out);
     }
     let verdict = match &best {
-        Some((v, u)) => format!("`{v}` converts {:.1}% better than `{control}` (significant at 95%).", u * 100.0),
-        None if variants.iter().any(|v| v["significant"] == true) => format!("No variant beats `{control}`; at least one is significantly worse."),
-        None if variants.iter().any(|v| v["enough_data"] == false) => "Not enough data yet (at least 30 exposed people per variant and 10 conversions).".into(),
+        Some((v, u)) => format!(
+            "`{v}` converts {:.1}% better than `{control}` (significant at 95%).",
+            u * 100.0
+        ),
+        None if variants.iter().any(|v| v["significant"] == true) => {
+            format!("No variant beats `{control}`; at least one is significantly worse.")
+        }
+        None if variants.iter().any(|v| v["enough_data"] == false) => {
+            "Not enough data yet (at least 30 exposed people per variant and 10 conversions)."
+                .into()
+        }
         None => format!("No significant difference from `{control}` yet."),
     };
     Ok(json!({
@@ -659,20 +842,59 @@ mod tests {
     use super::*;
 
     fn flag(rollout: u32, variants: Vec<Variant>, rules: Vec<Rule>) -> Flag {
-        Flag { id: "f".into(), key: "checkout".into(), description: String::new(), enabled: true, rollout, variants, rules, environments: BTreeMap::new(),
-            created_at: String::new(), updated_at: String::new(), created_by: String::new() }
+        Flag {
+            id: "f".into(),
+            key: "checkout".into(),
+            description: String::new(),
+            enabled: true,
+            rollout,
+            variants,
+            rules,
+            environments: BTreeMap::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            created_by: String::new(),
+        }
     }
 
     #[test]
     fn bucketing_is_stable_and_spread() {
         assert_eq!(bucket("checkout", "u1"), bucket("checkout", "u1"));
         assert_ne!(bucket("checkout", "u1"), bucket("other", "u1"));
-        let on = (0..10_000).filter(|i| bucket("checkout", &format!("user-{i}")) < 0.3).count();
+        let on = (0..10_000)
+            .filter(|i| bucket("checkout", &format!("user-{i}")) < 0.3)
+            .count();
         assert!((2700..3300).contains(&on), "{on}");
         let props = BTreeMap::new();
-        let f = flag(100, vec![Variant { key: "a".into(), weight: 1 }, Variant { key: "b".into(), weight: 3 }], vec![]);
+        let f = flag(
+            100,
+            vec![
+                Variant {
+                    key: "a".into(),
+                    weight: 1,
+                },
+                Variant {
+                    key: "b".into(),
+                    weight: 3,
+                },
+            ],
+            vec![],
+        );
         let b = (0..10_000)
-            .filter(|i| evaluate(&f, &Identity { distinct_id: &format!("user-{i}"), user_id: None, properties: &props, environment: "production" }).0.as_deref() == Some("b"))
+            .filter(|i| {
+                evaluate(
+                    &f,
+                    &Identity {
+                        distinct_id: &format!("user-{i}"),
+                        user_id: None,
+                        properties: &props,
+                        environment: "production",
+                    },
+                )
+                .0
+                .as_deref()
+                    == Some("b")
+            })
             .count();
         assert!((7200..7800).contains(&b), "{b}");
     }
@@ -681,18 +903,53 @@ mod tests {
     fn rules_environments_and_rollout() {
         let mut props = BTreeMap::new();
         props.insert("plan".to_string(), "pro".to_string());
-        let rules = vec![Rule { user_ids: vec!["vip".into()], variant: Some("b".into()), ..Default::default() }, Rule { properties: [("plan".to_string(), "pro".to_string())].into(), rollout: Some(100), ..Default::default() }];
-        let mut f = flag(0, vec![Variant { key: "a".into(), weight: 1 }, Variant { key: "b".into(), weight: 1 }], rules);
-        let id = |d: &'static str, p: &'static BTreeMap<String, String>| Identity { distinct_id: d, user_id: Some(d), properties: p, environment: "production" };
+        let rules = vec![
+            Rule {
+                user_ids: vec!["vip".into()],
+                variant: Some("b".into()),
+                ..Default::default()
+            },
+            Rule {
+                properties: [("plan".to_string(), "pro".to_string())].into(),
+                rollout: Some(100),
+                ..Default::default()
+            },
+        ];
+        let mut f = flag(
+            0,
+            vec![
+                Variant {
+                    key: "a".into(),
+                    weight: 1,
+                },
+                Variant {
+                    key: "b".into(),
+                    weight: 1,
+                },
+            ],
+            rules,
+        );
+        let id = |d: &'static str, p: &'static BTreeMap<String, String>| Identity {
+            distinct_id: d,
+            user_id: Some(d),
+            properties: p,
+            environment: "production",
+        };
         let empty: &'static BTreeMap<String, String> = Box::leak(Box::new(BTreeMap::new()));
         let pro: &'static BTreeMap<String, String> = Box::leak(Box::new(props));
         assert_eq!(evaluate(&f, &id("vip", empty)).0.as_deref(), Some("b"));
         assert_eq!(evaluate(&f, &id("someone", empty)).0, None, "rollout 0");
-        assert!(evaluate(&f, &id("someone", pro)).0.is_some(), "pro users get 100%");
+        assert!(
+            evaluate(&f, &id("someone", pro)).0.is_some(),
+            "pro users get 100%"
+        );
         f.environments.insert("production".into(), false);
         assert_eq!(evaluate(&f, &id("vip", empty)), (None, "disabled"));
         let b = flag(100, vec![], vec![]);
-        assert_eq!(flag_value(&b, &evaluate(&b, &id("x", empty)).0), json!(true));
+        assert_eq!(
+            flag_value(&b, &evaluate(&b, &id("x", empty)).0),
+            json!(true)
+        );
     }
 
     #[test]

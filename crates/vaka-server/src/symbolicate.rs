@@ -131,7 +131,10 @@ pub fn normalize_images(images: &[DebugImage]) -> Vec<DebugImage> {
         .iter()
         .map(|img| {
             let mut img = img.clone();
-            let from_debug = img.debug_id.as_deref().and_then(|d| DebugId::from_str(d).ok());
+            let from_debug = img
+                .debug_id
+                .as_deref()
+                .and_then(|d| DebugId::from_str(d).ok());
             let id = from_debug.or_else(|| img.code_id.as_deref().and_then(debug_id_from_code_id));
             img.debug_id = id.map(|d| d.to_string().to_lowercase());
             img
@@ -171,10 +174,19 @@ pub fn sourcemap_key(name: &str) -> String {
     let p = url_path(name.trim());
     let p = p.trim_start_matches('~');
     let p = p.strip_suffix(".map").unwrap_or(p);
-    if p.starts_with('/') { p.to_string() } else { format!("/{p}") }
+    if p.starts_with('/') {
+        p.to_string()
+    } else {
+        format!("/{p}")
+    }
 }
 
-async fn load_artifacts(state: &AppState, project_id: &str, release: &str, debug_ids: &[String]) -> Vec<ArtifactRef> {
+async fn load_artifacts(
+    state: &AppState,
+    project_id: &str,
+    release: &str,
+    debug_ids: &[String],
+) -> Vec<ArtifactRef> {
     let mut out = Vec::new();
     if !release.is_empty() {
         if let Ok(rows) = sqlx::query("SELECT id, kind, name, debug_id, path FROM artifacts WHERE project_id = $1 AND release = $2 AND kind IN ('sourcemap', 'proguard') ORDER BY created_at DESC")
@@ -214,7 +226,9 @@ pub async fn symbolicate(
     exceptions: &mut [ExceptionData],
     images: &[DebugImage],
 ) -> bool {
-    let needs_native = exceptions.iter().any(|e| e.stacktrace.iter().any(|f| f.instruction_addr.is_some()));
+    let needs_native = exceptions
+        .iter()
+        .any(|e| e.stacktrace.iter().any(|f| f.instruction_addr.is_some()));
     let debug_ids: Vec<String> = if needs_native {
         images.iter().filter_map(|i| i.debug_id.clone()).collect()
     } else {
@@ -482,7 +496,10 @@ fn symbolicate_native(
         .max_by_key(|(_, base)| *base)
         .or_else(|| {
             let base = parse_addr(frame.image_addr.as_deref()?)?;
-            images.iter().find(|i| i.image_addr.as_deref().and_then(parse_addr) == Some(base)).map(|i| (i, base))
+            images
+                .iter()
+                .find(|i| i.image_addr.as_deref().and_then(parse_addr) == Some(base))
+                .map(|i| (i, base))
         })?;
     let debug_id = image.0.debug_id.as_deref()?;
     let artifact = artifacts
@@ -499,9 +516,15 @@ fn symbolicate_native(
         let file = loc.file().map(|f| f.full_path());
         out.push(Frame {
             function: Some(name),
-            filename: file.as_ref().map(|f| f.rsplit('/').next().unwrap_or(f).to_string()),
+            filename: file
+                .as_ref()
+                .map(|f| f.rsplit('/').next().unwrap_or(f).to_string()),
             abs_path: file,
-            lineno: if loc.line() > 0 { Some(loc.line()) } else { None },
+            lineno: if loc.line() > 0 {
+                Some(loc.line())
+            } else {
+                None
+            },
             instruction_addr: frame.instruction_addr.clone(),
             package: image.0.code_file.clone().or_else(|| frame.package.clone()),
             in_app: frame.in_app,
@@ -509,7 +532,11 @@ fn symbolicate_native(
             ..Default::default()
         });
     }
-    if out.is_empty() { None } else { Some(out) }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 fn remap_jvm(mapper: &ProguardMapper<'_>, frame: &Frame) -> Option<Vec<Frame>> {
@@ -522,7 +549,10 @@ fn remap_jvm(mapper: &ProguardMapper<'_>, frame: &Frame) -> Option<Vec<Frame>> {
         out.push(Frame {
             function: Some(r.method().to_string()),
             module: Some(r.class().to_string()),
-            filename: r.file().map(|f| f.to_string()).or_else(|| frame.filename.clone()),
+            filename: r
+                .file()
+                .map(|f| f.to_string())
+                .or_else(|| frame.filename.clone()),
             lineno: r.line().map(|l| l as u32).filter(|l| *l > 0),
             in_app: frame.in_app,
             symbolicated: Some(true),
@@ -540,7 +570,11 @@ fn remap_jvm(mapper: &ProguardMapper<'_>, frame: &Frame) -> Option<Vec<Frame>> {
     Some(out)
 }
 
-fn symbolicate_js(cache: &SymbolCache, artifacts: &[ArtifactRef], frame: &Frame) -> Option<(Frame, Option<String>)> {
+fn symbolicate_js(
+    cache: &SymbolCache,
+    artifacts: &[ArtifactRef],
+    frame: &Frame,
+) -> Option<(Frame, Option<String>)> {
     let key = sourcemap_key(frame.abs_path.as_deref()?);
     let artifact = artifacts
         .iter()
@@ -549,7 +583,10 @@ fn symbolicate_js(cache: &SymbolCache, artifacts: &[ArtifactRef], frame: &Frame)
         .or_else(|| {
             // Fall back to matching on the file name only.
             let base = key.rsplit('/').next()?;
-            artifacts.iter().filter(|a| a.kind == "sourcemap").find(|a| sourcemap_key(&a.name).rsplit('/').next() == Some(base))
+            artifacts
+                .iter()
+                .filter(|a| a.kind == "sourcemap")
+                .find(|a| sourcemap_key(&a.name).rsplit('/').next() == Some(base))
         })?;
     let sm = cache.sourcemap(artifact)?;
     let line = frame.lineno?.checked_sub(1)?;
@@ -562,7 +599,14 @@ fn symbolicate_js(cache: &SymbolCache, artifacts: &[ArtifactRef], frame: &Frame)
         .map(|contents| {
             let lines: Vec<&str> = contents.lines().collect();
             let i = src_line as usize;
-            let get = |a: usize, b: usize| lines.get(a..b.min(lines.len())).unwrap_or(&[]).iter().map(|s| crate::util::truncate(s, 300)).collect::<Vec<_>>();
+            let get = |a: usize, b: usize| {
+                lines
+                    .get(a..b.min(lines.len()))
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|s| crate::util::truncate(s, 300))
+                    .collect::<Vec<_>>()
+            };
             (
                 lines.get(i).map(|s| crate::util::truncate(s, 300)),
                 get(i.saturating_sub(5), i),
@@ -570,21 +614,31 @@ fn symbolicate_js(cache: &SymbolCache, artifacts: &[ArtifactRef], frame: &Frame)
             )
         })
         .unwrap_or((None, vec![], vec![]));
-    let in_app = source.as_deref().map(|s| !s.contains("node_modules") && !s.contains("webpack/runtime")).or(frame.in_app);
+    let in_app = source
+        .as_deref()
+        .map(|s| !s.contains("node_modules") && !s.contains("webpack/runtime"))
+        .or(frame.in_app);
     let name = token.get_name().map(|n| n.to_string());
-    Some((Frame {
-        function: frame.function.clone(),
-        filename: source.as_ref().map(|s| s.trim_start_matches("webpack://").trim_start_matches("../").to_string()),
-        abs_path: frame.abs_path.clone(),
-        lineno: Some(src_line + 1),
-        colno: Some(token.get_src_col() + 1),
-        in_app,
-        context_line,
-        pre_context: pre,
-        post_context: post,
-        symbolicated: Some(true),
-        ..Default::default()
-    }, name))
+    Some((
+        Frame {
+            function: frame.function.clone(),
+            filename: source.as_ref().map(|s| {
+                s.trim_start_matches("webpack://")
+                    .trim_start_matches("../")
+                    .to_string()
+            }),
+            abs_path: frame.abs_path.clone(),
+            lineno: Some(src_line + 1),
+            colno: Some(token.get_src_col() + 1),
+            in_app,
+            context_line,
+            pre_context: pre,
+            post_context: post,
+            symbolicated: Some(true),
+            ..Default::default()
+        },
+        name,
+    ))
 }
 
 #[cfg(test)]
@@ -593,15 +647,24 @@ mod tests {
 
     #[test]
     fn sourcemap_keys_match() {
-        assert_eq!(sourcemap_key("https://example.com/assets/app-1a2b.js"), "/assets/app-1a2b.js");
-        assert_eq!(sourcemap_key("~/assets/app-1a2b.js.map"), "/assets/app-1a2b.js");
+        assert_eq!(
+            sourcemap_key("https://example.com/assets/app-1a2b.js"),
+            "/assets/app-1a2b.js"
+        );
+        assert_eq!(
+            sourcemap_key("~/assets/app-1a2b.js.map"),
+            "/assets/app-1a2b.js"
+        );
         assert_eq!(sourcemap_key("assets/app-1a2b.js"), "/assets/app-1a2b.js");
     }
 
     #[test]
     fn code_id_to_debug_id() {
         let d = debug_id_from_code_id("b5381a457906d279073822a5ceb24c4bfef94ddb").unwrap();
-        assert_eq!(d.to_string().to_lowercase(), "451a38b5-0679-79d2-0738-22a5ceb24c4b");
+        assert_eq!(
+            d.to_string().to_lowercase(),
+            "451a38b5-0679-79d2-0738-22a5ceb24c4b"
+        );
     }
 
     #[test]
@@ -613,13 +676,28 @@ mod tests {
         let path = dir.join("min.js.map");
         std::fs::write(&path, map).unwrap();
         let cache = SymbolCache::default();
-        let artifacts = vec![ArtifactRef { id: "a".into(), kind: "sourcemap".into(), name: "/static/min.js".into(), debug_id: String::new(), path: path.to_string_lossy().into() }];
-        let frame = Frame { function: Some("t".into()), abs_path: Some("https://x.io/static/min.js".into()), lineno: Some(1), colno: Some(1), ..Default::default() };
+        let artifacts = vec![ArtifactRef {
+            id: "a".into(),
+            kind: "sourcemap".into(),
+            name: "/static/min.js".into(),
+            debug_id: String::new(),
+            path: path.to_string_lossy().into(),
+        }];
+        let frame = Frame {
+            function: Some("t".into()),
+            abs_path: Some("https://x.io/static/min.js".into()),
+            lineno: Some(1),
+            colno: Some(1),
+            ..Default::default()
+        };
         let (f, name) = symbolicate_js(&cache, &artifacts, &frame).unwrap();
         assert_eq!(f.filename.as_deref(), Some("src/app.ts"));
         assert_eq!(f.lineno, Some(3));
         assert_eq!(name.as_deref(), Some("boom"));
-        assert_eq!(f.context_line.as_deref(), Some("function boom() { throw new Error() }"));
+        assert_eq!(
+            f.context_line.as_deref(),
+            Some("function boom() { throw new Error() }")
+        );
     }
 
     #[test]

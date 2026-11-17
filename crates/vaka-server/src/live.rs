@@ -135,7 +135,11 @@ fn span_msg(s: &SpanRow) -> LiveMsg {
     LiveMsg {
         project_id: s.project_id.clone(),
         kind: "span",
-        subtype: if s.is_root == 1 { "root".into() } else { String::new() },
+        subtype: if s.is_root == 1 {
+            "root".into()
+        } else {
+            String::new()
+        },
         environment: s.environment.clone(),
         data: json!({
             "trace_id": s.trace_id,
@@ -189,12 +193,21 @@ fn csv(s: &Option<String>) -> Vec<String> {
 
 impl Filter {
     fn new(project_id: String, q: &StreamQuery) -> Result<Filter, ApiError> {
-        let mut kinds: Vec<String> = csv(&q.types).into_iter().map(|k| k.trim_end_matches('s').to_string()).collect();
+        let mut kinds: Vec<String> = csv(&q.types)
+            .into_iter()
+            .map(|k| k.trim_end_matches('s').to_string())
+            .collect();
         if kinds.is_empty() {
             kinds = vec!["error".into(), "event".into()];
         }
-        if let Some(bad) = kinds.iter().find(|k| !matches!(k.as_str(), "error" | "event" | "span")) {
-            return Err(ApiError(StatusCode::BAD_REQUEST, format!("unknown stream type '{bad}' (use error, event, span)")));
+        if let Some(bad) = kinds
+            .iter()
+            .find(|k| !matches!(k.as_str(), "error" | "event" | "span"))
+        {
+            return Err(ApiError(
+                StatusCode::BAD_REQUEST,
+                format!("unknown stream type '{bad}' (use error, event, span)"),
+            ));
         }
         Ok(Filter {
             project_id,
@@ -215,7 +228,9 @@ impl Filter {
             }
         }
         match m.kind {
-            "event" => self.event_types.is_empty() || self.event_types.iter().any(|t| t == &m.subtype),
+            "event" => {
+                self.event_types.is_empty() || self.event_types.iter().any(|t| t == &m.subtype)
+            }
             "span" => !self.root_spans_only || m.subtype == "root",
             _ => true,
         }
@@ -241,7 +256,10 @@ pub async fn stream(
     let filter = Filter::new(proj.id.clone(), &q)?;
     if OPEN_STREAMS.fetch_add(1, Ordering::Relaxed) >= MAX_STREAMS {
         OPEN_STREAMS.fetch_sub(1, Ordering::Relaxed);
-        return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "too many open streams on this server".into()));
+        return Err(ApiError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "too many open streams on this server".into(),
+        ));
     }
     let guard = StreamGuard;
     let rx = s.live.subscribe();
@@ -258,14 +276,20 @@ pub async fn stream(
                 }
                 Ok(_) => continue,
                 Err(broadcast::error::RecvError::Lagged(n)) => {
-                    let ev = Event::default().event("lagged").data(json!({"dropped": n}).to_string());
+                    let ev = Event::default()
+                        .event("lagged")
+                        .data(json!({"dropped": n}).to_string());
                     return Some((Ok(ev), (rx, filter, guard)));
                 }
                 Err(broadcast::error::RecvError::Closed) => return None,
             }
         }
     });
-    Ok(Sse::new(futures::StreamExt::chain(first, rest)).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("ping")))
+    Ok(Sse::new(futures::StreamExt::chain(first, rest)).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("ping"),
+    ))
 }
 
 #[cfg(test)]
@@ -273,7 +297,13 @@ mod tests {
     use super::*;
 
     fn msg(kind: &'static str, subtype: &str, env: &str) -> LiveMsg {
-        LiveMsg { project_id: "p1".into(), kind, subtype: subtype.into(), environment: env.into(), data: json!({}) }
+        LiveMsg {
+            project_id: "p1".into(),
+            kind,
+            subtype: subtype.into(),
+            environment: env.into(),
+            data: json!({}),
+        }
     }
 
     #[test]
@@ -289,7 +319,12 @@ mod tests {
 
     #[test]
     fn filters_by_type_event_type_and_environment() {
-        let q = StreamQuery { types: Some("events, spans".into()), event_types: Some("custom".into()), environment: Some("prod".into()), root_spans_only: None };
+        let q = StreamQuery {
+            types: Some("events, spans".into()),
+            event_types: Some("custom".into()),
+            environment: Some("prod".into()),
+            root_spans_only: None,
+        };
         let f = Filter::new("p1".into(), &q).unwrap();
         assert!(!f.matches(&msg("error", "", "prod")));
         assert!(f.matches(&msg("event", "custom", "prod")));
@@ -307,7 +342,10 @@ mod tests {
 
     #[test]
     fn rejects_unknown_types() {
-        let q = StreamQuery { types: Some("logs".into()), ..Default::default() };
+        let q = StreamQuery {
+            types: Some("logs".into()),
+            ..Default::default()
+        };
         assert!(Filter::new("p1".into(), &q).is_err());
     }
 }

@@ -58,7 +58,7 @@ jobs:
           VAKA_DATA_DIR=/tmp/vaka-sqlite VAKA_LISTEN=127.0.0.1:8080 \
           VAKA_CLICKHOUSE_URL=http://localhost:8123 VAKA_CLICKHOUSE_USER=vaka VAKA_CLICKHOUSE_PASSWORD=vaka \
           VAKA_CLICKHOUSE_DATABASE=vaka_sqlite \
-          VAKA_ADMIN_EMAIL=ci@example.com VAKA_ADMIN_PASSWORD=ci-smoke-Passw0rd VAKA_GITHUB_API_URL=http://127.0.0.1:18099/gh \
+          VAKA_ADMIN_EMAIL=ci@example.com VAKA_ADMIN_PASSWORD=ci-smoke-Passw0rd VAKA_GITHUB_API_URL=http://127.0.0.1:18099/gh VAKA_GEOIP_UPDATE=false \
           VAKA_SMS_API_URL=http://127.0.0.1:18099/elks VAKA_46ELKS_USERNAME=u1 VAKA_46ELKS_PASSWORD=p1 \
             ./target/debug/vaka-server > /tmp/vaka-sqlite.log 2>&1 &
           SERVER_PID=$!
@@ -80,7 +80,7 @@ jobs:
           VAKA_DATA_DIR=/tmp/vaka-pg VAKA_LISTEN=127.0.0.1:8081 VAKA_DB_URL=postgres://vaka:vaka@localhost:5432/vaka \
           VAKA_CLICKHOUSE_URL=http://localhost:8123 VAKA_CLICKHOUSE_USER=vaka VAKA_CLICKHOUSE_PASSWORD=vaka \
           VAKA_CLICKHOUSE_DATABASE=vaka_pg \
-          VAKA_ADMIN_EMAIL=ci@example.com VAKA_ADMIN_PASSWORD=ci-smoke-Passw0rd VAKA_GITHUB_API_URL=http://127.0.0.1:18099/gh \
+          VAKA_ADMIN_EMAIL=ci@example.com VAKA_ADMIN_PASSWORD=ci-smoke-Passw0rd VAKA_GITHUB_API_URL=http://127.0.0.1:18099/gh VAKA_GEOIP_UPDATE=false \
           VAKA_SMS_PROVIDER=twilio VAKA_SMS_FROM=+15005550006 VAKA_SMS_API_URL=http://127.0.0.1:18099/twilio VAKA_TWILIO_ACCOUNT_SID=AC1 VAKA_TWILIO_AUTH_TOKEN=t1 \
             ./target/debug/vaka-server > /tmp/vaka-pg.log 2>&1 &
           SERVER_PID=$!

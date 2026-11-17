@@ -29,7 +29,16 @@ pub const MAX_IMAGE_SIDE: u32 = 4096;
 pub const STATUSES: &[&str] = &["new", "triaged", "resolved", "ignored"];
 pub const SENTIMENTS: &[&str] = &["positive", "neutral", "negative", "mixed"];
 pub const SOURCES: &[&str] = &["widget", "crash_prompt", "api"];
-pub const SUMMARY_DIMENSIONS: &[&str] = &["sentiment", "topic", "release", "flag", "day", "status", "platform", "source"];
+pub const SUMMARY_DIMENSIONS: &[&str] = &[
+    "sentiment",
+    "topic",
+    "release",
+    "flag",
+    "day",
+    "status",
+    "platform",
+    "source",
+];
 
 /// A feedback item as SDKs send it (in a batch with `"type": "feedback"`, or as the `feedback`
 /// part of a multipart upload).
@@ -125,16 +134,36 @@ fn le16(b: &[u8], i: usize) -> Option<u32> {
 }
 
 fn le24(b: &[u8], i: usize) -> Option<u32> {
-    Some(u32::from_le_bytes([*b.get(i)?, *b.get(i + 1)?, *b.get(i + 2)?, 0]))
+    Some(u32::from_le_bytes([
+        *b.get(i)?,
+        *b.get(i + 1)?,
+        *b.get(i + 2)?,
+        0,
+    ]))
 }
 
 /// Identify a PNG, JPEG or WebP image by its bytes and read its dimensions.
 pub fn inspect_image(b: &[u8]) -> Result<ImageInfo, String> {
     let bad = || "attachments must be PNG, JPEG or WebP images".to_string();
     if b.starts_with(b"\x89PNG\r\n\x1a\n") {
-        let w = u32::from_be_bytes(b.get(16..20).ok_or_else(bad)?.try_into().map_err(|_| bad())?);
-        let h = u32::from_be_bytes(b.get(20..24).ok_or_else(bad)?.try_into().map_err(|_| bad())?);
-        return Ok(ImageInfo { content_type: "image/png", ext: "png", width: w, height: h });
+        let w = u32::from_be_bytes(
+            b.get(16..20)
+                .ok_or_else(bad)?
+                .try_into()
+                .map_err(|_| bad())?,
+        );
+        let h = u32::from_be_bytes(
+            b.get(20..24)
+                .ok_or_else(bad)?
+                .try_into()
+                .map_err(|_| bad())?,
+        );
+        return Ok(ImageInfo {
+            content_type: "image/png",
+            ext: "png",
+            width: w,
+            height: h,
+        });
     }
     if b.starts_with(&[0xFF, 0xD8]) {
         let mut i = 2;
@@ -155,7 +184,12 @@ pub fn inspect_image(b: &[u8]) -> Result<ImageInfo, String> {
             if matches!(marker, 0xC0..=0xCF) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
                 let h = be16(b, i + 5).ok_or_else(bad)?;
                 let w = be16(b, i + 7).ok_or_else(bad)?;
-                return Ok(ImageInfo { content_type: "image/jpeg", ext: "jpg", width: w, height: h });
+                return Ok(ImageInfo {
+                    content_type: "image/jpeg",
+                    ext: "jpg",
+                    width: w,
+                    height: h,
+                });
             }
             if marker == 0xDA || len < 2 {
                 break;
@@ -166,15 +200,29 @@ pub fn inspect_image(b: &[u8]) -> Result<ImageInfo, String> {
     }
     if b.len() >= 30 && &b[0..4] == b"RIFF" && &b[8..12] == b"WEBP" {
         let (w, h) = match &b[12..16] {
-            b"VP8 " => (le16(b, 26).ok_or_else(bad)? & 0x3fff, le16(b, 28).ok_or_else(bad)? & 0x3fff),
+            b"VP8 " => (
+                le16(b, 26).ok_or_else(bad)? & 0x3fff,
+                le16(b, 28).ok_or_else(bad)? & 0x3fff,
+            ),
             b"VP8L" => {
                 let (b1, b2, b3, b4) = (b[21] as u32, b[22] as u32, b[23] as u32, b[24] as u32);
-                (1 + (b1 | ((b2 & 0x3F) << 8)), 1 + ((b2 >> 6) | (b3 << 2) | ((b4 & 0x0F) << 10)))
+                (
+                    1 + (b1 | ((b2 & 0x3F) << 8)),
+                    1 + ((b2 >> 6) | (b3 << 2) | ((b4 & 0x0F) << 10)),
+                )
             }
-            b"VP8X" => (1 + le24(b, 24).ok_or_else(bad)?, 1 + le24(b, 27).ok_or_else(bad)?),
+            b"VP8X" => (
+                1 + le24(b, 24).ok_or_else(bad)?,
+                1 + le24(b, 27).ok_or_else(bad)?,
+            ),
             _ => return Err(bad()),
         };
-        return Ok(ImageInfo { content_type: "image/webp", ext: "webp", width: w, height: h });
+        return Ok(ImageInfo {
+            content_type: "image/webp",
+            ext: "webp",
+            width: w,
+            height: h,
+        });
     }
     Err(bad())
 }
@@ -193,7 +241,9 @@ pub fn strip_jpeg_metadata(b: &[u8]) -> Vec<u8> {
         if marker == 0xDA {
             break;
         }
-        let Some(len) = be16(b, i + 2).map(|l| l as usize) else { break };
+        let Some(len) = be16(b, i + 2).map(|l| l as usize) else {
+            break;
+        };
         let end = (i + 2 + len).min(b.len());
         if !matches!(marker, 0xE1 | 0xED) {
             out.extend_from_slice(&b[i..end]);
@@ -256,8 +306,15 @@ pub fn short_id(project_slug: &str, n: i64) -> String {
 }
 
 fn valid_email(e: &str) -> bool {
-    let Some((local, domain)) = e.split_once('@') else { return false };
-    !local.is_empty() && domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.') && e.len() <= 254 && !e.contains(char::is_whitespace)
+    let Some((local, domain)) = e.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && e.len() <= 254
+        && !e.contains(char::is_whitespace)
 }
 
 fn llm_enabled(state: &AppState) -> bool {
@@ -265,25 +322,46 @@ fn llm_enabled(state: &AppState) -> bool {
 }
 
 /// Validate, store and (for crash prompts) link one feedback item with its attachments.
-pub async fn ingest(state: &AppState, project: &ProjectInfo, ctx: &RequestCtx, item: FeedbackItem, uploads: Vec<Upload>) -> Result<Value, Reject> {
+pub async fn ingest(
+    state: &AppState,
+    project: &ProjectInfo,
+    ctx: &RequestCtx,
+    item: FeedbackItem,
+    uploads: Vec<Upload>,
+) -> Result<Value, Reject> {
     let message = item.message.as_deref().unwrap_or("").trim().to_string();
     if message.is_empty() {
         return Err(Reject::Bad("feedback needs a non-empty `message`".into()));
     }
     if message.chars().count() > MAX_MESSAGE_CHARS {
-        return Err(Reject::Bad(format!("`message` is longer than {MAX_MESSAGE_CHARS} characters")));
+        return Err(Reject::Bad(format!(
+            "`message` is longer than {MAX_MESSAGE_CHARS} characters"
+        )));
     }
     if uploads.len() > MAX_ATTACHMENTS {
-        return Err(Reject::Bad(format!("at most {MAX_ATTACHMENTS} attachments per feedback")));
+        return Err(Reject::Bad(format!(
+            "at most {MAX_ATTACHMENTS} attachments per feedback"
+        )));
     }
     let mut images = Vec::new();
     for u in &uploads {
         if u.bytes.len() > MAX_ATTACHMENT_BYTES {
-            return Err(Reject::Bad(format!("attachment `{}` is larger than 5 MB", u.name)));
+            return Err(Reject::Bad(format!(
+                "attachment `{}` is larger than 5 MB",
+                u.name
+            )));
         }
-        let info = inspect_image(&u.bytes).map_err(|e| Reject::Bad(format!("attachment `{}`: {e}", u.name)))?;
-        if info.width == 0 || info.height == 0 || info.width > MAX_IMAGE_SIDE || info.height > MAX_IMAGE_SIDE {
-            return Err(Reject::Bad(format!("attachment `{}` is {}x{} px; the maximum is {MAX_IMAGE_SIDE} px a side", u.name, info.width, info.height)));
+        let info = inspect_image(&u.bytes)
+            .map_err(|e| Reject::Bad(format!("attachment `{}`: {e}", u.name)))?;
+        if info.width == 0
+            || info.height == 0
+            || info.width > MAX_IMAGE_SIDE
+            || info.height > MAX_IMAGE_SIDE
+        {
+            return Err(Reject::Bad(format!(
+                "attachment `{}` is {}x{} px; the maximum is {MAX_IMAGE_SIDE} px a side",
+                u.name, info.width, info.height
+            )));
         }
         images.push(info);
     }
@@ -291,15 +369,25 @@ pub async fn ingest(state: &AppState, project: &ProjectInfo, ctx: &RequestCtx, i
     if !email.is_empty() && !valid_email(&email) {
         return Err(Reject::Bad("`email` is not a valid email address".into()));
     }
-    let client_id = item.id.as_deref().map(str::trim).filter(|i| !i.is_empty()).map(|i| truncate(i, 64)).unwrap_or_else(new_id);
-    let existing = sqlx::query("SELECT f.id, f.short_id FROM feedback f WHERE f.project_id = $1 AND f.client_id = $2")
-        .bind(&project.id)
-        .bind(&client_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| Reject::Unavailable(e.to_string()))?;
+    let client_id = item
+        .id
+        .as_deref()
+        .map(str::trim)
+        .filter(|i| !i.is_empty())
+        .map(|i| truncate(i, 64))
+        .unwrap_or_else(new_id);
+    let existing = sqlx::query(
+        "SELECT f.id, f.short_id FROM feedback f WHERE f.project_id = $1 AND f.client_id = $2",
+    )
+    .bind(&project.id)
+    .bind(&client_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| Reject::Unavailable(e.to_string()))?;
     if let Some(r) = existing {
-        return Ok(json!({"id": r.s("id"), "short_id": short_id(&project.slug, r.i("short_id")), "duplicate": true}));
+        return Ok(
+            json!({"id": r.s("id"), "short_id": short_id(&project.slug, r.i("short_id")), "duplicate": true}),
+        );
     }
     let session_id = truncate(item.session_id.as_deref().unwrap_or(""), 128);
     check_rate(state, project, ctx, &session_id)?;
@@ -315,30 +403,68 @@ pub async fn ingest(state: &AppState, project: &ProjectInfo, ctx: &RequestCtx, i
         };
         let tags: BTreeMap<String, String> = tags
             .as_object()
-            .map(|o| o.iter().take(32).map(|(k, v)| (truncate(k, 64), truncate(&crate::models::value_to_string(v), 256))).collect())
+            .map(|o| {
+                o.iter()
+                    .take(32)
+                    .map(|(k, v)| {
+                        (
+                            truncate(k, 64),
+                            truncate(&crate::models::value_to_string(v), 256),
+                        )
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
         (msg, tags)
     };
-    let source = item.source.as_deref().filter(|s| SOURCES.contains(s)).unwrap_or(if uploads.is_empty() { "api" } else { "widget" }).to_string();
+    let source = item
+        .source
+        .as_deref()
+        .filter(|s| SOURCES.contains(s))
+        .unwrap_or(if uploads.is_empty() { "api" } else { "widget" })
+        .to_string();
     let device = item.device.clone().unwrap_or_default();
     let browser = if ctx.user_agent.is_empty() {
         String::new()
     } else {
-        woothee::parser::Parser::new().parse(&ctx.user_agent).map(|r| r.name.to_string()).filter(|n| n != "UNKNOWN").unwrap_or_default()
+        woothee::parser::Parser::new()
+            .parse(&ctx.user_agent)
+            .map(|r| r.name.to_string())
+            .filter(|n| n != "UNKNOWN")
+            .unwrap_or_default()
     };
     let device_json = json!({
         "model": device.model, "os_name": device.os_name, "os_version": device.os_version,
         "app_version": device.app_version, "browser": if browser.is_empty() { Value::Null } else { Value::String(browser) },
     });
-    let url = item.url.clone().filter(|u| !u.is_empty()).or_else(|| item.screen.clone()).unwrap_or_default();
+    let url = item
+        .url
+        .clone()
+        .filter(|u| !u.is_empty())
+        .or_else(|| item.screen.clone())
+        .unwrap_or_default();
     let url = match project.scrub_enabled {
         true => crate::scrub::Scrubber::new(&project.scrub_fields).scrub_text(&url),
         false => url,
     };
-    let event_id = item.event_id.as_deref().filter(|e| uuid::Uuid::parse_str(e).is_ok()).map(|e| e.to_lowercase()).unwrap_or_default();
-    let mut issue_id = if event_id.is_empty() { None } else { issue_for_event(state, &project.id, &event_id).await };
+    let event_id = item
+        .event_id
+        .as_deref()
+        .filter(|e| uuid::Uuid::parse_str(e).is_ok())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+    let mut issue_id = if event_id.is_empty() {
+        None
+    } else {
+        issue_for_event(state, &project.id, &event_id).await
+    };
     if issue_id.is_none() {
-        if let Some(i) = item.issue.as_deref().map(str::trim).filter(|i| !i.is_empty()) {
+        if let Some(i) = item
+            .issue
+            .as_deref()
+            .map(str::trim)
+            .filter(|i| !i.is_empty())
+        {
             if let Ok(Some(issue)) = crate::query::get_issue_row(state, i).await {
                 if issue["project_id"].as_str() == Some(project.id.as_str()) {
                     issue_id = issue["id"].as_str().map(String::from);
@@ -347,20 +473,40 @@ pub async fn ingest(state: &AppState, project: &ProjectInfo, ctx: &RequestCtx, i
         }
     }
     let now = now_ms();
-    let created = item.timestamp.as_ref().and_then(crate::util::parse_timestamp).filter(|t| *t <= now + 60_000).unwrap_or(now);
-    let user_id = item.user_id.clone().or_else(|| item.user.as_ref().and_then(|u| u.id.clone())).unwrap_or_default();
-    let anon_id = item.anon_id.as_deref().filter(|a| !a.is_empty()).map(|a| crate::ingest::hash_install_id(&project.id, a)).unwrap_or_default();
+    let created = item
+        .timestamp
+        .as_ref()
+        .and_then(crate::util::parse_timestamp)
+        .filter(|t| *t <= now + 60_000)
+        .unwrap_or(now);
+    let user_id = item
+        .user_id
+        .clone()
+        .or_else(|| item.user.as_ref().and_then(|u| u.id.clone()))
+        .unwrap_or_default();
+    let anon_id = item
+        .anon_id
+        .as_deref()
+        .filter(|a| !a.is_empty())
+        .map(|a| crate::ingest::hash_install_id(&project.id, a))
+        .unwrap_or_default();
     let id = new_id();
-    let sdk = if ctx.sdk.name.is_empty() { String::new() } else { format!("{}/{}", ctx.sdk.name, ctx.sdk.version) };
+    let sdk = if ctx.sdk.name.is_empty() {
+        String::new()
+    } else {
+        format!("{}/{}", ctx.sdk.name, ctx.sdk.version)
+    };
 
     let mut short = 0;
     for attempt in 0..5 {
-        short = sqlx::query("SELECT COALESCE(MAX(short_id), 0) AS m FROM feedback WHERE project_id = $1")
-            .bind(&project.id)
-            .fetch_one(&state.db)
-            .await
-            .map_err(|e| Reject::Unavailable(e.to_string()))?
-            .i("m")
+        short = sqlx::query(
+            "SELECT COALESCE(MAX(short_id), 0) AS m FROM feedback WHERE project_id = $1",
+        )
+        .bind(&project.id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| Reject::Unavailable(e.to_string()))?
+        .i("m")
             + 1;
         let res = sqlx::query(
             "INSERT INTO feedback (id, project_id, client_id, short_id, message, contact_email, contact_name, user_id, anon_id, session_id, release, environment, \
@@ -399,8 +545,17 @@ pub async fn ingest(state: &AppState, project: &ProjectInfo, ctx: &RequestCtx, i
             Ok(_) => break,
             Err(e) if attempt < 4 && e.to_string().to_lowercase().contains("unique") => {
                 // Same client id from a concurrent retry, or a short id race.
-                if let Ok(Some(r)) = sqlx::query("SELECT id, short_id FROM feedback WHERE project_id = $1 AND client_id = $2").bind(&project.id).bind(&client_id).fetch_optional(&state.db).await {
-                    return Ok(json!({"id": r.s("id"), "short_id": short_id(&project.slug, r.i("short_id")), "duplicate": true}));
+                if let Ok(Some(r)) = sqlx::query(
+                    "SELECT id, short_id FROM feedback WHERE project_id = $1 AND client_id = $2",
+                )
+                .bind(&project.id)
+                .bind(&client_id)
+                .fetch_optional(&state.db)
+                .await
+                {
+                    return Ok(
+                        json!({"id": r.s("id"), "short_id": short_id(&project.slug, r.i("short_id")), "duplicate": true}),
+                    );
                 }
                 continue;
             }
@@ -409,22 +564,47 @@ pub async fn ingest(state: &AppState, project: &ProjectInfo, ctx: &RequestCtx, i
     }
 
     if !uploads.is_empty() {
-        let dir = format!("{}/feedback/{}/{}", state.config.artifact_dir(), project.id, id);
+        let dir = format!(
+            "{}/feedback/{}/{}",
+            state.config.artifact_dir(),
+            project.id,
+            id
+        );
         if let Err(e) = store_attachments(state, project, &id, &dir, uploads, &images, now).await {
             tracing::error!("storing feedback attachments failed: {e:#}");
-            let _ = sqlx::query("DELETE FROM feedback_attachments WHERE feedback_id = $1").bind(&id).execute(&state.db).await;
-            let _ = sqlx::query("DELETE FROM feedback WHERE id = $1").bind(&id).execute(&state.db).await;
+            let _ = sqlx::query("DELETE FROM feedback_attachments WHERE feedback_id = $1")
+                .bind(&id)
+                .execute(&state.db)
+                .await;
+            let _ = sqlx::query("DELETE FROM feedback WHERE id = $1")
+                .bind(&id)
+                .execute(&state.db)
+                .await;
             let _ = tokio::fs::remove_dir_all(&dir).await;
-            return Err(Reject::Unavailable("could not store the attachments, retry later".into()));
+            return Err(Reject::Unavailable(
+                "could not store the attachments, retry later".into(),
+            ));
         }
     }
     Ok(json!({"id": id, "short_id": short_id(&project.slug, short), "issue_id": issue_id}))
 }
 
-async fn store_attachments(state: &AppState, project: &ProjectInfo, feedback_id: &str, dir: &str, uploads: Vec<Upload>, images: &[ImageInfo], now: i64) -> anyhow::Result<()> {
+async fn store_attachments(
+    state: &AppState,
+    project: &ProjectInfo,
+    feedback_id: &str,
+    dir: &str,
+    uploads: Vec<Upload>,
+    images: &[ImageInfo],
+    now: i64,
+) -> anyhow::Result<()> {
     tokio::fs::create_dir_all(dir).await?;
     for (pos, (u, info)) in uploads.into_iter().zip(images).enumerate() {
-        let bytes = if info.ext == "jpg" { strip_jpeg_metadata(&u.bytes) } else { u.bytes };
+        let bytes = if info.ext == "jpg" {
+            strip_jpeg_metadata(&u.bytes)
+        } else {
+            u.bytes
+        };
         let path = format!("{dir}/{pos}.{}", info.ext);
         tokio::fs::write(&path, &bytes).await?;
         crate::s3::store_artifact(state, &path).await?;
@@ -460,7 +640,10 @@ async fn issue_for_event(state: &AppState, project_id: &str, event_id: &str) -> 
         )
         .await
         .ok()?;
-    rows.first().and_then(|r| r["issue_id"].as_str()).filter(|i| !i.is_empty()).map(String::from)
+    rows.first()
+        .and_then(|r| r["issue_id"].as_str())
+        .filter(|i| !i.is_empty())
+        .map(String::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -523,8 +706,16 @@ fn row_json(state: &AppState, r: &sqlx::any::AnyRow, include_contact: bool) -> V
     let name = r.s("contact_name");
     v["has_contact"] = json!(!email.is_empty());
     if include_contact {
-        v["contact_email"] = if email.is_empty() { Value::Null } else { Value::String(email) };
-        v["contact_name"] = if name.is_empty() { Value::Null } else { Value::String(name) };
+        v["contact_email"] = if email.is_empty() {
+            Value::Null
+        } else {
+            Value::String(email)
+        };
+        v["contact_name"] = if name.is_empty() {
+            Value::Null
+        } else {
+            Value::String(name)
+        };
     }
     v
 }
@@ -595,7 +786,12 @@ pub struct ListParams {
 }
 
 fn csv(s: &Option<String>) -> Vec<String> {
-    s.as_deref().unwrap_or("").split(',').map(|x| x.trim().to_lowercase()).filter(|x| !x.is_empty()).collect()
+    s.as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(|x| x.trim().to_lowercase())
+        .filter(|x| !x.is_empty())
+        .collect()
 }
 
 pub async fn list(state: &AppState, p: &Principal, q: ListParams) -> QResult<Value> {
@@ -777,7 +973,12 @@ pub async fn get(state: &AppState, p: &Principal, id: &str) -> QResult<Value> {
 }
 
 /// The bytes of one attachment: (content type, bytes).
-pub async fn attachment(state: &AppState, p: &Principal, id: &str, index: i64) -> QResult<(String, Vec<u8>)> {
+pub async fn attachment(
+    state: &AppState,
+    p: &Principal,
+    id: &str,
+    index: i64,
+) -> QResult<(String, Vec<u8>)> {
     let row = find(state, p, id).await?;
     let a = sqlx::query("SELECT content_type, path FROM feedback_attachments WHERE feedback_id = $1 AND position = $2")
         .bind(row.s("id"))
@@ -817,35 +1018,61 @@ pub async fn update(state: &AppState, p: &Principal, id: &str, u: Update) -> QRe
     let now = now_ms();
     if let Some(s) = &u.status {
         if !STATUSES.contains(&s.as_str()) {
-            return Err(ApiError::bad(format!("unknown status `{s}`: use {}", STATUSES.join(", "))));
+            return Err(ApiError::bad(format!(
+                "unknown status `{s}`: use {}",
+                STATUSES.join(", ")
+            )));
         }
-        sqlx::query("UPDATE feedback SET status = $1, updated_at = $2 WHERE id = $3").bind(s).bind(now).bind(&fid).execute(&state.db).await?;
+        sqlx::query("UPDATE feedback SET status = $1, updated_at = $2 WHERE id = $3")
+            .bind(s)
+            .bind(now)
+            .bind(&fid)
+            .execute(&state.db)
+            .await?;
     }
     if let Some(a) = &u.assignee {
         let user_id = if a.is_empty() {
             None
         } else {
-            let r = sqlx::query("SELECT id FROM users WHERE email = $1").bind(a.to_lowercase()).fetch_optional(&state.db).await?;
-            Some(r.ok_or_else(|| ApiError::bad(format!("no user with email {a}")))?.s("id"))
+            let r = sqlx::query("SELECT id FROM users WHERE email = $1")
+                .bind(a.to_lowercase())
+                .fetch_optional(&state.db)
+                .await?;
+            Some(
+                r.ok_or_else(|| ApiError::bad(format!("no user with email {a}")))?
+                    .s("id"),
+            )
         };
-        sqlx::query("UPDATE feedback SET assignee_id = $1, updated_at = $2 WHERE id = $3").bind(user_id).bind(now).bind(&fid).execute(&state.db).await?;
+        sqlx::query("UPDATE feedback SET assignee_id = $1, updated_at = $2 WHERE id = $3")
+            .bind(user_id)
+            .bind(now)
+            .bind(&fid)
+            .execute(&state.db)
+            .await?;
     }
     if let Some(s) = &u.sentiment {
         let val = match s.as_str() {
             "" => None,
             x if SENTIMENTS.contains(&x) => Some(x.to_string()),
-            other => return Err(ApiError::bad(format!("unknown sentiment `{other}`: use {}", SENTIMENTS.join(", ")))),
+            other => {
+                return Err(ApiError::bad(format!(
+                    "unknown sentiment `{other}`: use {}",
+                    SENTIMENTS.join(", ")
+                )))
+            }
         };
         sqlx::query("UPDATE feedback SET sentiment = $1, tag_state = 'manual', updated_at = $2 WHERE id = $3").bind(val).bind(now).bind(&fid).execute(&state.db).await?;
     }
     if let Some(t) = &u.topics {
         let topics = clean_topics(t);
-        sqlx::query("UPDATE feedback SET topics = $1, tag_state = 'manual', updated_at = $2 WHERE id = $3")
-            .bind(serde_json::to_string(&topics).unwrap_or_default())
-            .bind(now)
-            .bind(&fid)
-            .execute(&state.db)
-            .await?;
+        sqlx::query(
+            "UPDATE feedback SET topics = $1, tag_state = 'manual', updated_at = $2 WHERE id = $3",
+        )
+        .bind(serde_json::to_string(&topics).unwrap_or_default())
+        .bind(now)
+        .bind(&fid)
+        .execute(&state.db)
+        .await?;
     }
     if let Some(i) = &u.issue {
         let issue_id = if i.is_empty() {
@@ -857,7 +1084,12 @@ pub async fn update(state: &AppState, p: &Principal, id: &str, u: Update) -> QRe
             }
             issue["id"].as_str().map(String::from)
         };
-        sqlx::query("UPDATE feedback SET issue_id = $1, updated_at = $2 WHERE id = $3").bind(issue_id).bind(now).bind(&fid).execute(&state.db).await?;
+        sqlx::query("UPDATE feedback SET issue_id = $1, updated_at = $2 WHERE id = $3")
+            .bind(issue_id)
+            .bind(now)
+            .bind(&fid)
+            .execute(&state.db)
+            .await?;
     }
     crate::auth::audit(
         state,
@@ -873,7 +1105,12 @@ pub async fn update(state: &AppState, p: &Principal, id: &str, u: Update) -> QRe
 pub fn clean_topics(t: &[String]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for x in t {
-        let x = truncate(x.trim().to_lowercase().trim_matches(|c: char| c == '#' || c == '"'), 40);
+        let x = truncate(
+            x.trim()
+                .to_lowercase()
+                .trim_matches(|c: char| c == '#' || c == '"'),
+            40,
+        );
         if !x.is_empty() && !out.contains(&x) {
             out.push(x);
         }
@@ -1074,7 +1311,13 @@ pub async fn for_timeline(
 }
 
 /// Feedback counts and negative rate per value of `column` (release) or per variant of a flag.
-pub async fn sentiment_by(state: &AppState, project_id: &str, release: Option<&str>, flag: Option<&str>, since: i64) -> Value {
+pub async fn sentiment_by(
+    state: &AppState,
+    project_id: &str,
+    release: Option<&str>,
+    flag: Option<&str>,
+    since: i64,
+) -> Value {
     let rows = sqlx::query("SELECT sentiment, release, flags FROM feedback WHERE project_id = $1 AND created_at >= $2 LIMIT 20000")
         .bind(project_id)
         .bind(since)
@@ -1084,7 +1327,8 @@ pub async fn sentiment_by(state: &AppState, project_id: &str, release: Option<&s
     let mut m: BTreeMap<String, (i64, i64, i64)> = BTreeMap::new();
     for r in rows {
         let key = if let Some(f) = flag {
-            let flags: BTreeMap<String, String> = serde_json::from_str(&r.s("flags")).unwrap_or_default();
+            let flags: BTreeMap<String, String> =
+                serde_json::from_str(&r.s("flags")).unwrap_or_default();
             flags.get(f).cloned().unwrap_or_else(|| "(not set)".into())
         } else {
             let rel = r.s("release");
@@ -1159,7 +1403,12 @@ async fn delete_where(state: &AppState, cond: &str, binds: &[Bind]) -> anyhow::R
 
 pub async fn enforce_retention(state: &AppState, project: &ProjectInfo) -> anyhow::Result<u64> {
     let cutoff = now_ms() - project.retention_days.max(1) * 86_400_000;
-    delete_where(state, "project_id = $1 AND created_at < $2", &[Bind::S(project.id.clone()), Bind::I(cutoff)]).await
+    delete_where(
+        state,
+        "project_id = $1 AND created_at < $2",
+        &[Bind::S(project.id.clone()), Bind::I(cutoff)],
+    )
+    .await
 }
 
 /// Delete a user's feedback: by user id, and by contact email when `user` is an address.
@@ -1167,7 +1416,11 @@ pub async fn erase_user(state: &AppState, project_id: &str, user: &str) -> anyho
     delete_where(
         state,
         "project_id = $1 AND (user_id = $2 OR (contact_email != '' AND contact_email = $3))",
-        &[Bind::S(project_id.into()), Bind::S(user.into()), Bind::S(user.trim().to_lowercase())],
+        &[
+            Bind::S(project_id.into()),
+            Bind::S(user.into()),
+            Bind::S(user.trim().to_lowercase()),
+        ],
     )
     .await
 }
@@ -1209,7 +1462,11 @@ async fn link_pending(state: &AppState) -> anyhow::Result<()> {
         .await?;
     for r in rows {
         if let Some(issue) = issue_for_event(state, &r.s("project_id"), &r.s("event_id")).await {
-            sqlx::query("UPDATE feedback SET issue_id = $1 WHERE id = $2 AND issue_id IS NULL").bind(issue).bind(r.s("id")).execute(&state.db).await?;
+            sqlx::query("UPDATE feedback SET issue_id = $1 WHERE id = $2 AND issue_id IS NULL")
+                .bind(issue)
+                .bind(r.s("id"))
+                .execute(&state.db)
+                .await?;
         }
     }
     Ok(())
@@ -1221,7 +1478,13 @@ Reply with only a JSON object, no prose and no code fences: {\"sentiment\": \"po
 \"summary\": \"one sentence of at most 20 words, in English\"}. Bug reports and complaints are negative; feature requests without complaint are neutral. \
 Reuse a label from existing_topics whenever one fits. Never put personal data such as names, email addresses or phone numbers in topics or summary.";
 
-pub fn tag_request(model: &str, message: &str, platform: &str, location: &str, existing: &[String]) -> Value {
+pub fn tag_request(
+    model: &str,
+    message: &str,
+    platform: &str,
+    location: &str,
+    existing: &[String],
+) -> Value {
     json!({
         "model": model,
         "max_tokens": 300,
@@ -1290,7 +1553,12 @@ async fn existing_topics(state: &AppState, project_id: &str) -> Vec<String> {
 }
 
 async fn tag_pending(state: &AppState) -> anyhow::Result<()> {
-    let (Some(base), Some(model)) = (state.config.llm_base_url.clone(), state.config.llm_model.clone()) else { return Ok(()) };
+    let (Some(base), Some(model)) = (
+        state.config.llm_base_url.clone(),
+        state.config.llm_model.clone(),
+    ) else {
+        return Ok(());
+    };
     let now = now_ms();
     let rows = sqlx::query("SELECT id, project_id, message, platform, url, tag_attempts FROM feedback WHERE tag_state = 'pending' AND (tag_next_at IS NULL OR tag_next_at <= $1) ORDER BY created_at LIMIT 10")
         .bind(now)
@@ -1298,9 +1566,19 @@ async fn tag_pending(state: &AppState) -> anyhow::Result<()> {
         .await?;
     for r in rows {
         let existing = existing_topics(state, &r.s("project_id")).await;
-        let body = tag_request(&model, &r.s("message"), &r.s("platform"), &location_of(&r.s("url")), &existing);
+        let body = tag_request(
+            &model,
+            &r.s("message"),
+            &r.s("platform"),
+            &location_of(&r.s("url")),
+            &existing,
+        );
         let result: anyhow::Result<(String, Vec<String>, String)> = async {
-            let mut req = state.http.post(format!("{base}/chat/completions")).json(&body).timeout(Duration::from_secs(60));
+            let mut req = state
+                .http
+                .post(format!("{base}/chat/completions"))
+                .json(&body)
+                .timeout(Duration::from_secs(60));
             if let Some(key) = &state.config.llm_api_key {
                 req = req.bearer_auth(key);
             }
@@ -1308,7 +1586,10 @@ async fn tag_pending(state: &AppState) -> anyhow::Result<()> {
             let status = resp.status();
             let v: Value = resp.json().await?;
             if !status.is_success() {
-                anyhow::bail!("LLM API returned {status}: {}", v["error"]["message"].as_str().unwrap_or(""));
+                anyhow::bail!(
+                    "LLM API returned {status}: {}",
+                    v["error"]["message"].as_str().unwrap_or("")
+                );
             }
             parse_tags(&crate::anomalies::narrative_text(&v)?)
         }
@@ -1325,8 +1606,15 @@ async fn tag_pending(state: &AppState) -> anyhow::Result<()> {
             }
             Err(e) => {
                 let attempts = r.i("tag_attempts") + 1;
-                tracing::warn!("tagging feedback {} failed (attempt {attempts}): {e:#}", r.s("id"));
-                let (st, next) = if attempts >= 3 { ("failed", None) } else { ("pending", Some(now + 30_000 * (1 << attempts))) };
+                tracing::warn!(
+                    "tagging feedback {} failed (attempt {attempts}): {e:#}",
+                    r.s("id")
+                );
+                let (st, next) = if attempts >= 3 {
+                    ("failed", None)
+                } else {
+                    ("pending", Some(now + 30_000 * (1 << attempts)))
+                };
                 sqlx::query("UPDATE feedback SET tag_attempts = $1, tag_state = $2, tag_next_at = $3 WHERE id = $4")
                     .bind(attempts)
                     .bind(st)
@@ -1394,7 +1682,9 @@ pub async fn digest_block(state: &AppState, project: &ProjectInfo, from: i64, to
     let mut sentiment: BTreeMap<String, i64> = BTreeMap::new();
     let mut topics: BTreeMap<String, i64> = BTreeMap::new();
     for r in &cur {
-        *sentiment.entry(r.os("sentiment").unwrap_or_else(|| "untagged".into())).or_default() += 1;
+        *sentiment
+            .entry(r.os("sentiment").unwrap_or_else(|| "untagged".into()))
+            .or_default() += 1;
         for t in topics_of(&r.s("topics")) {
             *topics.entry(t).or_default() += 1;
         }

@@ -8,6 +8,7 @@
 !crates/
 !docs/
 !sdks/js/dist/
+!geoip/
 
 # Never ship build output or local junk, even inside allowed directories.
 **/target

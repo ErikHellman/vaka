@@ -55,7 +55,9 @@ pub struct CohortDef {
 fn parse_secs(s: &str) -> QResult<i64> {
     let s = s.trim();
     let (num, unit) = s.split_at(s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len()));
-    let n: i64 = num.parse().map_err(|_| ApiError::bad(format!("bad duration `{s}`; use e.g. 7d, 24h, 30d")))?;
+    let n: i64 = num
+        .parse()
+        .map_err(|_| ApiError::bad(format!("bad duration `{s}`; use e.g. 7d, 24h, 30d")))?;
     let secs = match unit {
         "h" => n * 3600,
         "d" | "" => n * 86_400,
@@ -72,14 +74,22 @@ impl CohortDef {
     /// Normalize step shorthands and validate.
     pub fn normalize(mut self) -> QResult<CohortDef> {
         if self.criteria.is_empty() && self.properties.is_empty() {
-            return Err(ApiError::bad("a cohort needs at least one criterion or property filter"));
+            return Err(ApiError::bad(
+                "a cohort needs at least one criterion or property filter",
+            ));
         }
         if self.criteria.len() > MAX_CRITERIA || self.properties.len() > MAX_PROPERTIES {
-            return Err(ApiError::bad(format!("at most {MAX_CRITERIA} criteria and {MAX_PROPERTIES} property filters")));
+            return Err(ApiError::bad(format!(
+                "at most {MAX_CRITERIA} criteria and {MAX_PROPERTIES} property filters"
+            )));
         }
         match self.identity.as_deref().unwrap_or("auto") {
             "user" | "visitor" | "auto" => {}
-            other => return Err(ApiError::bad(format!("identity must be user, visitor or auto, not `{other}`"))),
+            other => {
+                return Err(ApiError::bad(format!(
+                    "identity must be user, visitor or auto, not `{other}`"
+                )))
+            }
         }
         parse_secs(self.within.as_deref().unwrap_or("30d"))?;
         for c in &mut self.criteria {
@@ -125,14 +135,16 @@ impl CohortDef {
 /// Parameter names for cohort SQL. Separate pools so a cohort filter and a cohort breakdown can
 /// appear in the same query.
 pub const POOL_FILTER: &[&str] = &[
-    "ck0", "ck1", "ck2", "ck3", "ck4", "ck5", "ck6", "ck7", "ck8", "ck9", "ck10", "ck11", "ck12", "ck13", "ck14", "ck15", "ck16", "ck17", "ck18", "ck19",
-    "ck20", "ck21", "ck22", "ck23", "ck24", "ck25", "ck26", "ck27", "ck28", "ck29", "ck30", "ck31", "ck32", "ck33", "ck34", "ck35", "ck36", "ck37", "ck38",
-    "ck39", "ck40", "ck41", "ck42", "ck43", "ck44", "ck45", "ck46", "ck47",
+    "ck0", "ck1", "ck2", "ck3", "ck4", "ck5", "ck6", "ck7", "ck8", "ck9", "ck10", "ck11", "ck12",
+    "ck13", "ck14", "ck15", "ck16", "ck17", "ck18", "ck19", "ck20", "ck21", "ck22", "ck23", "ck24",
+    "ck25", "ck26", "ck27", "ck28", "ck29", "ck30", "ck31", "ck32", "ck33", "ck34", "ck35", "ck36",
+    "ck37", "ck38", "ck39", "ck40", "ck41", "ck42", "ck43", "ck44", "ck45", "ck46", "ck47",
 ];
 pub const POOL_BREAKDOWN: &[&str] = &[
-    "cb0", "cb1", "cb2", "cb3", "cb4", "cb5", "cb6", "cb7", "cb8", "cb9", "cb10", "cb11", "cb12", "cb13", "cb14", "cb15", "cb16", "cb17", "cb18", "cb19",
-    "cb20", "cb21", "cb22", "cb23", "cb24", "cb25", "cb26", "cb27", "cb28", "cb29", "cb30", "cb31", "cb32", "cb33", "cb34", "cb35", "cb36", "cb37", "cb38",
-    "cb39", "cb40", "cb41", "cb42", "cb43", "cb44", "cb45", "cb46", "cb47",
+    "cb0", "cb1", "cb2", "cb3", "cb4", "cb5", "cb6", "cb7", "cb8", "cb9", "cb10", "cb11", "cb12",
+    "cb13", "cb14", "cb15", "cb16", "cb17", "cb18", "cb19", "cb20", "cb21", "cb22", "cb23", "cb24",
+    "cb25", "cb26", "cb27", "cb28", "cb29", "cb30", "cb31", "cb32", "cb33", "cb34", "cb35", "cb36",
+    "cb37", "cb38", "cb39", "cb40", "cb41", "cb42", "cb43", "cb44", "cb45", "cb46", "cb47",
 ];
 
 pub struct CohortSql {
@@ -146,26 +158,45 @@ pub struct CohortSql {
 impl CohortSql {
     /// SQL condition: the event's person is (or with `negate` is not) in the cohort.
     pub fn condition(&self, negate: bool) -> String {
-        format!("{} {}IN (SELECT actor FROM ({}))", self.actor, if negate { "NOT " } else { "" }, self.members)
+        format!(
+            "{} {}IN (SELECT actor FROM ({}))",
+            self.actor,
+            if negate { "NOT " } else { "" },
+            self.members
+        )
     }
 }
 
 /// Build the membership query for a definition.
-pub fn cohort_sql(project_id: &str, def: &CohortDef, pool: &'static [&'static str]) -> QResult<CohortSql> {
-    let mut b = Binder { names: pool.iter(), params: Vec::new() };
+pub fn cohort_sql(
+    project_id: &str,
+    def: &CohortDef,
+    pool: &'static [&'static str],
+) -> QResult<CohortSql> {
+    let mut b = Binder {
+        names: pool.iter(),
+        params: Vec::new(),
+    };
     let (actor, actor_ok) = def.actor();
     let default_within = parse_secs(def.within.as_deref().unwrap_or("30d"))?;
     let mut max_within = default_within;
     let mut having = Vec::new();
     for c in &def.criteria {
-        let within = c.within.as_deref().map(parse_secs).transpose()?.unwrap_or(default_within);
+        let within = c
+            .within
+            .as_deref()
+            .map(parse_secs)
+            .transpose()?
+            .unwrap_or(default_within);
         max_within = max_within.max(within);
         let mut conds = vec![format!("name = {{{}:String}}", b.bind(c.event.clone())?)];
         for (d, v) in &c.filters {
             conds.push(b.filter(d, v)?);
         }
         let w = b.bind(within.to_string())?;
-        conds.push(format!("timestamp >= now64(3) - toIntervalSecond({{{w}:UInt32}})"));
+        conds.push(format!(
+            "timestamp >= now64(3) - toIntervalSecond({{{w}:UInt32}})"
+        ));
         let cnt = format!("countIf({})", conds.join(" AND "));
         if c.negate {
             having.push(format!("{cnt} = 0"));
@@ -189,7 +220,11 @@ pub fn cohort_sql(project_id: &str, def: &CohortDef, pool: &'static [&'static st
          GROUP BY actor HAVING {}",
         having.join(" AND ")
     );
-    Ok(CohortSql { members, actor, params: b.params })
+    Ok(CohortSql {
+        members,
+        actor,
+        params: b.params,
+    })
 }
 
 struct Binder {
@@ -199,7 +234,10 @@ struct Binder {
 
 impl Binder {
     fn name(&mut self) -> QResult<&'static str> {
-        self.names.next().copied().ok_or_else(|| ApiError::bad("cohort definition is too large"))
+        self.names
+            .next()
+            .copied()
+            .ok_or_else(|| ApiError::bad("cohort definition is too large"))
     }
     fn bind(&mut self, v: String) -> QResult<&'static str> {
         let n = self.name()?;
@@ -215,18 +253,26 @@ impl Binder {
 }
 
 async fn load_def(state: &AppState, project_id: &str, name: &str) -> QResult<(String, CohortDef)> {
-    let row = sqlx::query("SELECT id, name, definition FROM cohorts WHERE project_id = $1 AND (name = $2 OR id = $2)")
-        .bind(project_id)
-        .bind(name)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| ApiError::bad(format!("unknown cohort `{name}` (see list_cohorts)")))?;
-    let def: CohortDef = serde_json::from_str(&row.s("definition")).map_err(|e| ApiError::bad(format!("stored cohort is invalid: {e}")))?;
+    let row = sqlx::query(
+        "SELECT id, name, definition FROM cohorts WHERE project_id = $1 AND (name = $2 OR id = $2)",
+    )
+    .bind(project_id)
+    .bind(name)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| ApiError::bad(format!("unknown cohort `{name}` (see list_cohorts)")))?;
+    let def: CohortDef = serde_json::from_str(&row.s("definition"))
+        .map_err(|e| ApiError::bad(format!("stored cohort is invalid: {e}")))?;
     Ok((row.s("name"), def))
 }
 
 /// Resolve a saved cohort by name or id into SQL.
-pub async fn resolve(state: &AppState, project_id: &str, name: &str, pool: &'static [&'static str]) -> QResult<CohortSql> {
+pub async fn resolve(
+    state: &AppState,
+    project_id: &str,
+    name: &str,
+    pool: &'static [&'static str],
+) -> QResult<CohortSql> {
     let (_, def) = load_def(state, project_id, name).await?;
     cohort_sql(project_id, &def, pool)
 }
@@ -245,18 +291,31 @@ pub struct CohortIn {
 }
 
 async fn size(state: &AppState, sql: &CohortSql) -> QResult<i64> {
-    let rows = state.ch.query(&format!("SELECT count() AS n FROM ({})", sql.members), &sql.params).await?;
+    let rows = state
+        .ch
+        .query(
+            &format!("SELECT count() AS n FROM ({})", sql.members),
+            &sql.params,
+        )
+        .await?;
     Ok(rows.first().and_then(|r| r["n"].as_i64()).unwrap_or(0))
 }
 
-pub async fn create_cohort(state: &AppState, p: &Principal, project: &str, c: CohortIn) -> QResult<Value> {
+pub async fn create_cohort(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    c: CohortIn,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     if !p.can_write(&proj.id) {
         return Err(ApiError::forbidden());
     }
     let name = c.name.trim().to_string();
     if name.is_empty() || name.len() > 100 || name.starts_with('!') {
-        return Err(ApiError::bad("cohort name must be 1 to 100 characters and not start with `!`"));
+        return Err(ApiError::bad(
+            "cohort name must be 1 to 100 characters and not start with `!`",
+        ));
     }
     let def = c.definition.normalize()?;
     let sql = cohort_sql(&proj.id, &def, POOL_FILTER)?;
@@ -276,13 +335,22 @@ pub async fn create_cohort(state: &AppState, p: &Principal, project: &str, c: Co
     .execute(&state.db)
     .await?;
     if res.rows_affected() == 0 {
-        return Err(ApiError::bad(format!("a cohort named `{name}` already exists (delete it first to redefine)")));
+        return Err(ApiError::bad(format!(
+            "a cohort named `{name}` already exists (delete it first to redefine)"
+        )));
     }
-    Ok(json!({"id": id, "project": proj.slug, "name": name, "definition": def, "size": n,
-        "hint": format!("Use {{\"cohort\": \"{name}\"}} (or \"!{name}\" for everyone else) in the filters of any analytics query, or breakdown `cohort:{name}` in funnels.")}))
+    Ok(
+        json!({"id": id, "project": proj.slug, "name": name, "definition": def, "size": n,
+        "hint": format!("Use {{\"cohort\": \"{name}\"}} (or \"!{name}\" for everyone else) in the filters of any analytics query, or breakdown `cohort:{name}` in funnels.")}),
+    )
 }
 
-pub async fn list_cohorts(state: &AppState, p: &Principal, project: &str, with_sizes: bool) -> QResult<Value> {
+pub async fn list_cohorts(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    with_sizes: bool,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     let rows = sqlx::query("SELECT id, name, description, definition, created_at, created_by FROM cohorts WHERE project_id = $1 ORDER BY name LIMIT 200")
         .bind(&proj.id)
@@ -303,7 +371,13 @@ pub async fn list_cohorts(state: &AppState, p: &Principal, project: &str, with_s
     Ok(json!({"project": proj.slug, "cohorts": out}))
 }
 
-pub async fn get_cohort(state: &AppState, p: &Principal, project: &str, cohort: &str, limit: Option<i64>) -> QResult<Value> {
+pub async fn get_cohort(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    cohort: &str,
+    limit: Option<i64>,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     let (name, def) = load_def(state, &proj.id, cohort).await?;
     let sql = cohort_sql(&proj.id, &def, POOL_FILTER)?;
@@ -322,12 +396,21 @@ pub async fn get_cohort(state: &AppState, p: &Principal, project: &str, cohort: 
     }))
 }
 
-pub async fn delete_cohort(state: &AppState, p: &Principal, project: &str, cohort: &str) -> QResult<Value> {
+pub async fn delete_cohort(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    cohort: &str,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     if !p.can_write(&proj.id) {
         return Err(ApiError::forbidden());
     }
-    let res = sqlx::query("DELETE FROM cohorts WHERE project_id = $1 AND (id = $2 OR name = $2)").bind(&proj.id).bind(cohort).execute(&state.db).await?;
+    let res = sqlx::query("DELETE FROM cohorts WHERE project_id = $1 AND (id = $2 OR name = $2)")
+        .bind(&proj.id)
+        .bind(cohort)
+        .execute(&state.db)
+        .await?;
     if res.rows_affected() == 0 {
         return Err(ApiError::not_found("cohort"));
     }
@@ -355,7 +438,11 @@ fn actor_for(identity: Option<&str>) -> QResult<(&'static str, &'static str)> {
         "visitor" => ("visitor_id", "1"),
         "user" => ("user_id", "user_id != ''"),
         "auto" => ("if(user_id != '', user_id, visitor_id)", "1"),
-        other => return Err(ApiError::bad(format!("identity must be visitor, user or auto, not `{other}`"))),
+        other => {
+            return Err(ApiError::bad(format!(
+                "identity must be visitor, user or auto, not `{other}`"
+            )))
+        }
     })
 }
 
@@ -363,7 +450,9 @@ fn actor_for(identity: Option<&str>) -> QResult<(&'static str, &'static str)> {
 const EVENT_NAMES: &[&str] = &["ev0", "ev1", "ev2", "ev3", "ev4", "ev5"];
 
 fn event_cond(event: Option<&str>, params: &mut Vec<(&'static str, String)>) -> QResult<String> {
-    let Some(e) = event.map(str::trim).filter(|e| !e.is_empty()) else { return Ok("1".into()) };
+    let Some(e) = event.map(str::trim).filter(|e| !e.is_empty()) else {
+        return Ok("1".into());
+    };
     let step = Step::parse(e)?;
     if step.filters.len() > EVENT_NAMES.len() - 1 {
         return Err(ApiError::bad("too many event filters"));
@@ -379,11 +468,17 @@ fn event_cond(event: Option<&str>, params: &mut Vec<(&'static str, String)>) -> 
 }
 
 fn f(v: &Value) -> f64 {
-    v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).unwrap_or(0.0)
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(0.0)
 }
 
 /// DAU / WAU / MAU, DAU/MAU, and how many days a week people are active.
-pub async fn stickiness(state: &AppState, p: &Principal, mut a: EngagementParams) -> QResult<Value> {
+pub async fn stickiness(
+    state: &AppState,
+    p: &Principal,
+    mut a: EngagementParams,
+) -> QResult<Value> {
     let proj = project_for(state, p, &a.base.project).await?;
     if a.base.since.is_none() {
         a.base.since = Some("30d".into());
@@ -415,7 +510,11 @@ pub async fn stickiness(state: &AppState, p: &Principal, mut a: EngagementParams
         )
         .await?;
     let t = totals.first().cloned().unwrap_or_default();
-    let avg_dau = if daily.is_empty() { 0.0 } else { daily.iter().map(|d| f(&d["dau"])).sum::<f64>() / daily.len() as f64 };
+    let avg_dau = if daily.is_empty() {
+        0.0
+    } else {
+        daily.iter().map(|d| f(&d["dau"])).sum::<f64>() / daily.len() as f64
+    };
     let mau = f(&t["mau"]);
     let person_weeks: f64 = weekly.iter().map(|r| f(&r["people"])).sum();
     let r3 = |x: f64| (x * 1000.0).round() / 1000.0;
@@ -442,7 +541,11 @@ pub async fn lifecycle(state: &AppState, p: &Principal, mut a: EngagementParams)
     let (period, bucket, interval, default_span) = match a.period.as_deref().unwrap_or("week") {
         "day" => ("day", "toDate", "toIntervalDay(1)", "14d"),
         "week" => ("week", "toMonday", "toIntervalWeek(1)", "56d"),
-        other => return Err(ApiError::bad(format!("period must be day or week, not `{other}`"))),
+        other => {
+            return Err(ApiError::bad(format!(
+                "period must be day or week, not `{other}`"
+            )))
+        }
     };
     if a.base.since.is_none() {
         a.base.since = Some(default_span.into());
@@ -452,7 +555,10 @@ pub async fn lifecycle(state: &AppState, p: &Principal, mut a: EngagementParams)
     let mut params = w.params.clone();
     let ev = event_cond(a.event.as_deref(), &mut params)?;
     // Activity includes the period before the window so the first period has a "previous".
-    let act_where = w.sql.replace("timestamp >= fromUnixTimestamp64Milli({since:Int64})", &format!("timestamp >= {bucket}(fromUnixTimestamp64Milli({{since:Int64}})) - {interval}"));
+    let act_where = w.sql.replace(
+        "timestamp >= fromUnixTimestamp64Milli({since:Int64})",
+        &format!("timestamp >= {bucket}(fromUnixTimestamp64Milli({{since:Int64}})) - {interval}"),
+    );
     let sql = format!(
         "WITH act AS (SELECT DISTINCT {actor} AS actor, {bucket}(timestamp) AS period FROM events WHERE {act_where} AND {actor_ok} AND {ev}), \
          firsts AS (SELECT {actor} AS actor, {bucket}(min(timestamp)) AS first_period FROM events \
@@ -482,13 +588,22 @@ pub async fn lifecycle(state: &AppState, p: &Principal, mut a: EngagementParams)
     }
     for d in &dormant {
         let k = d["label"].as_str().unwrap_or("").to_string();
-        let e = by.entry(k.clone()).or_insert_with(|| json!({"period": k, "new": 0, "returning": 0, "resurrecting": 0, "dormant": 0}));
+        let e = by.entry(k.clone()).or_insert_with(
+            || json!({"period": k, "new": 0, "returning": 0, "resurrecting": 0, "dormant": 0}),
+        );
         e["dormant"] = json!(-(f(&d["dormant"]) as i64));
     }
     for v in by.values_mut() {
         let active = f(&v["new"]) + f(&v["returning"]) + f(&v["resurrecting"]);
         v["active"] = json!(active as i64);
-        v["quick_ratio"] = if f(&v["dormant"]) < 0.0 { json!(((f(&v["new"]) + f(&v["resurrecting"])) / -f(&v["dormant"]) * 100.0).round() / 100.0) } else { Value::Null };
+        v["quick_ratio"] = if f(&v["dormant"]) < 0.0 {
+            json!(
+                ((f(&v["new"]) + f(&v["resurrecting"])) / -f(&v["dormant"]) * 100.0).round()
+                    / 100.0
+            )
+        } else {
+            Value::Null
+        };
     }
     Ok(json!({
         "project": proj.slug,
@@ -520,12 +635,36 @@ mod tests {
         assert!(sql.members.contains("GROUP BY actor HAVING countIf(name = {ck0:String} AND props['plan'] = {ck1:String}"), "{}", sql.members);
         assert!(sql.members.contains(">= {ck3:UInt32}"), "{}", sql.members);
         assert!(sql.members.contains(") = 0"), "{}", sql.members);
-        assert!(sql.members.contains("countIf(country = {ck6:String}) > 0"), "{}", sql.members);
+        assert!(
+            sql.members.contains("countIf(country = {ck6:String}) > 0"),
+            "{}",
+            sql.members
+        );
         assert!(sql.members.contains("user_id != ''"));
         let vals: Vec<&str> = sql.params.iter().map(|(_, v)| v.as_str()).collect();
-        assert_eq!(vals, vec!["purchase", "pro", "1209600", "2", "churn_survey", "2592000", "SE", "proj", "2592000"]);
-        assert!(sql.condition(true).starts_with("user_id NOT IN (SELECT actor FROM (SELECT user_id AS actor"));
+        assert_eq!(
+            vals,
+            vec![
+                "purchase",
+                "pro",
+                "1209600",
+                "2",
+                "churn_survey",
+                "2592000",
+                "SE",
+                "proj",
+                "2592000"
+            ]
+        );
+        assert!(sql
+            .condition(true)
+            .starts_with("user_id NOT IN (SELECT actor FROM (SELECT user_id AS actor"));
         assert!(CohortDef::default().normalize().is_err());
-        assert!(serde_json::from_value::<CohortDef>(json!({"criteria": [{"event": "x", "within": "2y"}]})).unwrap().normalize().is_err());
+        assert!(serde_json::from_value::<CohortDef>(
+            json!({"criteria": [{"event": "x", "within": "2y"}]})
+        )
+        .unwrap()
+        .normalize()
+        .is_err());
     }
 }

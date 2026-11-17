@@ -42,7 +42,10 @@ const PROBE_THRESHOLD: i64 = 2;
 static INSTANCE: Lazy<String> = Lazy::new(|| crate::util::random_token(8));
 
 fn max_per_project() -> i64 {
-    std::env::var("VAKA_MONITOR_MAX_PER_PROJECT").ok().and_then(|v| v.parse().ok()).unwrap_or(50)
+    std::env::var("VAKA_MONITOR_MAX_PER_PROJECT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50)
 }
 
 // ---------------------------------------------------------------------------
@@ -142,7 +145,10 @@ impl Monitor {
     pub fn schedule_text(&self) -> Option<String> {
         match self.kind.as_str() {
             "heartbeat" => self.heartbeat().ok().map(|h| h.describe()),
-            _ => self.probe().ok().map(|p| format!("every {}", human_secs(p.every_s))),
+            _ => self
+                .probe()
+                .ok()
+                .map(|p| format!("every {}", human_secs(p.every_s))),
         }
     }
 
@@ -176,16 +182,32 @@ impl Monitor {
             let hb = self.heartbeat().ok();
             v["schedule"] = json!(hb.as_ref().map(|h| h.describe()));
             v["next_expected_at"] = json!(opt(self.expected_at));
-            v["deadline"] = json!(opt(self.expected_at.map(|e| e + hb.as_ref().map(|h| h.grace_s).unwrap_or(DEFAULT_GRACE_S) * 1000)));
-            v["running_since"] = json!(if self.run_id.is_empty() { None } else { opt(self.run_started_at) });
-            v["check_in_url"] = json!(format!("{}/ingest/v1/monitors/{}/check-ins", state.config.public_url, self.slug));
+            v["deadline"] = json!(opt(self.expected_at.map(|e| e + hb
+                .as_ref()
+                .map(|h| h.grace_s)
+                .unwrap_or(DEFAULT_GRACE_S)
+                * 1000)));
+            v["running_since"] = json!(if self.run_id.is_empty() {
+                None
+            } else {
+                opt(self.run_started_at)
+            });
+            v["check_in_url"] = json!(format!(
+                "{}/ingest/v1/monitors/{}/check-ins",
+                state.config.public_url, self.slug
+            ));
         } else {
             let pc = self.probe().ok();
             v["schedule"] = json!(self.schedule_text());
             v["target"] = json!(pc.as_ref().map(|p| p.target()));
-            v["next_check_at"] = json!(if self.paused(now) { None } else { opt(self.next_check_at) });
+            v["next_check_at"] = json!(if self.paused(now) {
+                None
+            } else {
+                opt(self.next_check_at)
+            });
             v["tls_expires_at"] = json!(opt(self.tls_not_after));
-            v["tls_days_left"] = json!(self.tls_not_after.map(|t| (t - now).div_euclid(86_400_000)));
+            v["tls_days_left"] =
+                json!(self.tls_not_after.map(|t| (t - now).div_euclid(86_400_000)));
         }
         v
     }
@@ -215,7 +237,11 @@ pub fn parse_duration_s(s: &str) -> Option<i64> {
         (i, 'd') => (&s[..i], 86_400),
         _ => (s, 1),
     };
-    num.trim().parse::<i64>().ok().filter(|n| *n > 0).map(|n| n * mult)
+    num.trim()
+        .parse::<i64>()
+        .ok()
+        .filter(|n| *n > 0)
+        .map(|n| n * mult)
 }
 
 impl Heartbeat {
@@ -227,15 +253,25 @@ impl Heartbeat {
                 Value::String(s) => parse_duration_s(s),
                 _ => None,
             }
-            .ok_or("schedule.every must be a duration like \"15m\", \"1h\" or a number of seconds")?;
+            .ok_or(
+                "schedule.every must be a duration like \"15m\", \"1h\" or a number of seconds",
+            )?;
             if secs < MIN_EVERY_S {
-                return Err(format!("schedule.every must be at least {MIN_EVERY_S} seconds"));
+                return Err(format!(
+                    "schedule.every must be at least {MIN_EVERY_S} seconds"
+                ));
             }
             Schedule::Every(secs)
         } else if let Some(expr) = sched.get("cron").and_then(|v| v.as_str()) {
             let cron = Cron::parse(expr)?;
-            let tz = sched.get("timezone").and_then(|v| v.as_str()).unwrap_or("UTC").to_string();
-            jiff::tz::TimeZone::get(&tz).map_err(|_| format!("unknown time zone `{tz}`; use an IANA name like Europe/Stockholm"))?;
+            let tz = sched
+                .get("timezone")
+                .and_then(|v| v.as_str())
+                .unwrap_or("UTC")
+                .to_string();
+            jiff::tz::TimeZone::get(&tz).map_err(|_| {
+                format!("unknown time zone `{tz}`; use an IANA name like Europe/Stockholm")
+            })?;
             Schedule::Cron(cron, tz)
         } else {
             return Err("schedule needs `every` or `cron`".into());
@@ -243,8 +279,13 @@ impl Heartbeat {
         let secs = |k: &str, default: i64| -> Result<i64, String> {
             match c.get(k) {
                 None | Some(Value::Null) => Ok(default),
-                Some(Value::Number(n)) => n.as_i64().filter(|n| *n >= 0).ok_or(format!("{k} must be a number of seconds")),
-                Some(Value::String(s)) => parse_duration_s(s).ok_or(format!("{k} must be a duration like \"5m\"")),
+                Some(Value::Number(n)) => n
+                    .as_i64()
+                    .filter(|n| *n >= 0)
+                    .ok_or(format!("{k} must be a number of seconds")),
+                Some(Value::String(s)) => {
+                    parse_duration_s(s).ok_or(format!("{k} must be a duration like \"5m\""))
+                }
                 _ => Err(format!("{k} must be a number of seconds")),
             }
         };
@@ -253,7 +294,11 @@ impl Heartbeat {
         if grace_s > 86_400 * 7 || max_runtime_s > 86_400 * 7 {
             return Err("grace_s and max_runtime_s must be at most 7 days".into());
         }
-        Ok(Heartbeat { schedule, grace_s, max_runtime_s })
+        Ok(Heartbeat {
+            schedule,
+            grace_s,
+            max_runtime_s,
+        })
     }
 
     /// The first expected run strictly after `t`.
@@ -272,7 +317,11 @@ impl Heartbeat {
     pub fn after_check_in(&self, now: i64, expected: Option<i64>) -> i64 {
         match (&self.schedule, expected) {
             (Schedule::Every(_), _) => self.next_after(now),
-            (Schedule::Cron(..), Some(e)) if (e - now).abs() <= self.grace_s * 1000 || (e > now && e - now <= 60_000) => self.next_after(e.max(now)),
+            (Schedule::Cron(..), Some(e))
+                if (e - now).abs() <= self.grace_s * 1000 || (e > now && e - now <= 60_000) =>
+            {
+                self.next_after(e.max(now))
+            }
             _ => self.next_after(now),
         }
     }
@@ -314,30 +363,65 @@ impl ProbeConfig {
         let secs = |k: &str, default: i64| -> Result<i64, String> {
             match c.get(k) {
                 None | Some(Value::Null) => Ok(default),
-                Some(Value::Number(n)) => n.as_i64().filter(|n| *n > 0).ok_or(format!("{k} must be a positive number of seconds")),
-                Some(Value::String(s)) => parse_duration_s(s).ok_or(format!("{k} must be a duration like \"5m\"")),
+                Some(Value::Number(n)) => n
+                    .as_i64()
+                    .filter(|n| *n > 0)
+                    .ok_or(format!("{k} must be a positive number of seconds")),
+                Some(Value::String(s)) => {
+                    parse_duration_s(s).ok_or(format!("{k} must be a duration like \"5m\""))
+                }
                 _ => Err(format!("{k} must be a number of seconds")),
             }
         };
-        let every_s = secs("every", if kind == "tls" { DEFAULT_TLS_EVERY_S } else { DEFAULT_HTTP_EVERY_S })?;
+        let every_s = secs(
+            "every",
+            if kind == "tls" {
+                DEFAULT_TLS_EVERY_S
+            } else {
+                DEFAULT_HTTP_EVERY_S
+            },
+        )?;
         if every_s < MIN_PROBE_EVERY_S || every_s > 7 * 86_400 {
-            return Err(format!("every must be between {MIN_PROBE_EVERY_S} seconds and 7 days"));
+            return Err(format!(
+                "every must be between {MIN_PROBE_EVERY_S} seconds and 7 days"
+            ));
         }
         let timeout_s = secs("timeout_s", crate::probes::DEFAULT_TIMEOUT_S)?;
         if timeout_s > crate::probes::MAX_TIMEOUT_S {
-            return Err(format!("timeout_s must be at most {}", crate::probes::MAX_TIMEOUT_S));
+            return Err(format!(
+                "timeout_s must be at most {}",
+                crate::probes::MAX_TIMEOUT_S
+            ));
         }
         let tls_warn_days = match c.get("tls_warn_days") {
             None | Some(Value::Null) => crate::probes::DEFAULT_TLS_WARN_DAYS,
-            Some(v) => v.as_i64().filter(|d| (0..=365).contains(d)).ok_or("tls_warn_days must be 0 to 365")?,
+            Some(v) => v
+                .as_i64()
+                .filter(|d| (0..=365).contains(d))
+                .ok_or("tls_warn_days must be 0 to 365")?,
         };
         let guard = crate::probes::guard();
-        let mut pc = ProbeConfig { every_s, timeout_s, tls_warn_days, http: None, tls: None };
+        let mut pc = ProbeConfig {
+            every_s,
+            timeout_s,
+            tls_warn_days,
+            http: None,
+            tls: None,
+        };
         match kind {
             "http" => {
-                let url = c.get("url").and_then(|v| v.as_str()).ok_or("http monitors need `url`")?.trim().to_string();
+                let url = c
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .ok_or("http monitors need `url`")?
+                    .trim()
+                    .to_string();
                 guard.check_url(&url)?;
-                let method = match c.get("method").and_then(|v| v.as_str()).map(|m| m.to_ascii_uppercase()) {
+                let method = match c
+                    .get("method")
+                    .and_then(|v| v.as_str())
+                    .map(|m| m.to_ascii_uppercase())
+                {
                     None => reqwest::Method::GET,
                     Some(m) if m == "GET" => reqwest::Method::GET,
                     Some(m) if m == "HEAD" => reqwest::Method::HEAD,
@@ -353,14 +437,18 @@ impl ProbeConfig {
                 }
                 let mut headers = Vec::new();
                 if let Some(h) = c.get("headers").filter(|v| !v.is_null()) {
-                    let obj = h.as_object().ok_or("headers must be an object of name: value")?;
+                    let obj = h
+                        .as_object()
+                        .ok_or("headers must be an object of name: value")?;
                     if obj.len() > 20 {
                         return Err("at most 20 headers".into());
                     }
                     for (k, v) in obj {
                         let v = v.as_str().ok_or("header values must be strings")?;
-                        reqwest::header::HeaderName::from_bytes(k.as_bytes()).map_err(|_| format!("`{k}` is not a valid header name"))?;
-                        reqwest::header::HeaderValue::from_str(v).map_err(|_| format!("header `{k}` has an invalid value"))?;
+                        reqwest::header::HeaderName::from_bytes(k.as_bytes())
+                            .map_err(|_| format!("`{k}` is not a valid header name"))?;
+                        reqwest::header::HeaderValue::from_str(v)
+                            .map_err(|_| format!("header `{k}` has an invalid value"))?;
                         headers.push((k.clone(), v.to_string()));
                     }
                 }
@@ -371,17 +459,34 @@ impl ProbeConfig {
                     expect: crate::probes::parse_expect(c.get("expect_status"))?,
                     body_contains,
                     headers,
-                    follow_redirects: c.get("follow_redirects").and_then(|v| v.as_bool()).unwrap_or(true),
+                    follow_redirects: c
+                        .get("follow_redirects")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true),
                 });
             }
             "tls" => {
-                let host = c.get("host").and_then(|v| v.as_str()).ok_or("tls monitors need `host` (and optionally `port`, default 443)")?.trim().trim_end_matches('.').to_ascii_lowercase();
+                let host = c
+                    .get("host")
+                    .and_then(|v| v.as_str())
+                    .ok_or("tls monitors need `host` (and optionally `port`, default 443)")?
+                    .trim()
+                    .trim_end_matches('.')
+                    .to_ascii_lowercase();
                 let port = match c.get("port") {
                     None | Some(Value::Null) => 443,
-                    Some(v) => v.as_u64().filter(|p| (1..=65535).contains(p)).ok_or("port must be 1 to 65535")? as u16,
+                    Some(v) => v
+                        .as_u64()
+                        .filter(|p| (1..=65535).contains(p))
+                        .ok_or("port must be 1 to 65535")? as u16,
                 };
-                if host.is_empty() || host.contains('/') || host.contains(':') && !host.starts_with('[') {
-                    return Err("host must be a host name like example.com, without scheme or path".into());
+                if host.is_empty()
+                    || host.contains('/')
+                    || host.contains(':') && !host.starts_with('[')
+                {
+                    return Err(
+                        "host must be a host name like example.com, without scheme or path".into(),
+                    );
                 }
                 guard.check_url(&format!("https://{host}:{port}/"))?;
                 pc.tls = Some((host, port));
@@ -402,7 +507,11 @@ impl ProbeConfig {
 
 /// When the scheduler should next look at a heartbeat monitor: the deadline of the expected
 /// run, or earlier when a running job would exceed its maximum runtime.
-fn heartbeat_next_check(hb: &Heartbeat, expected: Option<i64>, run_started: Option<i64>) -> Option<i64> {
+fn heartbeat_next_check(
+    hb: &Heartbeat,
+    expected: Option<i64>,
+    run_started: Option<i64>,
+) -> Option<i64> {
     let deadline = expected.map(|e| e + hb.grace_s * 1000);
     let timeout = match (run_started, hb.max_runtime_s) {
         (Some(s), m) if m > 0 => Some(s + m * 1000),
@@ -451,7 +560,10 @@ pub struct CheckResult {
 
 impl CheckResult {
     fn new(result: &str) -> Self {
-        CheckResult { result: result.into(), ..Default::default() }
+        CheckResult {
+            result: result.into(),
+            ..Default::default()
+        }
     }
 
     pub fn is_ok(&self) -> bool {
@@ -459,12 +571,20 @@ impl CheckResult {
     }
 
     pub fn is_failure(&self) -> bool {
-        matches!(self.result.as_str(), "fail" | "timeout" | "missed" | "error")
+        matches!(
+            self.result.as_str(),
+            "fail" | "timeout" | "missed" | "error"
+        )
     }
 }
 
 async fn record_check(state: &AppState, m: &Monitor, c: &CheckResult, at: i64) {
-    let retention = crate::projects::find(state, &m.project_id).await.ok().flatten().map(|p| p.retention_days).unwrap_or(90);
+    let retention = crate::projects::find(state, &m.project_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|p| p.retention_days)
+        .unwrap_or(90);
     let row = CheckRow {
         project_id: m.project_id.clone(),
         monitor_id: m.id.clone(),
@@ -476,7 +596,11 @@ async fn record_check(state: &AppState, m: &Monitor, c: &CheckResult, at: i64) {
         tls_days_left: c.tls_days_left.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
         check_in_id: c.check_in_id.clone(),
         release: c.release.clone(),
-        environment: if c.environment.is_empty() { m.environment.clone() } else { c.environment.clone() },
+        environment: if c.environment.is_empty() {
+            m.environment.clone()
+        } else {
+            c.environment.clone()
+        },
         trace_id: c.trace_id.clone(),
         retention_days: retention.clamp(1, u16::MAX as i64) as u16,
     };
@@ -493,7 +617,13 @@ enum Transition {
 /// Apply a finished check to a monitor: counters, state, incidents and alerts. `m` holds the
 /// monitor as loaded; the schedule fields (`next_check_at`, `expected_at`) are written by the
 /// caller in `sched`.
-async fn apply(state: &AppState, mut m: Monitor, c: &CheckResult, now: i64, sched: (Option<i64>, Option<i64>)) -> anyhow::Result<Monitor> {
+async fn apply(
+    state: &AppState,
+    mut m: Monitor,
+    c: &CheckResult,
+    now: i64,
+    sched: (Option<i64>, Option<i64>),
+) -> anyhow::Result<Monitor> {
     record_check(state, &m, c, now).await;
     let mut transition = None;
     if c.is_ok() {
@@ -576,17 +706,39 @@ async fn apply(state: &AppState, mut m: Monitor, c: &CheckResult, now: i64, sche
                     h.push(json!(format!("the failed check sent traceparent trace id {}; if the target reports traces to Vaka, get_trace shows where it failed", c.trace_id)));
                 }
             }
-            let _ = sqlx::query("UPDATE monitor_incidents SET context = $1 WHERE id = $2").bind(ctx.to_string()).bind(&incident).execute(&state.db).await;
+            let _ = sqlx::query("UPDATE monitor_incidents SET context = $1 WHERE id = $2")
+                .bind(ctx.to_string())
+                .bind(&incident)
+                .execute(&state.db)
+                .await;
             if !was_flapping {
-                notify(state, &m, "monitor_down", &incident, json!({"flapping": m.flapping})).await;
+                notify(
+                    state,
+                    &m,
+                    "monitor_down",
+                    &incident,
+                    json!({"flapping": m.flapping}),
+                )
+                .await;
             }
         }
         Some(Transition::Up) => {
             let open = open_incident(state, &m.id).await?;
             if let Some((id, started)) = &open {
-                sqlx::query("UPDATE monitor_incidents SET ended_at = $1 WHERE id = $2").bind(now).bind(id).execute(&state.db).await?;
+                sqlx::query("UPDATE monitor_incidents SET ended_at = $1 WHERE id = $2")
+                    .bind(now)
+                    .bind(id)
+                    .execute(&state.db)
+                    .await?;
                 if !was_flapping {
-                    notify(state, &m, "monitor_up", id, json!({"downtime_ms": now - started, "flapping": m.flapping})).await;
+                    notify(
+                        state,
+                        &m,
+                        "monitor_up",
+                        id,
+                        json!({"downtime_ms": now - started, "flapping": m.flapping}),
+                    )
+                    .await;
                 }
             }
         }
@@ -598,7 +750,10 @@ async fn apply(state: &AppState, mut m: Monitor, c: &CheckResult, now: i64, sche
     Ok(m)
 }
 
-async fn open_incident(state: &AppState, monitor_id: &str) -> anyhow::Result<Option<(String, i64)>> {
+async fn open_incident(
+    state: &AppState,
+    monitor_id: &str,
+) -> anyhow::Result<Option<(String, i64)>> {
     Ok(sqlx::query("SELECT id, started_at FROM monitor_incidents WHERE monitor_id = $1 AND kind = 'down' AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1")
         .bind(monitor_id)
         .fetch_optional(&state.db)
@@ -636,8 +791,12 @@ fn incident_from_row(r: &sqlx::any::AnyRow) -> Value {
 
 /// Build the alert payload for a monitor event and hand it to the alert rules.
 async fn notify(state: &AppState, m: &Monitor, trigger: &str, incident_id: &str, details: Value) {
-    let Ok(Some(project)) = crate::projects::find(state, &m.project_id).await else { return };
-    let incident = incident_json(state, incident_id).await.unwrap_or(Value::Null);
+    let Ok(Some(project)) = crate::projects::find(state, &m.project_id).await else {
+        return;
+    };
+    let incident = incident_json(state, incident_id)
+        .await
+        .unwrap_or(Value::Null);
     let payload = json!({
         "trigger": trigger,
         "project": {"id": project.id, "slug": project.slug, "name": project.name},
@@ -649,7 +808,9 @@ async fn notify(state: &AppState, m: &Monitor, trigger: &str, incident_id: &str,
         "api_url": format!("{}/api/v1/projects/{}/monitors/{}", state.config.public_url, project.slug, m.slug),
         "sent_at": iso_time(now_ms()),
     });
-    if let Err(e) = crate::alerts::notify_monitor(state, &project, m, trigger, incident_id, payload).await {
+    if let Err(e) =
+        crate::alerts::notify_monitor(state, &project, m, trigger, incident_id, payload).await
+    {
         tracing::warn!("monitor alert failed: {e:#}");
     }
 }
@@ -669,7 +830,10 @@ const WINDOW_MS: i64 = 15 * 60_000;
 pub async fn correlate(state: &AppState, m: &Monitor, at: i64, check_in_id: &str) -> Value {
     let mut ctx = serde_json::Map::new();
     ctx.insert("computed_at".into(), json!(iso_time(now_ms())));
-    ctx.insert("window".into(), json!({"from": iso_time(at - WINDOW_MS), "to": iso_time(at + WINDOW_MS)}));
+    ctx.insert(
+        "window".into(),
+        json!({"from": iso_time(at - WINDOW_MS), "to": iso_time(at + WINDOW_MS)}),
+    );
 
     if let Ok(rows) = sqlx::query("SELECT version, created_at FROM releases WHERE project_id = $1 AND created_at >= $2 AND created_at <= $3 ORDER BY created_at DESC LIMIT 5")
         .bind(&m.project_id)
@@ -684,7 +848,12 @@ pub async fn correlate(state: &AppState, m: &Monitor, at: i64, check_in_id: &str
 
     let env = m.environment.clone();
     let p = |extra: Vec<(&'static str, String)>| {
-        let mut v = vec![("p", m.project_id.clone()), ("from", (at - WINDOW_MS).to_string()), ("to", (at + WINDOW_MS).to_string()), ("env", env.clone())];
+        let mut v = vec![
+            ("p", m.project_id.clone()),
+            ("from", (at - WINDOW_MS).to_string()),
+            ("to", (at + WINDOW_MS).to_string()),
+            ("env", env.clone()),
+        ];
         v.extend(extra);
         v
     };
@@ -768,14 +937,38 @@ pub async fn correlate(state: &AppState, m: &Monitor, at: i64, check_in_id: &str
     }
 
     let mut hints = Vec::new();
-    if let Some(r) = ctx.get("recent_releases").and_then(|v| v.as_array()).and_then(|a| a.first()) {
-        hints.push(format!("release {} was created {} min before the incident", r["version"].as_str().unwrap_or(""), r["minutes_before"]));
+    if let Some(r) = ctx
+        .get("recent_releases")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())
+    {
+        hints.push(format!(
+            "release {} was created {} min before the incident",
+            r["version"].as_str().unwrap_or(""),
+            r["minutes_before"]
+        ));
     }
-    if let Some(i) = ctx.get("issues").and_then(|v| v.as_array()).and_then(|a| a.iter().find(|i| i["new"] == true || i["regressed"] == true)) {
-        hints.push(format!("issue {} ({}) is {} around the same time", i["short_id"].as_str().unwrap_or(""), i["title"].as_str().unwrap_or(""), if i["new"] == true { "new" } else { "regressed" }));
+    if let Some(i) = ctx.get("issues").and_then(|v| v.as_array()).and_then(|a| {
+        a.iter()
+            .find(|i| i["new"] == true || i["regressed"] == true)
+    }) {
+        hints.push(format!(
+            "issue {} ({}) is {} around the same time",
+            i["short_id"].as_str().unwrap_or(""),
+            i["title"].as_str().unwrap_or(""),
+            if i["new"] == true { "new" } else { "regressed" }
+        ));
     }
-    if ctx.get("run_errors").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
-        hints.push("the failed run reported errors (run_errors); start with get_fix_context on that issue".into());
+    if ctx
+        .get("run_errors")
+        .and_then(|v| v.as_array())
+        .map(|a| !a.is_empty())
+        .unwrap_or(false)
+    {
+        hints.push(
+            "the failed run reported errors (run_errors); start with get_fix_context on that issue"
+                .into(),
+        );
     }
     ctx.insert("hints".into(), json!(hints));
     Value::Object(ctx)
@@ -817,13 +1010,24 @@ async fn release(state: &AppState, id: &str) {
 }
 
 async fn load(state: &AppState, id: &str) -> anyhow::Result<Option<Monitor>> {
-    Ok(sqlx::query(&format!("SELECT {COLS} FROM monitors WHERE id = $1")).bind(id).fetch_optional(&state.db).await?.map(|r| from_row(&r)))
+    Ok(
+        sqlx::query(&format!("SELECT {COLS} FROM monitors WHERE id = $1"))
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .map(|r| from_row(&r)),
+    )
 }
 
 pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
     let now = now_ms();
     // Pauses that ran out: start the schedule again from now.
-    let resumed = sqlx::query(&format!("SELECT {COLS} FROM monitors WHERE paused_until IS NOT NULL AND paused_until <= $1")).bind(now).fetch_all(&state.db).await?;
+    let resumed = sqlx::query(&format!(
+        "SELECT {COLS} FROM monitors WHERE paused_until IS NOT NULL AND paused_until <= $1"
+    ))
+    .bind(now)
+    .fetch_all(&state.db)
+    .await?;
     for r in resumed {
         let m = from_row(&r);
         resume(state, &m, now).await?;
@@ -871,7 +1075,10 @@ pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
 /// expected check-in never came.
 async fn evaluate_heartbeat(state: &AppState, mut m: Monitor, now: i64) -> anyhow::Result<Monitor> {
     let Ok(hb) = m.heartbeat() else {
-        sqlx::query("UPDATE monitors SET next_check_at = NULL WHERE id = $1").bind(&m.id).execute(&state.db).await?;
+        sqlx::query("UPDATE monitors SET next_check_at = NULL WHERE id = $1")
+            .bind(&m.id)
+            .execute(&state.db)
+            .await?;
         return Ok(m);
     };
     if let Some(started) = m.run_started_at.filter(|_| !m.run_id.is_empty()) {
@@ -879,7 +1086,11 @@ async fn evaluate_heartbeat(state: &AppState, mut m: Monitor, now: i64) -> anyho
             let mut c = CheckResult::new("timeout");
             c.check_in_id = m.run_id.clone();
             c.duration_ms = now - started;
-            c.error = format!("the run started at {} did not finish within {}", iso_time(started), human_secs(hb.max_runtime_s));
+            c.error = format!(
+                "the run started at {} did not finish within {}",
+                iso_time(started),
+                human_secs(hb.max_runtime_s)
+            );
             m.run_id.clear();
             m.run_started_at = None;
             let next = heartbeat_next_check(&hb, m.expected_at, None);
@@ -889,13 +1100,26 @@ async fn evaluate_heartbeat(state: &AppState, mut m: Monitor, now: i64) -> anyho
     let Some(expected) = m.expected_at else {
         let e = hb.next_after(now);
         let next = heartbeat_next_check(&hb, Some(e), m.run_started_at);
-        sqlx::query("UPDATE monitors SET expected_at = $1, next_check_at = $2 WHERE id = $3").bind(e).bind(next).bind(&m.id).execute(&state.db).await?;
+        sqlx::query("UPDATE monitors SET expected_at = $1, next_check_at = $2 WHERE id = $3")
+            .bind(e)
+            .bind(next)
+            .bind(&m.id)
+            .execute(&state.db)
+            .await?;
         return Ok(m);
     };
     if now < expected + hb.grace_s * 1000 {
         // Woken for a run timeout that is not due yet.
-        let next = heartbeat_next_check(&hb, Some(expected), m.run_started_at.filter(|_| !m.run_id.is_empty()));
-        sqlx::query("UPDATE monitors SET next_check_at = $1 WHERE id = $2").bind(next).bind(&m.id).execute(&state.db).await?;
+        let next = heartbeat_next_check(
+            &hb,
+            Some(expected),
+            m.run_started_at.filter(|_| !m.run_id.is_empty()),
+        );
+        sqlx::query("UPDATE monitors SET next_check_at = $1 WHERE id = $2")
+            .bind(next)
+            .bind(&m.id)
+            .execute(&state.db)
+            .await?;
         return Ok(m);
     }
     // Missed. Skip ahead past every run whose deadline has also passed (after downtime of
@@ -908,15 +1132,27 @@ async fn evaluate_heartbeat(state: &AppState, mut m: Monitor, now: i64) -> anyho
         }
     }
     let mut c = CheckResult::new("missed");
-    c.error = format!("no check-in for the run expected at {} (grace {})", iso_time(expected), human_secs(hb.grace_s.max(1)));
-    let next = heartbeat_next_check(&hb, Some(e), m.run_started_at.filter(|_| !m.run_id.is_empty()));
+    c.error = format!(
+        "no check-in for the run expected at {} (grace {})",
+        iso_time(expected),
+        human_secs(hb.grace_s.max(1))
+    );
+    let next = heartbeat_next_check(
+        &hb,
+        Some(e),
+        m.run_started_at.filter(|_| !m.run_id.is_empty()),
+    );
     let m2 = m.clone();
     m = apply(state, m2, &c, now, (next, Some(e))).await?;
     Ok(m)
 }
 
 /// Run an HTTP or TLS monitor's check now and apply the result. The caller holds the lease.
-async fn evaluate_probe(state: &AppState, m: Monitor, secrets: Option<Vec<(String, String)>>) -> anyhow::Result<(Monitor, CheckResult)> {
+async fn evaluate_probe(
+    state: &AppState,
+    m: Monitor,
+    secrets: Option<Vec<(String, String)>>,
+) -> anyhow::Result<(Monitor, CheckResult)> {
     let pc = match m.probe() {
         Ok(pc) => pc,
         Err(e) => {
@@ -961,9 +1197,19 @@ async fn evaluate_probe(state: &AppState, m: Monitor, secrets: Option<Vec<(Strin
 /// Track the certificate's expiry and fire `tls_expiring` once per certificate when it is
 /// within `tls_warn_days`. The warning is an incident of kind `tls_expiring` that closes when
 /// a renewed certificate shows up.
-async fn tls_expiry(state: &AppState, m: &Monitor, pc: &ProbeConfig, not_after: i64, now: i64) -> anyhow::Result<()> {
+async fn tls_expiry(
+    state: &AppState,
+    m: &Monitor,
+    pc: &ProbeConfig,
+    not_after: i64,
+    now: i64,
+) -> anyhow::Result<()> {
     if m.tls_not_after != Some(not_after) {
-        sqlx::query("UPDATE monitors SET tls_not_after = $1 WHERE id = $2").bind(not_after).bind(&m.id).execute(&state.db).await?;
+        sqlx::query("UPDATE monitors SET tls_not_after = $1 WHERE id = $2")
+            .bind(not_after)
+            .bind(&m.id)
+            .execute(&state.db)
+            .await?;
     }
     let open = sqlx::query("SELECT id, first_error FROM monitor_incidents WHERE monitor_id = $1 AND kind = 'tls_expiring' AND ended_at IS NULL LIMIT 1")
         .bind(&m.id)
@@ -974,14 +1220,21 @@ async fn tls_expiry(state: &AppState, m: &Monitor, pc: &ProbeConfig, not_after: 
     match open {
         Some(r) if !expiring => {
             // Renewed (or the warning was turned off).
-            sqlx::query("UPDATE monitor_incidents SET ended_at = $1 WHERE id = $2").bind(now).bind(r.s("id")).execute(&state.db).await?;
+            sqlx::query("UPDATE monitor_incidents SET ended_at = $1 WHERE id = $2")
+                .bind(now)
+                .bind(r.s("id"))
+                .execute(&state.db)
+                .await?;
         }
         None if expiring => {
             let id = new_id();
             let msg = if days_left < 0 {
                 format!("the certificate expired on {}", iso_time(not_after))
             } else {
-                format!("the certificate expires in {days_left} days ({})", iso_time(not_after))
+                format!(
+                    "the certificate expires in {days_left} days ({})",
+                    iso_time(not_after)
+                )
             };
             sqlx::query("INSERT INTO monitor_incidents (id, monitor_id, project_id, kind, started_at, first_error, failed_checks) VALUES ($1, $2, $3, 'tls_expiring', $4, $5, 0)")
                 .bind(&id)
@@ -1001,7 +1254,12 @@ async fn tls_expiry(state: &AppState, m: &Monitor, pc: &ProbeConfig, not_after: 
 }
 
 async fn load_secret_headers(state: &AppState, monitor_id: &str) -> Vec<(String, String)> {
-    let rows = sqlx::query("SELECT name, value FROM monitor_secrets WHERE monitor_id = $1 ORDER BY name").bind(monitor_id).fetch_all(&state.db).await.unwrap_or_default();
+    let rows =
+        sqlx::query("SELECT name, value FROM monitor_secrets WHERE monitor_id = $1 ORDER BY name")
+            .bind(monitor_id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default();
     rows.iter()
         .filter_map(|r| match crate::secretbox::open(&r.s("value")) {
             Ok(v) => Some((r.s("name"), v)),
@@ -1014,14 +1272,33 @@ async fn load_secret_headers(state: &AppState, monitor_id: &str) -> Vec<(String,
 }
 
 async fn secret_header_names(state: &AppState, monitor_id: &str) -> Vec<String> {
-    sqlx::query("SELECT name FROM monitor_secrets WHERE monitor_id = $1 ORDER BY name").bind(monitor_id).fetch_all(&state.db).await.unwrap_or_default().iter().map(|r| r.s("name")).collect()
+    sqlx::query("SELECT name FROM monitor_secrets WHERE monitor_id = $1 ORDER BY name")
+        .bind(monitor_id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|r| r.s("name"))
+        .collect()
 }
 
 /// Replace a monitor's secret headers (values sealed with `VAKA_SECRET_KEY`).
-async fn store_secret_headers(state: &AppState, monitor_id: &str, headers: &HashMap<String, String>) -> anyhow::Result<()> {
-    sqlx::query("DELETE FROM monitor_secrets WHERE monitor_id = $1").bind(monitor_id).execute(&state.db).await?;
+async fn store_secret_headers(
+    state: &AppState,
+    monitor_id: &str,
+    headers: &HashMap<String, String>,
+) -> anyhow::Result<()> {
+    sqlx::query("DELETE FROM monitor_secrets WHERE monitor_id = $1")
+        .bind(monitor_id)
+        .execute(&state.db)
+        .await?;
     for (k, v) in headers {
-        sqlx::query("INSERT INTO monitor_secrets (monitor_id, name, value) VALUES ($1, $2, $3)").bind(monitor_id).bind(k).bind(crate::secretbox::seal(v)).execute(&state.db).await?;
+        sqlx::query("INSERT INTO monitor_secrets (monitor_id, name, value) VALUES ($1, $2, $3)")
+            .bind(monitor_id)
+            .bind(k)
+            .bind(crate::secretbox::seal(v))
+            .execute(&state.db)
+            .await?;
     }
     Ok(())
 }
@@ -1031,8 +1308,10 @@ fn validate_secret_headers(h: &HashMap<String, String>) -> QResult<()> {
         return Err(ApiError::bad("at most 10 secret_headers"));
     }
     for (k, v) in h {
-        reqwest::header::HeaderName::from_bytes(k.as_bytes()).map_err(|_| ApiError::bad(format!("`{k}` is not a valid header name")))?;
-        let mut hv = reqwest::header::HeaderValue::from_str(v).map_err(|_| ApiError::bad(format!("secret header `{k}` has an invalid value")))?;
+        reqwest::header::HeaderName::from_bytes(k.as_bytes())
+            .map_err(|_| ApiError::bad(format!("`{k}` is not a valid header name")))?;
+        let mut hv = reqwest::header::HeaderValue::from_str(v)
+            .map_err(|_| ApiError::bad(format!("secret header `{k}` has an invalid value")))?;
         hv.set_sensitive(true);
     }
     Ok(())
@@ -1047,19 +1326,38 @@ async fn settle_flapping(state: &AppState, now: i64) -> anyhow::Result<()> {
         .await?;
     for r in rows {
         let m = from_row(&r);
-        let res = sqlx::query("UPDATE monitors SET flapping = 0, transitions = '[]' WHERE id = $1 AND flapping = 1").bind(&m.id).execute(&state.db).await?;
+        let res = sqlx::query(
+            "UPDATE monitors SET flapping = 0, transitions = '[]' WHERE id = $1 AND flapping = 1",
+        )
+        .bind(&m.id)
+        .execute(&state.db)
+        .await?;
         if res.rows_affected() == 0 {
             continue;
         }
         let changes = m.transitions.len();
         if m.state == "down" {
             if let Some((id, _)) = open_incident(state, &m.id).await? {
-                notify(state, &m, "monitor_down", &id, json!({"settled_after_flapping": true, "state_changes": changes})).await;
+                notify(
+                    state,
+                    &m,
+                    "monitor_down",
+                    &id,
+                    json!({"settled_after_flapping": true, "state_changes": changes}),
+                )
+                .await;
             }
         } else if m.state == "up" {
             let last = sqlx::query("SELECT id FROM monitor_incidents WHERE monitor_id = $1 ORDER BY started_at DESC LIMIT 1").bind(&m.id).fetch_optional(&state.db).await?;
             if let Some(l) = last {
-                notify(state, &m, "monitor_up", &l.s("id"), json!({"settled_after_flapping": true, "state_changes": changes})).await;
+                notify(
+                    state,
+                    &m,
+                    "monitor_up",
+                    &l.s("id"),
+                    json!({"settled_after_flapping": true, "state_changes": changes}),
+                )
+                .await;
             }
         }
     }
@@ -1112,7 +1410,8 @@ pub struct CheckIn {
 }
 
 /// Per-monitor check-in rate limit (one per second), keyed by project and slug.
-static LAST_CHECK_IN: Lazy<Mutex<HashMap<String, (i64, String)>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static LAST_CHECK_IN: Lazy<Mutex<HashMap<String, (i64, String)>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn rate_limited(key: &str, status: &str, now: i64) -> bool {
     let mut map = LAST_CHECK_IN.lock().unwrap_or_else(|e| e.into_inner());
@@ -1148,16 +1447,30 @@ impl From<sqlx::Error> for CheckInError {
     }
 }
 
-pub async fn check_in(state: &AppState, project: &ProjectInfo, slug: &str, ci: CheckIn) -> Result<Value, CheckInError> {
+pub async fn check_in(
+    state: &AppState,
+    project: &ProjectInfo,
+    slug: &str,
+    ci: CheckIn,
+) -> Result<Value, CheckInError> {
     let now = now_ms();
     let status = ci.status.clone().unwrap_or_else(|| "ok".into());
     if !CHECK_IN_STATUSES.contains(&status.as_str()) {
-        return Err(CheckInError::Bad(format!("status must be one of {}", CHECK_IN_STATUSES.join(", "))));
+        return Err(CheckInError::Bad(format!(
+            "status must be one of {}",
+            CHECK_IN_STATUSES.join(", ")
+        )));
     }
     if rate_limited(&format!("{}:{slug}", project.id), &status, now) {
         return Err(CheckInError::RateLimited);
     }
-    let row = sqlx::query(&format!("SELECT {COLS} FROM monitors WHERE project_id = $1 AND slug = $2")).bind(&project.id).bind(slug).fetch_optional(&state.db).await?;
+    let row = sqlx::query(&format!(
+        "SELECT {COLS} FROM monitors WHERE project_id = $1 AND slug = $2"
+    ))
+    .bind(&project.id)
+    .bind(slug)
+    .fetch_optional(&state.db)
+    .await?;
     let m = match row {
         Some(r) => from_row(&r),
         None => {
@@ -1170,29 +1483,55 @@ pub async fn check_in(state: &AppState, project: &ProjectInfo, slug: &str, ci: C
                 slug: Some(slug.to_string()),
                 name: cfg.get("name").and_then(|v| v.as_str()).map(String::from),
                 kind: Some("heartbeat".into()),
-                environment: cfg.get("environment").and_then(|v| v.as_str()).map(String::from),
+                environment: cfg
+                    .get("environment")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
                 fail_threshold: cfg.get("fail_threshold").and_then(|v| v.as_i64()),
                 recover_threshold: cfg.get("recover_threshold").and_then(|v| v.as_i64()),
-                config: Some(json!({"schedule": cfg.get("schedule"), "grace_s": cfg.get("grace_s"), "max_runtime_s": cfg.get("max_runtime_s")})),
+                config: Some(
+                    json!({"schedule": cfg.get("schedule"), "grace_s": cfg.get("grace_s"), "max_runtime_s": cfg.get("max_runtime_s")}),
+                ),
                 ..Default::default()
             };
             match insert_monitor(state, project, input, "check-in").await {
                 Ok(m) => m,
-                Err(e) if e.0 == axum::http::StatusCode::BAD_REQUEST => return Err(CheckInError::Bad(e.1)),
+                Err(e) if e.0 == axum::http::StatusCode::BAD_REQUEST => {
+                    return Err(CheckInError::Bad(e.1))
+                }
                 Err(e) => return Err(CheckInError::Internal(anyhow::anyhow!(e.1))),
             }
         }
     };
     if m.kind != "heartbeat" {
-        return Err(CheckInError::Bad(format!("`{slug}` is a {} monitor; only heartbeat monitors take check-ins", m.kind)));
+        return Err(CheckInError::Bad(format!(
+            "`{slug}` is a {} monitor; only heartbeat monitors take check-ins",
+            m.kind
+        )));
     }
     let paused = m.paused(now) || !m.enabled;
     let hb = m.heartbeat().map_err(CheckInError::Bad)?;
     let mut c = CheckResult::new(&status);
-    c.check_in_id = ci.check_in_id.clone().map(|s| truncate(&s, 64)).unwrap_or_default();
-    c.release = ci.release.clone().map(|s| truncate(&s, 200)).unwrap_or_default();
-    c.environment = ci.environment.clone().map(|s| truncate(&s, 64)).unwrap_or_default();
-    c.error = ci.message.clone().map(|s| truncate(&s, 500)).unwrap_or_default();
+    c.check_in_id = ci
+        .check_in_id
+        .clone()
+        .map(|s| truncate(&s, 64))
+        .unwrap_or_default();
+    c.release = ci
+        .release
+        .clone()
+        .map(|s| truncate(&s, 200))
+        .unwrap_or_default();
+    c.environment = ci
+        .environment
+        .clone()
+        .map(|s| truncate(&s, 64))
+        .unwrap_or_default();
+    c.error = ci
+        .message
+        .clone()
+        .map(|s| truncate(&s, 500))
+        .unwrap_or_default();
     if paused {
         record_check(state, &m, &c, now).await;
         return Ok(json!({"ok": true, "monitor": m.slug, "state": "paused"}));
@@ -1212,21 +1551,37 @@ pub async fn check_in(state: &AppState, project: &ProjectInfo, slug: &str, ci: C
         release(state, &m.id).await;
     }
     let m = result?;
-    Ok(json!({"ok": true, "monitor": m.slug, "state": m.state, "next_expected_at": m.expected_at.map(iso_time)}))
+    Ok(
+        json!({"ok": true, "monitor": m.slug, "state": m.state, "next_expected_at": m.expected_at.map(iso_time)}),
+    )
 }
 
-async fn check_in_locked(state: &AppState, id: &str, hb: &Heartbeat, mut c: CheckResult, duration_ms: Option<i64>, now: i64) -> Result<Monitor, CheckInError> {
-    let Some(mut m) = load(state, id).await? else { return Err(CheckInError::NotFound("monitor deleted".into())) };
+async fn check_in_locked(
+    state: &AppState,
+    id: &str,
+    hb: &Heartbeat,
+    mut c: CheckResult,
+    duration_ms: Option<i64>,
+    now: i64,
+) -> Result<Monitor, CheckInError> {
+    let Some(mut m) = load(state, id).await? else {
+        return Err(CheckInError::NotFound("monitor deleted".into()));
+    };
     if c.result == "in_progress" {
         let expected = hb.after_check_in(now, m.expected_at);
-        m.run_id = if c.check_in_id.is_empty() { new_id() } else { c.check_in_id.clone() };
+        m.run_id = if c.check_in_id.is_empty() {
+            new_id()
+        } else {
+            c.check_in_id.clone()
+        };
         m.run_started_at = Some(now);
         c.check_in_id = m.run_id.clone();
         let next = heartbeat_next_check(hb, Some(expected), Some(now));
         return Ok(apply(state, m, &c, now, (next, Some(expected))).await?);
     }
     // A finish for a run that was announced with in_progress keeps that run's expected slot.
-    let finishes_run = !m.run_id.is_empty() && (c.check_in_id.is_empty() || c.check_in_id == m.run_id);
+    let finishes_run =
+        !m.run_id.is_empty() && (c.check_in_id.is_empty() || c.check_in_id == m.run_id);
     if finishes_run {
         let started = m.run_started_at.unwrap_or(now);
         c.duration_ms = duration_ms.unwrap_or(now - started);
@@ -1267,12 +1622,17 @@ pub struct MonitorIn {
     pub paused_until: Option<Option<String>>,
 }
 
-fn double_option<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<String>>, D::Error> {
+fn double_option<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Option<String>>, D::Error> {
     Ok(Some(Option::<String>::deserialize(d)?))
 }
 
 fn valid_slug(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+    !s.is_empty()
+        && s.len() <= 64
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
 fn slugify(name: &str) -> String {
@@ -1299,9 +1659,15 @@ fn parse_pause(v: &str, now: i64) -> QResult<i64> {
 
 fn validate(kind: &str, input: &MonitorIn) -> QResult<Value> {
     if !KINDS.contains(&kind) {
-        return Err(ApiError::bad(format!("kind must be one of {}", KINDS.join(", "))));
+        return Err(ApiError::bad(format!(
+            "kind must be one of {}",
+            KINDS.join(", ")
+        )));
     }
-    for (k, v) in [("fail_threshold", input.fail_threshold), ("recover_threshold", input.recover_threshold)] {
+    for (k, v) in [
+        ("fail_threshold", input.fail_threshold),
+        ("recover_threshold", input.recover_threshold),
+    ] {
         if let Some(v) = v {
             if !(1..=10).contains(&v) {
                 return Err(ApiError::bad(format!("{k} must be 1 to 10")));
@@ -1331,15 +1697,36 @@ fn validate(kind: &str, input: &MonitorIn) -> QResult<Value> {
     // Keep only known keys so stored config stays predictable.
     let keep: &[&str] = match kind {
         "heartbeat" => &["schedule", "grace_s", "max_runtime_s"],
-        "http" => &["url", "method", "every", "timeout_s", "expect_status", "body_contains", "headers", "follow_redirects", "tls_warn_days"],
+        "http" => &[
+            "url",
+            "method",
+            "every",
+            "timeout_s",
+            "expect_status",
+            "body_contains",
+            "headers",
+            "follow_redirects",
+            "tls_warn_days",
+        ],
         "tls" => &["host", "port", "every", "timeout_s", "tls_warn_days"],
         _ => &[],
     };
-    let clean: serde_json::Map<String, Value> = config.as_object().unwrap().iter().filter(|(k, v)| keep.contains(&k.as_str()) && !v.is_null()).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let clean: serde_json::Map<String, Value> = config
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(k, v)| keep.contains(&k.as_str()) && !v.is_null())
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     Ok(Value::Object(clean))
 }
 
-async fn insert_monitor(state: &AppState, project: &ProjectInfo, input: MonitorIn, actor: &str) -> QResult<Monitor> {
+async fn insert_monitor(
+    state: &AppState,
+    project: &ProjectInfo,
+    input: MonitorIn,
+    actor: &str,
+) -> QResult<Monitor> {
     let kind = input.kind.clone().unwrap_or_else(|| "heartbeat".into());
     let config = validate(&kind, &input)?;
     let slug = match (&input.slug, &input.name) {
@@ -1348,11 +1735,19 @@ async fn insert_monitor(state: &AppState, project: &ProjectInfo, input: MonitorI
         (None, None) => return Err(ApiError::bad("`slug` or `name` is required")),
     };
     if !valid_slug(&slug) {
-        return Err(ApiError::bad("slug must be 1 to 64 characters of lowercase letters, digits, - and _"));
+        return Err(ApiError::bad(
+            "slug must be 1 to 64 characters of lowercase letters, digits, - and _",
+        ));
     }
-    let count = sqlx::query("SELECT COUNT(*) AS n FROM monitors WHERE project_id = $1").bind(&project.id).fetch_one(&state.db).await?.i("n");
+    let count = sqlx::query("SELECT COUNT(*) AS n FROM monitors WHERE project_id = $1")
+        .bind(&project.id)
+        .fetch_one(&state.db)
+        .await?
+        .i("n");
     if count >= max_per_project() {
-        return Err(ApiError::bad(format!("this project already has {count} monitors, the limit (VAKA_MONITOR_MAX_PER_PROJECT)")));
+        return Err(ApiError::bad(format!(
+            "this project already has {count} monitors, the limit (VAKA_MONITOR_MAX_PER_PROJECT)"
+        )));
     }
     let now = now_ms();
     let (next, expected) = if kind == "heartbeat" {
@@ -1367,7 +1762,11 @@ async fn insert_monitor(state: &AppState, project: &ProjectInfo, input: MonitorI
         None => None,
     };
     let id = new_id();
-    let default_threshold = if kind == "heartbeat" { 1 } else { PROBE_THRESHOLD };
+    let default_threshold = if kind == "heartbeat" {
+        1
+    } else {
+        PROBE_THRESHOLD
+    };
     let res = sqlx::query(
         "INSERT INTO monitors (id, project_id, slug, name, kind, enabled, environment, config, fail_threshold, recover_threshold, state, state_since, \
          next_check_at, expected_at, paused_until, created_by, created_at, updated_at) \
@@ -1391,22 +1790,28 @@ async fn insert_monitor(state: &AppState, project: &ProjectInfo, input: MonitorI
     .execute(&state.db)
     .await?;
     if res.rows_affected() == 0 {
-        return Err(ApiError::bad(format!("a monitor `{slug}` already exists in this project; use update_monitor")));
+        return Err(ApiError::bad(format!(
+            "a monitor `{slug}` already exists in this project; use update_monitor"
+        )));
     }
     if let Some(h) = &input.secret_headers {
         store_secret_headers(state, &id, h).await?;
     }
     crate::auth::audit(state, actor, "create_monitor", &id, &slug).await;
-    load(state, &id).await?.ok_or_else(|| ApiError::not_found("monitor"))
+    load(state, &id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("monitor"))
 }
 
 async fn get_row(state: &AppState, project_id: &str, slug: &str) -> QResult<Monitor> {
-    let row = sqlx::query(&format!("SELECT {COLS} FROM monitors WHERE project_id = $1 AND (slug = $2 OR id = $2)"))
-        .bind(project_id)
-        .bind(slug)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| ApiError::not_found("monitor"))?;
+    let row = sqlx::query(&format!(
+        "SELECT {COLS} FROM monitors WHERE project_id = $1 AND (slug = $2 OR id = $2)"
+    ))
+    .bind(project_id)
+    .bind(slug)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| ApiError::not_found("monitor"))?;
     Ok(from_row(&row))
 }
 
@@ -1425,8 +1830,18 @@ async fn uptime(state: &AppState, project_id: &str) -> HashMap<String, Value> {
         )
         .await
         .unwrap_or_default();
-    let pct = |ok: f64, n: f64| if n > 0.0 { Some((ok / n * 10000.0).round() / 100.0) } else { None };
-    let f = |v: &Value| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).unwrap_or(0.0);
+    let pct = |ok: f64, n: f64| {
+        if n > 0.0 {
+            Some((ok / n * 10000.0).round() / 100.0)
+        } else {
+            None
+        }
+    };
+    let f = |v: &Value| {
+        v.as_f64()
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            .unwrap_or(0.0)
+    };
     rows.into_iter()
         .map(|r| {
             let avg = f(&r["avg_ms"]);
@@ -1446,7 +1861,12 @@ async fn uptime(state: &AppState, project_id: &str) -> HashMap<String, Value> {
 
 pub async fn list(state: &AppState, p: &Principal, project: &str) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
-    let rows = sqlx::query(&format!("SELECT {COLS} FROM monitors WHERE project_id = $1 ORDER BY slug")).bind(&proj.id).fetch_all(&state.db).await?;
+    let rows = sqlx::query(&format!(
+        "SELECT {COLS} FROM monitors WHERE project_id = $1 ORDER BY slug"
+    ))
+    .bind(&proj.id)
+    .fetch_all(&state.db)
+    .await?;
     let stats = uptime(state, &proj.id).await;
     let monitors: Vec<Value> = rows
         .iter()
@@ -1472,10 +1892,17 @@ pub async fn get(state: &AppState, p: &Principal, project: &str, slug: &str) -> 
         .await?;
     let mut v = full_json(state, &m).await;
     v["stats"] = stats.get(&m.id).cloned().unwrap_or(json!({}));
-    Ok(json!({"project": proj.slug, "monitor": v, "recent_checks": checks, "incidents": incidents.iter().map(incident_from_row).collect::<Vec<_>>()}))
+    Ok(
+        json!({"project": proj.slug, "monitor": v, "recent_checks": checks, "incidents": incidents.iter().map(incident_from_row).collect::<Vec<_>>()}),
+    )
 }
 
-async fn recent_checks(state: &AppState, m: &Monitor, since: Option<i64>, limit: i64) -> anyhow::Result<Vec<Value>> {
+async fn recent_checks(
+    state: &AppState,
+    m: &Monitor,
+    since: Option<i64>,
+    limit: i64,
+) -> anyhow::Result<Vec<Value>> {
     state
         .ch
         .query(
@@ -1492,12 +1919,21 @@ pub struct ChecksQuery {
     pub limit: Option<i64>,
 }
 
-pub async fn checks(state: &AppState, p: &Principal, project: &str, slug: &str, q: ChecksQuery) -> QResult<Value> {
+pub async fn checks(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    slug: &str,
+    q: ChecksQuery,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     let m = get_row(state, &proj.id, slug).await?;
     let now = now_ms();
     let since = match q.since.as_deref() {
-        Some(s) => Some(crate::util::parse_time_expr(s, now).ok_or_else(|| ApiError::bad("since must be relative (24h, 7d) or RFC 3339"))?),
+        Some(s) => Some(
+            crate::util::parse_time_expr(s, now)
+                .ok_or_else(|| ApiError::bad("since must be relative (24h, 7d) or RFC 3339"))?,
+        ),
         None => Some(now - 86_400_000),
     };
     let checks = recent_checks(state, &m, since, q.limit.unwrap_or(200).clamp(1, 1000)).await?;
@@ -1513,7 +1949,12 @@ async fn full_json(state: &AppState, m: &Monitor) -> Value {
     v
 }
 
-pub async fn create(state: &AppState, p: &Principal, project: &str, input: MonitorIn) -> QResult<Value> {
+pub async fn create(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    input: MonitorIn,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     if !p.can_write(&proj.id) {
         return Err(ApiError::forbidden());
@@ -1542,10 +1983,14 @@ pub async fn run_now(state: &AppState, p: &Principal, project: &str, slug: &str)
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
     if !claimed {
-        return Err(ApiError::bad("the monitor is being checked right now; try again in a moment"));
+        return Err(ApiError::bad(
+            "the monitor is being checked right now; try again in a moment",
+        ));
     }
     let res = async {
-        let Some(m) = load(state, &m.id).await? else { anyhow::bail!("monitor deleted") };
+        let Some(m) = load(state, &m.id).await? else {
+            anyhow::bail!("monitor deleted")
+        };
         evaluate_probe(state, m, None).await
     }
     .await;
@@ -1557,17 +2002,37 @@ pub async fn run_now(state: &AppState, p: &Principal, project: &str, slug: &str)
     }))
 }
 
-pub async fn update(state: &AppState, p: &Principal, project: &str, slug: &str, input: MonitorIn) -> QResult<Value> {
+pub async fn update(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    slug: &str,
+    input: MonitorIn,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     if !p.can_write(&proj.id) {
         return Err(ApiError::forbidden());
     }
     let cur = get_row(state, &proj.id, slug).await?;
-    if input.kind.as_deref().map(|k| k != cur.kind).unwrap_or(false) {
-        return Err(ApiError::bad("a monitor's kind can't change; create a new monitor"));
+    if input
+        .kind
+        .as_deref()
+        .map(|k| k != cur.kind)
+        .unwrap_or(false)
+    {
+        return Err(ApiError::bad(
+            "a monitor's kind can't change; create a new monitor",
+        ));
     }
-    if input.slug.as_deref().map(|s| s != cur.slug).unwrap_or(false) {
-        return Err(ApiError::bad("a monitor's slug can't change (check-ins use it); create a new monitor"));
+    if input
+        .slug
+        .as_deref()
+        .map(|s| s != cur.slug)
+        .unwrap_or(false)
+    {
+        return Err(ApiError::bad(
+            "a monitor's slug can't change (check-ins use it); create a new monitor",
+        ));
     }
     let merged = MonitorIn {
         slug: None,
@@ -1598,21 +2063,42 @@ pub async fn update(state: &AppState, p: &Principal, project: &str, slug: &str, 
     match input.paused_until {
         Some(Some(v)) => {
             let until = parse_pause(&v, now)?;
-            sqlx::query("UPDATE monitors SET paused_until = $1, next_check_at = NULL WHERE id = $2").bind(until).bind(&cur.id).execute(&state.db).await?;
+            sqlx::query(
+                "UPDATE monitors SET paused_until = $1, next_check_at = NULL WHERE id = $2",
+            )
+            .bind(until)
+            .bind(&cur.id)
+            .execute(&state.db)
+            .await?;
         }
         Some(None) if cur.paused_until.is_some() => {
-            let m = load(state, &cur.id).await?.ok_or_else(|| ApiError::not_found("monitor"))?;
+            let m = load(state, &cur.id)
+                .await?
+                .ok_or_else(|| ApiError::not_found("monitor"))?;
             resume(state, &m, now).await?;
         }
         _ if schedule_changed && cur.paused_until.is_none() && cur.kind == "heartbeat" => {
             let hb = Heartbeat::from_config(&config).map_err(ApiError::bad)?;
             let e = hb.next_after(now);
-            let next = heartbeat_next_check(&hb, Some(e), cur.run_started_at.filter(|_| !cur.run_id.is_empty()));
-            sqlx::query("UPDATE monitors SET expected_at = $1, next_check_at = $2 WHERE id = $3").bind(e).bind(next).bind(&cur.id).execute(&state.db).await?;
+            let next = heartbeat_next_check(
+                &hb,
+                Some(e),
+                cur.run_started_at.filter(|_| !cur.run_id.is_empty()),
+            );
+            sqlx::query("UPDATE monitors SET expected_at = $1, next_check_at = $2 WHERE id = $3")
+                .bind(e)
+                .bind(next)
+                .bind(&cur.id)
+                .execute(&state.db)
+                .await?;
         }
         _ if schedule_changed && cur.paused_until.is_none() => {
             // A changed target or interval is checked right away.
-            sqlx::query("UPDATE monitors SET next_check_at = $1 WHERE id = $2").bind(now).bind(&cur.id).execute(&state.db).await?;
+            sqlx::query("UPDATE monitors SET next_check_at = $1 WHERE id = $2")
+                .bind(now)
+                .bind(&cur.id)
+                .execute(&state.db)
+                .await?;
         }
         _ => {}
     }
@@ -1620,7 +2106,9 @@ pub async fn update(state: &AppState, p: &Principal, project: &str, slug: &str, 
         store_secret_headers(state, &cur.id, h).await?;
     }
     crate::auth::audit(state, &p.label(), "update_monitor", &cur.id, &cur.slug).await;
-    let m = load(state, &cur.id).await?.ok_or_else(|| ApiError::not_found("monitor"))?;
+    let m = load(state, &cur.id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("monitor"))?;
     Ok(json!({"monitor": full_json(state, &m).await}))
 }
 
@@ -1630,9 +2118,18 @@ pub async fn delete(state: &AppState, p: &Principal, project: &str, slug: &str) 
         return Err(ApiError::forbidden());
     }
     let m = get_row(state, &proj.id, slug).await?;
-    sqlx::query("DELETE FROM monitors WHERE id = $1").bind(&m.id).execute(&state.db).await?;
-    sqlx::query("DELETE FROM monitor_secrets WHERE monitor_id = $1").bind(&m.id).execute(&state.db).await?;
-    sqlx::query("DELETE FROM monitor_incidents WHERE monitor_id = $1").bind(&m.id).execute(&state.db).await?;
+    sqlx::query("DELETE FROM monitors WHERE id = $1")
+        .bind(&m.id)
+        .execute(&state.db)
+        .await?;
+    sqlx::query("DELETE FROM monitor_secrets WHERE monitor_id = $1")
+        .bind(&m.id)
+        .execute(&state.db)
+        .await?;
+    sqlx::query("DELETE FROM monitor_incidents WHERE monitor_id = $1")
+        .bind(&m.id)
+        .execute(&state.db)
+        .await?;
     crate::auth::audit(state, &p.label(), "delete_monitor", &m.id, &m.slug).await;
     Ok(json!({"deleted": m.slug}))
 }
@@ -1646,11 +2143,17 @@ pub struct IncidentQuery {
     pub limit: Option<i64>,
 }
 
-pub async fn list_incidents(state: &AppState, p: &Principal, project: &str, q: IncidentQuery) -> QResult<Value> {
+pub async fn list_incidents(
+    state: &AppState,
+    p: &Principal,
+    project: &str,
+    q: IncidentQuery,
+) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     let now = now_ms();
     let since = match q.since.as_deref() {
-        Some(s) => crate::util::parse_time_expr(s, now).ok_or_else(|| ApiError::bad("since must be relative (24h, 7d) or RFC 3339"))?,
+        Some(s) => crate::util::parse_time_expr(s, now)
+            .ok_or_else(|| ApiError::bad("since must be relative (24h, 7d) or RFC 3339"))?,
         None => now - 30 * 86_400_000,
     };
     let monitor_id = match q.monitor.as_deref() {
@@ -1710,13 +2213,21 @@ pub async fn get_incident(state: &AppState, p: &Principal, id: &str) -> QResult<
     if v["open"] == true {
         // Ongoing: refresh the context so it includes what happened since the start.
         let mid = v["monitor_id"].as_str().unwrap_or("").to_string();
-        let started = sqlx::query("SELECT started_at FROM monitor_incidents WHERE id = $1").bind(id).fetch_one(&state.db).await?.i("started_at");
+        let started = sqlx::query("SELECT started_at FROM monitor_incidents WHERE id = $1")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await?
+            .i("started_at");
         if let Some(m) = load(state, &mid).await? {
             let mut ctx = correlate(state, &m, started, "").await;
             if let Some(run) = v["context"].get("run_errors") {
                 ctx["run_errors"] = run.clone();
             }
-            sqlx::query("UPDATE monitor_incidents SET context = $1 WHERE id = $2").bind(ctx.to_string()).bind(id).execute(&state.db).await?;
+            sqlx::query("UPDATE monitor_incidents SET context = $1 WHERE id = $2")
+                .bind(ctx.to_string())
+                .bind(id)
+                .execute(&state.db)
+                .await?;
             v["context"] = ctx;
         }
     }
@@ -1731,7 +2242,12 @@ pub struct IncidentUpdate {
     pub acknowledged: Option<bool>,
 }
 
-pub async fn update_incident(state: &AppState, p: &Principal, id: &str, u: IncidentUpdate) -> QResult<Value> {
+pub async fn update_incident(
+    state: &AppState,
+    p: &Principal,
+    id: &str,
+    u: IncidentUpdate,
+) -> QResult<Value> {
     let (project_id, _) = incident_for(state, p, id).await?;
     if !p.can_write(&project_id) {
         return Err(ApiError::forbidden());
@@ -1766,8 +2282,12 @@ mod tests {
     fn heartbeat_config() {
         assert!(Heartbeat::from_config(&json!({})).is_err());
         assert!(Heartbeat::from_config(&json!({"schedule": {"every": "30s"}})).is_err());
-        assert!(Heartbeat::from_config(&json!({"schedule": {"cron": "0 3 * * *", "timezone": "Mars/Base"}})).is_err());
-        let hb = Heartbeat::from_config(&json!({"schedule": {"every": "1h"}, "grace_s": "5m"})).unwrap();
+        assert!(Heartbeat::from_config(
+            &json!({"schedule": {"cron": "0 3 * * *", "timezone": "Mars/Base"}})
+        )
+        .is_err());
+        let hb =
+            Heartbeat::from_config(&json!({"schedule": {"every": "1h"}, "grace_s": "5m"})).unwrap();
         assert_eq!(hb.schedule, Schedule::Every(3600));
         assert_eq!(hb.grace_s, 300);
         assert_eq!(hb.max_runtime_s, DEFAULT_MAX_RUNTIME_S);
@@ -1776,36 +2296,74 @@ mod tests {
 
     #[test]
     fn cron_check_in_covers_expected_run() {
-        let hb = Heartbeat::from_config(&json!({"schedule": {"cron": "0 3 * * *"}, "grace_s": 120})).unwrap();
+        let hb =
+            Heartbeat::from_config(&json!({"schedule": {"cron": "0 3 * * *"}, "grace_s": 120}))
+                .unwrap();
         let day = 86_400_000;
         let three = 3 * 3_600_000;
         // Expected 03:00 today; the job reports at 02:59:58 and at 03:00:05: both cover today.
         assert_eq!(hb.after_check_in(three - 2000, Some(three)), three + day);
         assert_eq!(hb.after_check_in(three + 5000, Some(three)), three + day);
         // A manual run at 10:00 doesn't push the schedule past tomorrow's 03:00.
-        assert_eq!(hb.after_check_in(10 * 3_600_000, Some(three + day)), three + day);
+        assert_eq!(
+            hb.after_check_in(10 * 3_600_000, Some(three + day)),
+            three + day
+        );
     }
 
     #[test]
     fn next_check_is_deadline_or_timeout() {
-        let hb = Heartbeat { schedule: Schedule::Every(3600), grace_s: 60, max_runtime_s: 600 };
+        let hb = Heartbeat {
+            schedule: Schedule::Every(3600),
+            grace_s: 60,
+            max_runtime_s: 600,
+        };
         assert_eq!(heartbeat_next_check(&hb, Some(10_000), None), Some(70_000));
-        assert_eq!(heartbeat_next_check(&hb, Some(10_000_000), Some(0)), Some(600_000));
-        let hb = Heartbeat { max_runtime_s: 0, ..hb };
-        assert_eq!(heartbeat_next_check(&hb, Some(10_000), Some(0)), Some(70_000));
+        assert_eq!(
+            heartbeat_next_check(&hb, Some(10_000_000), Some(0)),
+            Some(600_000)
+        );
+        let hb = Heartbeat {
+            max_runtime_s: 0,
+            ..hb
+        };
+        assert_eq!(
+            heartbeat_next_check(&hb, Some(10_000), Some(0)),
+            Some(70_000)
+        );
     }
 
     #[test]
     fn probe_config() {
-        let pc = ProbeConfig::from_config("http", &json!({"url": "https://example.com/health", "every": "5m", "expect_status": [200]})).unwrap();
+        let pc = ProbeConfig::from_config(
+            "http",
+            &json!({"url": "https://example.com/health", "every": "5m", "expect_status": [200]}),
+        )
+        .unwrap();
         assert_eq!(pc.every_s, 300);
         assert_eq!(pc.target(), "GET https://example.com/health");
         assert!(ProbeConfig::from_config("http", &json!({})).is_err());
         assert!(ProbeConfig::from_config("http", &json!({"url": "http://192.168.0.1/"})).is_err());
-        assert!(ProbeConfig::from_config("http", &json!({"url": "https://example.com", "every": "10s"})).is_err());
-        assert!(ProbeConfig::from_config("http", &json!({"url": "https://example.com", "method": "POST"})).is_err());
-        assert!(ProbeConfig::from_config("http", &json!({"url": "https://example.com", "method": "HEAD", "body_contains": "ok"})).is_err());
-        assert!(ProbeConfig::from_config("http", &json!({"url": "https://example.com", "headers": {"bad name": "x"}})).is_err());
+        assert!(ProbeConfig::from_config(
+            "http",
+            &json!({"url": "https://example.com", "every": "10s"})
+        )
+        .is_err());
+        assert!(ProbeConfig::from_config(
+            "http",
+            &json!({"url": "https://example.com", "method": "POST"})
+        )
+        .is_err());
+        assert!(ProbeConfig::from_config(
+            "http",
+            &json!({"url": "https://example.com", "method": "HEAD", "body_contains": "ok"})
+        )
+        .is_err());
+        assert!(ProbeConfig::from_config(
+            "http",
+            &json!({"url": "https://example.com", "headers": {"bad name": "x"}})
+        )
+        .is_err());
         let tls = ProbeConfig::from_config("tls", &json!({"host": "Example.com."})).unwrap();
         assert_eq!(tls.tls, Some(("example.com".into(), 443)));
         assert_eq!(tls.every_s, DEFAULT_TLS_EVERY_S);

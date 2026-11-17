@@ -8,7 +8,10 @@ use std::time::Duration;
 /// "owner/repo" from "owner/repo" or "https://github.com/owner/repo(.git)".
 pub fn repo_slug(target: &str) -> Option<String> {
     let t = target.trim().trim_end_matches('/').trim_end_matches(".git");
-    let t = t.strip_prefix("https://github.com/").or_else(|| t.strip_prefix("http://github.com/")).unwrap_or(t);
+    let t = t
+        .strip_prefix("https://github.com/")
+        .or_else(|| t.strip_prefix("http://github.com/"))
+        .unwrap_or(t);
     let mut parts = t.split('/');
     let (o, r) = (parts.next()?, parts.next()?);
     if o.is_empty() || r.is_empty() || parts.next().is_some() || t.contains(':') {
@@ -17,7 +20,12 @@ pub fn repo_slug(target: &str) -> Option<String> {
     Some(format!("{o}/{r}"))
 }
 
-fn client(state: &AppState, method: reqwest::Method, path: &str, token: &str) -> reqwest::RequestBuilder {
+fn client(
+    state: &AppState,
+    method: reqwest::Method,
+    path: &str,
+    token: &str,
+) -> reqwest::RequestBuilder {
     state
         .http
         .request(method, format!("{}{path}", state.config.github_api_url))
@@ -32,7 +40,10 @@ async fn check(resp: reqwest::Response) -> anyhow::Result<Value> {
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        anyhow::bail!("GitHub returned {status}: {}", crate::util::truncate(&text, 300));
+        anyhow::bail!(
+            "GitHub returned {status}: {}",
+            crate::util::truncate(&text, 300)
+        );
     }
     Ok(serde_json::from_str(&text).unwrap_or(json!({"status": status.as_u16()})))
 }
@@ -67,13 +78,32 @@ pub fn client_payload(trigger: &str, payload: &Value) -> Value {
     })
 }
 
-pub async fn dispatch(state: &AppState, target: &str, token: &str, trigger: &str, payload: &Value) -> anyhow::Result<String> {
+pub async fn dispatch(
+    state: &AppState,
+    target: &str,
+    token: &str,
+    trigger: &str,
+    payload: &Value,
+) -> anyhow::Result<String> {
     if token.is_empty() {
-        anyhow::bail!("github_dispatch needs a GitHub token in the rule's secret (contents: write)");
+        anyhow::bail!(
+            "github_dispatch needs a GitHub token in the rule's secret (contents: write)"
+        );
     }
     let repo = repo_slug(target).ok_or_else(|| anyhow::anyhow!("target must be owner/repo"))?;
     let body = json!({"event_type": format!("vaka.{trigger}"), "client_payload": client_payload(trigger, payload)});
-    check(client(state, reqwest::Method::POST, &format!("/repos/{repo}/dispatches"), token).json(&body).send().await?).await?;
+    check(
+        client(
+            state,
+            reqwest::Method::POST,
+            &format!("/repos/{repo}/dispatches"),
+            token,
+        )
+        .json(&body)
+        .send()
+        .await?,
+    )
+    .await?;
     Ok(format!("repository_dispatch vaka.{trigger} sent to {repo}"))
 }
 
@@ -249,7 +279,15 @@ pub fn issue_body(payload: &Value, mention: Option<&str>) -> String {
     crate::util::truncate(&out, 60_000)
 }
 
-pub async fn issue(state: &AppState, target: &str, token: &str, trigger: &str, issue_id: &str, payload: &Value, filters: &Value) -> anyhow::Result<String> {
+pub async fn issue(
+    state: &AppState,
+    target: &str,
+    token: &str,
+    trigger: &str,
+    issue_id: &str,
+    payload: &Value,
+    filters: &Value,
+) -> anyhow::Result<String> {
     if token.is_empty() {
         anyhow::bail!("github_issue needs a GitHub token in the rule's secret (issues: write)");
     }
@@ -260,10 +298,23 @@ pub async fn issue(state: &AppState, target: &str, token: &str, trigger: &str, i
     let existing = if issue_id.is_empty() {
         None
     } else {
-        crate::fixctx::links_for(state, issue_id).await?.into_iter().find_map(|l| l["url"].as_str().filter(|u| u.starts_with(&prefix)).map(String::from))
+        crate::fixctx::links_for(state, issue_id)
+            .await?
+            .into_iter()
+            .find_map(|l| {
+                l["url"]
+                    .as_str()
+                    .filter(|u| u.starts_with(&prefix))
+                    .map(String::from)
+            })
     };
     if let Some(url) = existing {
-        let number = url.trim_start_matches(&prefix).split(['/', '#']).next().unwrap_or("").to_string();
+        let number = url
+            .trim_start_matches(&prefix)
+            .split(['/', '#'])
+            .next()
+            .unwrap_or("")
+            .to_string();
         let what = match trigger {
             "regression" => format!(
                 "{} regressed in release {}.",
@@ -312,12 +363,26 @@ pub async fn issue(state: &AppState, target: &str, token: &str, trigger: &str, i
         )
     };
     let body = json!({"title": title, "body": issue_body(payload, filters["mention"].as_str()), "labels": ["vaka"]});
-    let v = check(client(state, reqwest::Method::POST, &format!("/repos/{repo}/issues"), token).json(&body).send().await?).await?;
+    let v = check(
+        client(
+            state,
+            reqwest::Method::POST,
+            &format!("/repos/{repo}/issues"),
+            token,
+        )
+        .json(&body)
+        .send()
+        .await?,
+    )
+    .await?;
     let url = v["html_url"].as_str().unwrap_or("").to_string();
     if !issue_id.is_empty() && url.starts_with("http") {
         crate::fixctx::insert_link(state, issue_id, "issue", &url, &title, "vaka").await?;
     }
-    Ok(format!("opened {}", if url.is_empty() { repo } else { url }))
+    Ok(format!(
+        "opened {}",
+        if url.is_empty() { repo } else { url }
+    ))
 }
 
 #[cfg(test)]
@@ -326,7 +391,10 @@ mod tests {
     #[test]
     fn slugs_and_payloads() {
         assert_eq!(repo_slug("acme/shop").as_deref(), Some("acme/shop"));
-        assert_eq!(repo_slug("https://github.com/acme/shop.git").as_deref(), Some("acme/shop"));
+        assert_eq!(
+            repo_slug("https://github.com/acme/shop.git").as_deref(),
+            Some("acme/shop")
+        );
         assert!(repo_slug("https://gitlab.com/a/b").is_none());
         assert!(repo_slug("acme").is_none());
         let p = json!({"project": {"slug": "web"}, "issue": {"short_id": "WEB-3", "title": "TypeError", "times_seen": 4},
@@ -368,13 +436,36 @@ mod tests {
     fn filters() {
         let issue = json!({"level": "error", "last_release": "2.1.0", "owners": ["a@x.se"]});
         assert!(crate::alerts::filters_match(&json!({}), &issue, None));
-        assert!(crate::alerts::filters_match(&json!({"release": "2.*", "owner": "A@x.se"}), &issue, None));
-        assert!(!crate::alerts::filters_match(&json!({"min_level": "fatal"}), &issue, None));
+        assert!(crate::alerts::filters_match(
+            &json!({"release": "2.*", "owner": "A@x.se"}),
+            &issue,
+            None
+        ));
+        assert!(!crate::alerts::filters_match(
+            &json!({"min_level": "fatal"}),
+            &issue,
+            None
+        ));
         let ev = json!({"environment": "staging", "handled": true, "tags": {"area": "checkout"}, "level": "error"});
-        assert!(!crate::alerts::filters_match(&json!({"environment": "production"}), &issue, Some(&ev)));
-        assert!(!crate::alerts::filters_match(&json!({"unhandled_only": true}), &issue, Some(&ev)));
-        assert!(crate::alerts::filters_match(&json!({"tags": {"area": "check*"}}), &issue, Some(&ev)));
+        assert!(!crate::alerts::filters_match(
+            &json!({"environment": "production"}),
+            &issue,
+            Some(&ev)
+        ));
+        assert!(!crate::alerts::filters_match(
+            &json!({"unhandled_only": true}),
+            &issue,
+            Some(&ev)
+        ));
+        assert!(crate::alerts::filters_match(
+            &json!({"tags": {"area": "check*"}}),
+            &issue,
+            Some(&ev)
+        ));
         assert!(crate::alerts::validate_filters(&json!({"bogus": 1})).is_err());
-        assert!(crate::alerts::validate_filters(&json!({"min_level": "fatal", "tags": {"a": "b"}, "unhandled_only": true})).is_ok());
+        assert!(crate::alerts::validate_filters(
+            &json!({"min_level": "fatal", "tags": {"a": "b"}, "unhandled_only": true})
+        )
+        .is_ok());
     }
 }

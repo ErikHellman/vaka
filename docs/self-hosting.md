@@ -106,7 +106,10 @@ All settings are environment variables.
 | `VAKA_SMS_MAX_PER_DAY` | `100` | SMS deliveries allowed per 24 hours across the server (0 = unlimited) |
 | `VAKA_EMAIL_FROM` | `Vaka <vaka@localhost>` | Sender for emails |
 | `VAKA_PASSWORD_LOGIN` | `true` | Set to `false` to allow only email-code login (needs `VAKA_RESEND_API_KEY`) |
-| `VAKA_GEOIP_DB` | | Optional MaxMind/DB-IP country `.mmdb` file |
+| `VAKA_GEOIP` | `true` | Look up each event's country from the client IP. `false` turns it off (CDN country headers are still used) |
+| `VAKA_GEOIP_DB` | bundled DB-IP database | Your own MaxMind or DB-IP country `.mmdb` file instead of the bundled one. It is never replaced by the update check |
+| `VAKA_GEOIP_UPDATE` | `true` | Check weekly for a newer DB-IP country database and keep it in `$VAKA_DATA_DIR/geoip/`. `false` uses only the bundled file |
+| `VAKA_GEOIP_UPDATE_URL` | `https://download.db-ip.com/free/dbip-country-lite-{month}.mmdb.gz` | Where the update check downloads from; `{month}` becomes `YYYY-MM`. Point it at a mirror if the server can't reach db-ip.com |
 | `VAKA_S3_BUCKET` | | Store debug files in an S3-compatible bucket (see below) |
 | `VAKA_S3_ENDPOINT` | `https://s3.$REGION.amazonaws.com` | Endpoint for R2, MinIO, Garage, ... |
 | `VAKA_S3_REGION` | `us-east-1` | Signing region (`auto` for Cloudflare R2) |
@@ -122,8 +125,28 @@ and at most one new code per minute. Set `VAKA_PASSWORD_LOGIN=false` to turn pas
 off and use codes only. Without email configured that setting is ignored, so you can't lock
 yourself out.
 
-Country lookup uses `CF-IPCountry` (Cloudflare) or similar proxy headers when present, otherwise
-the GeoIP database if configured.
+### Country lookup
+
+Each event gets a country code from the client's IP address. The address itself is never stored.
+
+1. A country header from a CDN wins: `CF-IPCountry` (Cloudflare), `X-Vercel-IP-Country` or
+   `X-Country-Code`.
+2. Otherwise Vaka looks the address up in a country database. The image ships DB-IP's free
+   [IP to Country Lite](https://db-ip.com/db/download/ip-to-country-lite) database
+   (`/usr/share/vaka/dbip-country-lite.mmdb`, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/),
+   [IP Geolocation by DB-IP](https://db-ip.com)). The copy in the repository is refreshed every
+   month by a scheduled CI job, so each release carries a recent one.
+3. Running servers check once a week for a newer monthly release and keep it in
+   `$VAKA_DATA_DIR/geoip/`; on start Vaka uses whichever copy is newest. Turn this off with
+   `VAKA_GEOIP_UPDATE=false`, for example when the server has no outbound internet access.
+
+Set `VAKA_GEOIP_DB` to use your own database, such as MaxMind GeoLite2 Country, or
+`VAKA_GEOIP=false` to skip the lookup. The server logs which database it loaded at startup.
+
+The lookup needs the real client address. Behind a load balancer or reverse proxy (Fly.io,
+Caddy, nginx, Kubernetes ingress) Vaka reads it from `X-Forwarded-For`, but only when the proxy
+connects from an address in `VAKA_TRUSTED_PROXIES`. If every event shows the same country, or
+your proxy's, add the proxy's address there.
 
 Vaka creates the ClickHouse database and tables and runs metadata migrations on start.
 

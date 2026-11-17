@@ -7,16 +7,35 @@ use serde_json::Value;
 const FILTERED: &str = "[Filtered]";
 
 static DEFAULT_KEYS: &[&str] = &[
-    "password", "passwd", "pwd", "secret", "token", "api_key", "apikey", "access_token",
-    "refresh_token", "authorization", "auth", "cookie", "set-cookie", "session", "credit_card",
-    "card_number", "cvv", "ssn", "private_key",
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "authorization",
+    "auth",
+    "cookie",
+    "set-cookie",
+    "session",
+    "credit_card",
+    "card_number",
+    "cvv",
+    "ssn",
+    "private_key",
 ];
 
-static EMAIL: Lazy<Regex> = Lazy::new(|| Regex::new(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}").unwrap());
+static EMAIL: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}").unwrap());
 static CARD: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(?:\d[ -]?){13,19}\b").unwrap());
-static BEARER: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}").unwrap());
+static BEARER: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}").unwrap());
 static KV_SECRET: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(password|passwd|pwd|secret|token|api_key|apikey|access_token)=([^&\s]+)").unwrap()
+    Regex::new(r"(?i)\b(password|passwd|pwd|secret|token|api_key|apikey|access_token)=([^&\s]+)")
+        .unwrap()
 });
 
 pub struct Scrubber {

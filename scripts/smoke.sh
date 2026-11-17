@@ -614,6 +614,17 @@ grep -q '"plan":"pro"' "$STREAM_OUT" || fail "stream event: $(cat "$STREAM_OUT")
 [ "$(curl -s -o /dev/null -w '%{http_code}' "${A[@]}" "$VAKA/api/v1/projects/$SLUG/stream?types=logs")" = 400 ] || fail "stream bad type"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$VAKA/api/v1/projects/$SLUG/stream")" = 401 ] || fail "stream needs auth"
 
+# Country from the client IP: the bundled DB-IP database, via X-Forwarded-For from a trusted
+# proxy (the smoke test connects from 127.0.0.1). CF-IPCountry wins when a CDN sets it.
+GEO=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects" -d '{"name":"smoke-geo","platform":"javascript"}')
+GEO_KEY=$(echo "$GEO" | j 'd["ingest_key"]'); GEO_SLUG=$(echo "$GEO" | j 'd["slug"]')
+geo() { curl -sf -X POST "$VAKA/ingest/v1/batch" -H "x-vaka-key: $GEO_KEY" -H 'content-type: application/json' "$@" -d '{"items":[{"type":"event","name":"pageview","url":"https://geo.example.com/"}]}' >/dev/null; }
+geo -H 'x-forwarded-for: 8.8.8.8' || fail "geo ingest"
+geo -H 'x-forwarded-for: 8.8.8.8' -H 'cf-ipcountry: SE' || fail "geo ingest (cf)"
+sleep 2
+CTRY=$(curl -sf "${A[@]}" "$VAKA/api/v1/projects/$GEO_SLUG/analytics/breakdown?dimension=country&since=1h")
+[ "$(echo "$CTRY" | j 'sorted(r["value"] for r in d["rows"])')" = "['SE', 'US']" ] || fail "country lookup: $CTRY"
+
 # GDPR
 GD=$(curl -sf "${A[@]}" -X DELETE "$VAKA/api/v1/projects/$SLUG/users/u1")
 echo "$GD" | j 'd["errors"]' | grep -q 1 || fail "gdpr: $GD"

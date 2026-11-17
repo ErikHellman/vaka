@@ -19,7 +19,8 @@ fix PRs. There is no dashboard: the web UI only covers setup and administration.
 - **Performance tracing**: spans and traces, latency percentiles, slow endpoints, app start times,
   Web Vitals (LCP, INP, CLS, FCP, TTFB) and p95 regressions between releases.
 - **OpenTelemetry ingestion**: OTLP/HTTP traces and logs (protobuf or JSON) from any backend.
-- **Web and mobile analytics**: cookieless, no personal data by default (Plausible-style).
+- **Web and mobile analytics**: cookieless, no personal data by default (Plausible-style), with
+  country lookup from a bundled, self-updating GeoIP database.
 - **Product analytics**: funnels, retention, paths, cohorts, stickiness, lifecycle, goals, revenue,
   session timelines, crash precursors and per-user timelines for users the app identifies.
 - **Feature flags and experiments**: rollouts and targeting, flag health per variant, experiment
@@ -93,3 +94,6 @@ PASSWORD=dev-Passw0rd-local scripts/smoke.sh   # end-to-end test against the run
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+
+The bundled country database in `geoip/` is [IP Geolocation by DB-IP](https://db-ip.com), under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
