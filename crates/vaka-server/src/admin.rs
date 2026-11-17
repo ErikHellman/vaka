@@ -38,6 +38,7 @@ pub fn router() -> Router<AppState> {
         .route("/ui/alerts", get(alerts_page).post(alerts_action))
         .route("/favicon.svg", get(|| icon("image/svg+xml", include_bytes!("../assets/favicon.svg"))))
         .route("/favicon.ico", get(|| icon("image/x-icon", include_bytes!("../assets/favicon.ico"))))
+        .route("/ui/assets/nunito.woff2", get(font))
         .route("/apple-touch-icon.png", get(|| icon("image/png", include_bytes!("../assets/apple-touch-icon.png"))))
 }
 
@@ -51,27 +52,88 @@ async fn icon(content_type: &'static str, body: &'static [u8]) -> Response {
         .into_response()
 }
 
+/// Nunito (variable, latin subset, SIL OFL 1.1; see assets/OFL-Nunito.txt),
+/// the typeface of the Honey design language shared with Ting.
+async fn font() -> Response {
+    (
+        [(header::CONTENT_TYPE, "font/woff2"), (header::CACHE_CONTROL, "public, max-age=31536000, immutable")],
+        &include_bytes!("../assets/nunito-latin-wght-normal.woff2")[..],
+    )
+        .into_response()
+}
+
+/// "Honey" design language (from Ting, docs/DESIGN.md there): warm cream and
+/// brown surfaces, one amber accent, floating rounded panels, Nunito.
 const CSS: &str = r#"
-:root{--bg:#fafaf9;--fg:#1c1917;--muted:#78716c;--line:#e7e5e4;--card:#fff;--accent:#2563eb;--bad:#dc2626;--ok:#16a34a}
-@media (prefers-color-scheme:dark){:root{--bg:#0c0a09;--fg:#e7e5e4;--muted:#a8a29e;--line:#292524;--card:#1c1917;--accent:#60a5fa}}
-*{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg)}
-header{display:flex;gap:20px;align-items:center;padding:12px 24px;border-bottom:1px solid var(--line);background:var(--card);flex-wrap:wrap}
-header a{color:var(--fg);text-decoration:none}header .brand{font-weight:700;display:inline-flex;align-items:center;gap:8px}header .sp{flex:1}
-main{max-width:1000px;margin:24px auto;padding:0 16px}h1{font-size:22px}h2{font-size:17px;margin-top:28px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px;margin:12px 0}
-table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-weight:500;font-size:13px}
-input,select,textarea{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
-button{font:inherit;padding:6px 12px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#fff;cursor:pointer}
-button.ghost{background:transparent;color:var(--accent)}button.danger{background:var(--bad);border-color:var(--bad)}
+@font-face{font-family:'Nunito Variable';font-style:normal;font-display:swap;font-weight:200 1000;src:url(/ui/assets/nunito.woff2) format('woff2-variations')}
+:root{--canvas:light-dark(#f5eee1,#16120e);--surface:light-dark(#fffcf6,#251f18);--surface-2:light-dark(#f2e8d6,#30281f);--surface-3:light-dark(#eadcc4,#3b3127);
+--line:light-dark(#e8dac3,#3a3027);--fg:light-dark(#3b2a2f,#f6ece0);--muted:light-dark(#76615a,#b5a492);--accent:light-dark(#e09a2d,#f2a93b);--accent-fg:#2a1a08;
+--accent-ink:light-dark(#995a05,#f5b656);--accent-soft:light-dark(#fbe7c2,#47331a);--focus:light-dark(#b8700e,#f2a93b);--danger:light-dark(#c2412d,#ff8a70);
+--danger-fill:light-dark(#c2381c,#c8432a);--alert-soft:light-dark(#fbe1da,#4a2219);--ok:light-dark(#357a4e,#7fd09a);
+--shadow-a:light-dark(rgb(110 70 20/.26),rgb(0 0 0/.55));--shadow-b:light-dark(rgb(110 70 20/.1),rgb(0 0 0/.35));
+--shadow:0 10px 30px -14px var(--shadow-a),0 2px 6px -2px var(--shadow-b);--shadow-float:0 18px 40px -12px var(--shadow-a),0 4px 10px -4px var(--shadow-b);
+--r-panel:20px;--r-card:16px;--r-control:12px;--r-pill:999px;--gap:10px;--side-w:240px;--rail-w:72px;
+--dur-1:140ms;--dur-2:240ms;--dur-3:380ms;--ease-spring:cubic-bezier(.34,1.56,.64,1);--move:1;
+--font:'Nunito Variable','Nunito',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;--mono:ui-monospace,'SF Mono','Cascadia Mono','JetBrains Mono',Menlo,Consolas,monospace;
+color-scheme:light dark;font:15px/1.5 var(--font);color:var(--fg);background:var(--canvas)}
+@media (prefers-reduced-motion:reduce){:root{--dur-2:140ms;--dur-3:140ms;--ease-spring:ease-out;--move:0}}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%}body{background:var(--canvas)}
+a{color:var(--accent-ink)}h1{font-size:1.35rem;font-weight:800;margin:0 0 .6rem}h2{font-size:1.1rem;font-weight:800;margin:1.6rem 0 .6rem}h3{font-weight:800}
+.shell{min-height:100vh;display:flex;gap:var(--gap);padding:var(--gap)}
+.side,.panel{background:var(--surface);border-radius:var(--r-panel);box-shadow:var(--shadow)}
+.side{flex:none;width:var(--side-w);position:sticky;top:var(--gap);height:calc(100vh - 2*var(--gap));display:flex;flex-direction:column;gap:1rem;padding:.9rem .7rem;overflow:hidden}
+.brand{display:flex;align-items:center;gap:.55rem;padding:.2rem .4rem;font-size:1.15rem;font-weight:800;white-space:nowrap;color:var(--fg);text-decoration:none}
+.side nav{display:flex;flex-direction:column;gap:.15rem}
+.nav{display:flex;align-items:center;gap:.7rem;border-radius:var(--r-control);padding:.55rem .7rem;color:var(--muted);font-weight:700;text-decoration:none;white-space:nowrap;transition:background var(--dur-1) ease,color var(--dur-1) ease}
+.nav:hover{background:color-mix(in srgb,var(--surface-2) 60%,transparent);color:var(--fg)}
+.nav[aria-current=page]{background:var(--accent-soft);color:var(--accent-ink)}
+.nav svg,.me svg{flex:none;width:18px;height:18px}
+.foot{margin-top:auto;display:grid;gap:.6rem}
+.me{display:flex;align-items:center;gap:.55rem;padding:.3rem .2rem 0 .3rem;min-width:0}
+.avatar{flex:none;display:grid;place-items:center;width:2rem;height:2rem;border-radius:40%;background:var(--accent-soft);color:var(--accent-ink);font-weight:800;text-decoration:none;transition:border-radius var(--dur-3) var(--ease-spring)}
+.avatar:hover{border-radius:50%}
+.email{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.88rem;font-weight:700;color:var(--fg);text-decoration:none}
+.panel{flex:1;min-width:0}
+main{max-width:1100px;margin:0 auto;padding:1.6rem 1.8rem 2.4rem;animation:rise var(--dur-3) var(--ease-spring)}
+.solo{min-height:100vh;padding:var(--gap)}.solo main{max-width:480px;padding-top:8vh}.solo .brand{justify-content:center;margin-bottom:.6rem}
+@media (max-width:1099px) and (min-width:761px){.side{width:var(--rail-w);align-items:center;padding-inline:.5rem}.side .label{display:none}.brand{padding:.2rem 0}.nav{justify-content:center;padding:.65rem}.me{flex-direction:column;padding:0}}
+@media (max-width:760px){.shell{flex-direction:column;padding:0;gap:0}.side,.panel{border-radius:0;box-shadow:none}
+.side{position:sticky;top:0;z-index:1;width:auto;height:auto;flex-direction:row;align-items:center;gap:.4rem;padding:.5rem .6rem;box-shadow:var(--shadow);overflow-x:auto}
+.side .label{display:none}.brand{padding:0}.side nav{flex-direction:row;flex:1}.nav{padding:.55rem}.foot{margin:0;display:flex}.me{padding:0}main{padding:1.1rem 1rem 2rem}}
+.card{background:var(--surface);border-radius:var(--r-card);box-shadow:var(--shadow);padding:1rem 1.1rem;margin:12px 0;overflow-x:auto}
+.panel .card{background:var(--surface);box-shadow:none;border:1.5px solid var(--line)}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:.92rem}
+th{text-align:left;padding:.5rem .7rem;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+td{text-align:left;padding:.6rem .7rem;vertical-align:middle;border-top:1px solid var(--line);transition:background var(--dur-1) ease}
+tbody tr:first-child td,table tr:first-child td{border-top:0}
+tr:hover td{background:var(--surface-2)}tr:hover td:first-child{border-radius:var(--r-control) 0 0 var(--r-control)}tr:hover td:last-child{border-radius:0 var(--r-control) var(--r-control) 0}
+button,input,select,textarea{font:inherit;color:inherit}
+input,select,textarea{background:var(--surface-2);border:1.5px solid transparent;border-radius:var(--r-control);padding:.5rem .8rem;transition:border-color var(--dur-1) ease,background var(--dur-1) ease,box-shadow var(--dur-2) ease}
+input[type=checkbox],input[type=radio]{accent-color:var(--accent);padding:0}
+input:focus,select:focus,textarea:focus{background:var(--surface);border-color:var(--focus);outline:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 30%,transparent)}
+button{cursor:pointer;border:0;border-radius:var(--r-pill);padding:.45rem 1rem;font-weight:700;background:var(--accent);color:var(--accent-fg);display:inline-flex;align-items:center;justify-content:center;gap:.4rem;
+transition:background var(--dur-1) ease,color var(--dur-1) ease,border-radius var(--dur-3) var(--ease-spring),transform var(--dur-3) var(--ease-spring)}
+button:hover{background:color-mix(in srgb,var(--accent) 88%,var(--fg))}
+button:active{transform:scale(calc(1 - .04*var(--move)));border-radius:14px}
+button.ghost{background:var(--surface-2);color:var(--fg)}button.ghost:hover{background:var(--surface-3)}
+button.danger{background:var(--danger-fill);color:#fff}button.danger:hover{background:color-mix(in srgb,var(--danger-fill) 88%,#000)}
+button.icon{background:none;color:var(--muted);padding:.4rem;border-radius:var(--r-control)}button.icon:hover{background:var(--surface-2);color:var(--fg)}
+button:focus-visible,a:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 form.inline{display:inline}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-code,pre{font:13px ui-monospace,SFMono-Regular,Menlo,monospace}pre{background:var(--bg);border:1px solid var(--line);padding:12px;border-radius:6px;overflow:auto;white-space:pre-wrap}
-.muted{color:var(--muted)}.flash{padding:10px 14px;border-radius:6px;border:1px solid var(--accent);margin:12px 0}.err{border-color:var(--bad);color:var(--bad)}
-.badge{display:inline-block;padding:1px 8px;border-radius:999px;border:1px solid var(--line);font-size:12px}
-.frame{padding:4px 0;border-bottom:1px dashed var(--line)}.frame.app{font-weight:600}
-.thumb{width:72px;height:48px;object-fit:cover;border:1px solid var(--line);border-radius:4px}.shot{max-width:100%;border:1px solid var(--line);border-radius:6px;margin:8px 0}
-.st-up{border-color:var(--ok);color:var(--ok)}.st-down{border-color:var(--bad);color:var(--bad)}
-.strip{display:inline-flex;gap:2px;vertical-align:middle}.strip i{display:inline-block;width:5px;height:14px;border-radius:1px;background:var(--line)}.strip i.ok{background:var(--ok)}.strip i.bad{background:var(--bad)}
-.s-negative{border-color:var(--bad);color:var(--bad)}.s-positive{border-color:var(--ok);color:var(--ok)}.msg{white-space:pre-wrap}
+code,pre{font:.9em var(--mono)}code{background:var(--surface-2);border-radius:6px;padding:.05em .35em}pre code{background:none;padding:0}
+pre{background:var(--surface-2);padding:12px 14px;border-radius:var(--r-control);overflow:auto;white-space:pre-wrap}
+.muted{color:var(--muted)}.err{color:var(--danger)}
+.flash{padding:.7rem 1rem;border-radius:var(--r-card);background:var(--accent-soft);color:var(--accent-ink);font-weight:700;margin:0 0 12px;animation:rise var(--dur-3) var(--ease-spring)}
+.flash.err{background:var(--alert-soft);color:var(--danger)}
+.badge{display:inline-flex;align-items:center;gap:.35rem;font-size:.78rem;font-weight:800;border-radius:var(--r-pill);padding:.1rem .6rem;background:var(--surface-2);color:var(--muted);white-space:nowrap}
+.st-up,.s-positive{background:color-mix(in srgb,var(--ok) 14%,var(--surface));color:var(--ok)}
+.st-down,.s-negative{background:var(--alert-soft);color:var(--danger)}
+.st-up::before,.st-down::before{content:'';width:.45rem;height:.45rem;border-radius:var(--r-pill);background:currentColor}
+.frame{padding:4px 0;border-bottom:1px dashed var(--line)}.frame.app{font-weight:700}
+.thumb{width:72px;height:48px;object-fit:cover;border-radius:8px}.shot{max-width:100%;border-radius:var(--r-control);margin:8px 0;box-shadow:var(--shadow)}
+.strip{display:inline-flex;gap:2px;vertical-align:middle}.strip i{display:inline-block;width:5px;height:14px;border-radius:3px;background:var(--surface-3)}.strip i.ok{background:var(--ok)}.strip i.bad{background:var(--danger)}
+.msg{white-space:pre-wrap}
+@keyframes rise{from{opacity:0;transform:translateY(calc(12px*var(--move))) scale(calc(1 - .03*var(--move)))}}
 "#;
 
 fn page(title: &str, user: Option<&Principal>, flash: Option<&str>, body: Markup) -> Response {
@@ -82,41 +144,86 @@ fn page(title: &str, user: Option<&Principal>, flash: Option<&str>, body: Markup
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { (title) " · Vaka" }
-                meta name="theme-color" content="#1d1d1b";
+                meta name="theme-color" content="#f5eee1" media="(prefers-color-scheme: light)";
+                meta name="theme-color" content="#16120e" media="(prefers-color-scheme: dark)";
                 link rel="icon" href="/favicon.ico" sizes="32x32";
                 link rel="icon" href="/favicon.svg" type="image/svg+xml";
                 link rel="apple-touch-icon" href="/apple-touch-icon.png";
+                link rel="preload" href="/ui/assets/nunito.woff2" as="font" type="font/woff2" crossorigin;
                 style { (PreEscaped(CSS)) }
             }
             body {
-                header {
-                    a.brand href="/ui" { img src="/favicon.svg" alt="" width="22" height="22"; "Vaka" }
-                    @if let Some(Principal::User { email, role, .. }) = user {
-                        a href="/ui" { "Projects" }
-                        @if *role >= Role::Admin {
-                            a href="/ui/tokens" { "API tokens" }
-                            a href="/ui/users" { "Users" }
+                @if let Some(Principal::User { email, role, .. }) = user {
+                    div.shell {
+                        aside.side {
+                            a.brand href="/ui" { img src="/favicon.svg" alt="" width="28" height="28"; span.label { "Vaka" } }
+                            nav aria-label="Sections" {
+                                a.nav href="/ui" title="Projects" aria-current=[nav_current(title, "Projects")] { (icon_svg(ICON_PROJECTS)) span.label { "Projects" } }
+                                a.nav href="/ui/alerts" title="Alerts" aria-current=[nav_current(title, "Alerts")] { (icon_svg(ICON_ALERTS)) span.label { "Alerts" } }
+                                @if *role >= Role::Admin {
+                                    a.nav href="/ui/tokens" title="API tokens" aria-current=[nav_current(title, "API tokens")] { (icon_svg(ICON_TOKENS)) span.label { "API tokens" } }
+                                    a.nav href="/ui/users" title="Users" aria-current=[nav_current(title, "Users")] { (icon_svg(ICON_USERS)) span.label { "Users" } }
+                                }
+                                a.nav href="/docs/" title="Docs" { (icon_svg(ICON_DOCS)) span.label { "Docs" } }
+                            }
+                            div.foot {
+                                div.me {
+                                    a.avatar href="/ui/account" title="Account" { (email.chars().next().unwrap_or('?').to_uppercase().to_string()) }
+                                    a.email.label href="/ui/account" title=(email) { (email) }
+                                    form.inline method="post" action="/ui/logout" {
+                                        button.icon type="submit" title="Log out" aria-label="Log out" { (icon_svg(ICON_LOGOUT)) }
+                                    }
+                                }
+                            }
                         }
-                        a href="/ui/alerts" { "Alerts" }
-                        a href="/docs/" { "Docs" }
-                        span.sp {}
-                        a.muted href="/ui/account" { (email) }
-                        form.inline method="post" action="/ui/logout" { button.ghost type="submit" { "Log out" } }
+                        div.panel { main { (notices(flash)) (body) } }
                     }
-                }
-                main {
-                    @if crate::readonly::requested() {
-                        div.flash.err { (crate::readonly::MESSAGE) "." }
+                } @else {
+                    div.solo {
+                        main {
+                            a.brand href="/ui" { img src="/favicon.svg" alt="" width="30" height="30"; "Vaka" }
+                            (notices(flash))
+                            (body)
+                        }
                     }
-                    @if let Some(f) = flash {
-                        @if let Some(e) = f.strip_prefix("error:") { div.flash.err { (e) } } @else { div.flash { (f) } }
-                    }
-                    (body)
                 }
             }
         }
     };
     m.into_response()
+}
+
+/// The sidebar section a page belongs to, from its title: the admin pages
+/// have fixed titles and everything else is a project page.
+fn nav_current(title: &str, section: &str) -> Option<&'static str> {
+    let current = match title {
+        "Alerts" | "API tokens" | "Users" | "Account" => title,
+        _ => "Projects",
+    };
+    (current == section).then_some("page")
+}
+
+fn notices(flash: Option<&str>) -> Markup {
+    html! {
+        @if crate::readonly::requested() {
+            div.flash.err { (crate::readonly::MESSAGE) "." }
+        }
+        @if let Some(f) = flash {
+            @if let Some(e) = f.strip_prefix("error:") { div.flash.err { (e) } } @else { div.flash { (f) } }
+        }
+    }
+}
+
+// Lucide icons (ISC license, https://lucide.dev): folder, bell, key-round, users, book-open, log-out.
+const ICON_PROJECTS: &str = r#"<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>"#;
+const ICON_ALERTS: &str = r#"<path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/>"#;
+const ICON_TOKENS: &str = r#"<path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/>"#;
+const ICON_USERS: &str = r#"<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>"#;
+const ICON_DOCS: &str = r#"<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>"#;
+const ICON_LOGOUT: &str = r#"<path d="m16 17 5-5-5-5"/><path d="M21 12H9"/><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>"#;
+
+fn icon_svg(paths: &str) -> Markup {
+    PreEscaped(format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{paths}</svg>"#))
 }
 
 async fn ui_user(state: &AppState, headers: &HeaderMap) -> Option<Principal> {
