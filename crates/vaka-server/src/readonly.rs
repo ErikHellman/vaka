@@ -91,10 +91,7 @@ pub async fn enable(pool: &crate::db::Pool, drain: Duration) -> anyhow::Result<b
     while pending() > 0 {
         if tokio::time::Instant::now() >= deadline {
             drained = false;
-            tracing::warn!(
-                pending = pending(),
-                "read-only: queued metadata work did not finish in time"
-            );
+            tracing::warn!(pending = pending(), "read-only: queued metadata work did not finish in time");
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -127,9 +124,7 @@ pub const ALERT_GRACE: Duration = Duration::from_millis(10);
 /// Is this database error caused by read-only mode?
 pub fn is_read_only_error(msg: &str) -> bool {
     let m = msg.to_ascii_lowercase();
-    m.contains("readonly database")
-        || m.contains("read-only transaction")
-        || m.contains("read only database")
+    m.contains("readonly database") || m.contains("read-only transaction") || m.contains("read only database")
 }
 
 pub fn status_json() -> serde_json::Value {
@@ -149,10 +144,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vaka-ro-{}", uuid::Uuid::new_v4()));
         let url = format!("sqlite://{}/vaka.db?mode=rwc", dir.display());
         let pool = crate::db::connect(&url).await.unwrap();
-        sqlx::query("INSERT INTO daily_salts (day, salt) VALUES ('d1', 's')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query("INSERT INTO daily_salts (day, salt) VALUES ('d1', 's')").execute(&pool).await.unwrap();
 
         // Work accepted before the switch holds it until it finishes.
         let mut slot = Pending::try_acquire(1).unwrap();
@@ -170,24 +162,15 @@ mod tests {
 
         // Every pooled connection refuses writes; reads still work.
         for _ in 0..8 {
-            let err = sqlx::query("INSERT INTO daily_salts (day, salt) VALUES ('d2', 's')")
-                .execute(&pool)
-                .await
-                .unwrap_err();
+            let err = sqlx::query("INSERT INTO daily_salts (day, salt) VALUES ('d2', 's')").execute(&pool).await.unwrap_err();
             assert!(is_read_only_error(&err.to_string()), "{err}");
         }
-        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM daily_salts")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM daily_salts").fetch_one(&pool).await.unwrap();
         assert_eq!(n, 1);
 
         disable(&pool).await.unwrap();
         assert!(!requested() && !enforced());
-        sqlx::query("INSERT INTO daily_salts (day, salt) VALUES ('d2', 's')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query("INSERT INTO daily_salts (day, salt) VALUES ('d2', 's')").execute(&pool).await.unwrap();
         assert!(Pending::try_acquire(1).is_some());
         let _ = std::fs::remove_dir_all(dir);
     }

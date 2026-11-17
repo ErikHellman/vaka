@@ -27,28 +27,16 @@ impl Step {
         let mut parts = s.split('|');
         let event = parts.next().unwrap_or("").trim().to_string();
         if event.is_empty() {
-            return Err(ApiError::bad(
-                "a step needs an event name, e.g. `step=pageview|path:/pricing` or `step=signup`",
-            ));
+            return Err(ApiError::bad("a step needs an event name, e.g. `step=pageview|path:/pricing` or `step=signup`"));
         }
         let mut filters = BTreeMap::new();
         for f in parts {
-            let bad = || {
-                ApiError::bad(format!(
-                    "step filter `{f}` must look like dimension:value (or prop:<key>:value)"
-                ))
-            };
+            let bad = || ApiError::bad(format!("step filter `{f}` must look like dimension:value (or prop:<key>:value)"));
             // `prop:<key>:value` names a custom property; otherwise the first colon separates the
             // dimension from the value (values such as URLs may contain colons).
             let (d, v) = match f.trim_start().strip_prefix("prop:") {
-                Some(rest) => rest
-                    .split_once(':')
-                    .map(|(k, v)| (format!("prop:{k}"), v))
-                    .ok_or_else(bad)?,
-                None => f
-                    .split_once(':')
-                    .map(|(d, v)| (d.to_string(), v))
-                    .ok_or_else(bad)?,
+                Some(rest) => rest.split_once(':').map(|(k, v)| (format!("prop:{k}"), v)).ok_or_else(bad)?,
+                None => f.split_once(':').map(|(d, v)| (d.to_string(), v)).ok_or_else(bad)?,
             };
             filters.insert(d.trim().to_string(), v.to_string());
         }
@@ -59,11 +47,7 @@ impl Step {
         if self.filters.is_empty() {
             return self.event.clone();
         }
-        let f: Vec<String> = self
-            .filters
-            .iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect();
+        let f: Vec<String> = self.filters.iter().map(|(k, v)| format!("{k}={v}")).collect();
         format!("{} ({})", self.event, f.join(", "))
     }
 }
@@ -79,10 +63,7 @@ impl Params {
         self.0.push((k.into(), v.into()));
     }
     fn refs(&self) -> Vec<(&str, String)> {
-        self.0
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.clone()))
-            .collect()
+        self.0.iter().map(|(k, v)| (k.as_str(), v.clone())).collect()
     }
 }
 
@@ -110,37 +91,23 @@ fn actor_expr(identity: Option<&str>, default: &str) -> QResult<(&'static str, &
         "visitor" => ("visitor_id", "1"),
         "user" => ("user_id", "user_id != ''"),
         "auto" => ("if(user_id != '', user_id, visitor_id)", "1"),
-        other => {
-            return Err(ApiError::bad(format!(
-                "identity must be visitor, user or auto, not `{other}`"
-            )))
-        }
+        other => return Err(ApiError::bad(format!("identity must be visitor, user or auto, not `{other}`"))),
     })
 }
 
 fn parse_window(s: Option<&str>, default_secs: i64) -> QResult<i64> {
-    let Some(s) = s.map(str::trim).filter(|s| !s.is_empty()) else {
-        return Ok(default_secs);
-    };
+    let Some(s) = s.map(str::trim).filter(|s| !s.is_empty()) else { return Ok(default_secs) };
     let (num, unit) = s.split_at(s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len()));
-    let n: i64 = num
-        .parse()
-        .map_err(|_| ApiError::bad(format!("bad duration `{s}`; use e.g. 30m, 1h, 7d")))?;
+    let n: i64 = num.parse().map_err(|_| ApiError::bad(format!("bad duration `{s}`; use e.g. 30m, 1h, 7d")))?;
     let secs = match unit {
         "s" => n,
         "m" | "" => n * 60,
         "h" => n * 3600,
         "d" => n * 86_400,
-        _ => {
-            return Err(ApiError::bad(format!(
-                "bad duration `{s}`; use e.g. 30m, 1h, 7d"
-            )))
-        }
+        _ => return Err(ApiError::bad(format!("bad duration `{s}`; use e.g. 30m, 1h, 7d"))),
     };
     if !(1..=90 * 86_400).contains(&secs) {
-        return Err(ApiError::bad(
-            "conversion window must be between 1s and 90d",
-        ));
+        return Err(ApiError::bad("conversion window must be between 1s and 90d"));
     }
     Ok(secs)
 }
@@ -160,51 +127,32 @@ pub struct FunnelParams {
 
 pub async fn funnel(state: &AppState, p: &Principal, f: FunnelParams) -> QResult<Value> {
     if f.steps.len() < 2 || f.steps.len() > MAX_STEPS {
-        return Err(ApiError::bad(format!(
-            "a funnel needs 2 to {MAX_STEPS} steps"
-        )));
+        return Err(ApiError::bad(format!("a funnel needs 2 to {MAX_STEPS} steps")));
     }
     let project = project_for(state, p, &f.base.project).await?;
     let w = analytics_where(state, &project.id, &f.base).await?;
     let window = parse_window(f.window.as_deref(), 86_400)?;
     let (actor, actor_ok) = actor_expr(f.identity.as_deref(), "visitor")?;
     let mut params = Params::from_where(&w.params);
-    let conds: Vec<String> = f
-        .steps
-        .iter()
-        .enumerate()
-        .map(|(i, s)| step_cond(i, s, &mut params))
-        .collect::<QResult<_>>()?;
+    let conds: Vec<String> = f.steps.iter().enumerate().map(|(i, s)| step_cond(i, s, &mut params)).collect::<QResult<_>>()?;
     params.push("win", window.to_string());
     let breakdown = match f.breakdown.as_deref().filter(|b| !b.is_empty()) {
         Some(d) if d.starts_with("cohort:") => {
             // In or not in a saved cohort.
             let name = &d["cohort:".len()..];
-            let c =
-                crate::cohorts::resolve(state, &project.id, name, crate::cohorts::POOL_BREAKDOWN)
-                    .await?;
+            let c = crate::cohorts::resolve(state, &project.id, name, crate::cohorts::POOL_BREAKDOWN).await?;
             for (k, v) in &c.params {
                 params.push(*k, v.clone());
             }
             params.push("cbin", format!("in {name}"));
             params.push("cbout", format!("not in {name}"));
-            Some(format!(
-                "if({}, {{cbin:String}}, {{cbout:String}})",
-                c.condition(false)
-            ))
+            Some(format!("if({}, {{cbin:String}}, {{cbout:String}})", c.condition(false)))
         }
-        Some(d) => Some(crate::query::dimension_expr(d).ok_or_else(|| {
-            ApiError::bad(format!(
-                "unknown breakdown dimension `{d}` (or cohort:<name>)"
-            ))
-        })?),
+        Some(d) => Some(crate::query::dimension_expr(d).ok_or_else(|| ApiError::bad(format!("unknown breakdown dimension `{d}` (or cohort:<name>)")))?),
         None => None,
     };
     // Breakdown value = the person's first non-empty value of the dimension among matching events.
-    let bd_select = breakdown
-        .as_ref()
-        .map(|e| format!(", argMinIf({e}, timestamp, {e} != '') AS bd"))
-        .unwrap_or_default();
+    let bd_select = breakdown.as_ref().map(|e| format!(", argMinIf({e}, timestamp, {e} != '') AS bd")).unwrap_or_default();
     let inner = format!(
         "SELECT {actor} AS actor, windowFunnel({{win:UInt64}})(toDateTime(timestamp), {}) AS level{bd_select} \
          FROM events WHERE {} AND {actor_ok} AND ({}) GROUP BY actor",
@@ -212,16 +160,8 @@ pub async fn funnel(state: &AppState, p: &Principal, f: FunnelParams) -> QResult
         w.sql,
         conds.join(" OR ")
     );
-    let counts: Vec<String> = (1..=f.steps.len())
-        .map(|k| format!("countIf(level >= {k}) AS step_{k}"))
-        .collect();
-    let totals = state
-        .ch
-        .query(
-            &format!("SELECT {} FROM ({inner})", counts.join(", ")),
-            &params.refs(),
-        )
-        .await?;
+    let counts: Vec<String> = (1..=f.steps.len()).map(|k| format!("countIf(level >= {k}) AS step_{k}")).collect();
+    let totals = state.ch.query(&format!("SELECT {} FROM ({inner})", counts.join(", ")), &params.refs()).await?;
     let row = totals.first().cloned().unwrap_or_default();
     let shape = |row: &Value| -> Vec<Value> {
         let first = row["step_1"].as_f64().unwrap_or(0.0);
@@ -231,13 +171,7 @@ pub async fn funnel(state: &AppState, p: &Principal, f: FunnelParams) -> QResult
             .enumerate()
             .map(|(i, s)| {
                 let n = row[format!("step_{}", i + 1)].as_f64().unwrap_or(0.0);
-                let pct = |a: f64, b: f64| {
-                    if b > 0.0 {
-                        (a / b * 1000.0).round() / 10.0
-                    } else {
-                        0.0
-                    }
-                };
+                let pct = |a: f64, b: f64| if b > 0.0 { (a / b * 1000.0).round() / 10.0 } else { 0.0 };
                 let v = json!({
                     "step": i + 1,
                     "label": s.label(),
@@ -327,16 +261,9 @@ pub async fn retention(state: &AppState, p: &Principal, r: RetentionParams) -> Q
     let (period, bucket, default_span) = match r.period.as_deref().unwrap_or("week") {
         "day" => ("day", "toStartOfDay", 14 * 86_400_000i64),
         "week" => ("week", "toMonday", 8 * 7 * 86_400_000),
-        other => {
-            return Err(ApiError::bad(format!(
-                "period must be day or week, not `{other}`"
-            )))
-        }
+        other => return Err(ApiError::bad(format!("period must be day or week, not `{other}`"))),
     };
-    let n_periods = r
-        .periods
-        .unwrap_or(if period == "day" { 14 } else { 8 })
-        .clamp(1, 30);
+    let n_periods = r.periods.unwrap_or(if period == "day" { 14 } else { 8 }).clamp(1, 30);
     let mut base = r.base.clone();
     if base.since.is_none() {
         base.since = Some((now_ms() - default_span).to_string());
@@ -393,13 +320,8 @@ pub async fn retention(state: &AppState, p: &Principal, r: RetentionParams) -> Q
             }
         }
         // Periods that have not happened yet stay null; past periods with nobody back are 0.
-        let cohort_start =
-            crate::util::parse_timestamp(&json!(format!("{name}T00:00:00Z"))).unwrap_or(0);
-        let period_ms = if period == "day" {
-            86_400_000
-        } else {
-            7 * 86_400_000
-        };
+        let cohort_start = crate::util::parse_timestamp(&json!(format!("{name}T00:00:00Z"))).unwrap_or(0);
+        let period_ms = if period == "day" { 86_400_000 } else { 7 * 86_400_000 };
         for (i, v) in retained.iter_mut().enumerate() {
             if v.is_null() && cohort_start + i as i64 * period_ms <= now_ms() {
                 *v = json!({"people": 0, "pct": 0.0});
@@ -449,11 +371,7 @@ pub async fn paths(state: &AppState, p: &Principal, a: PathParams) -> QResult<Va
     let before = match a.direction.as_deref().unwrap_or("after") {
         "after" => false,
         "before" => true,
-        other => {
-            return Err(ApiError::bad(format!(
-                "direction must be after or before, not `{other}`"
-            )))
-        }
+        other => return Err(ApiError::bad(format!("direction must be after or before, not `{other}`"))),
     };
     let mut params = Params::from_where(&w.params);
     params.push("depth", depth.to_string());
@@ -489,16 +407,8 @@ pub async fn paths(state: &AppState, p: &Principal, a: PathParams) -> QResult<Va
     };
     let rows = state.ch.query(&sql, &params.refs()).await?;
     let total_from = if let Some(_from) = &a.from {
-        let q = format!(
-            "SELECT uniqExact(actor) AS people FROM ({seqs}) WHERE has(labels, {{from:String}})"
-        );
-        state
-            .ch
-            .query(&q, &params.refs())
-            .await?
-            .first()
-            .and_then(|r| r["people"].as_i64())
-            .unwrap_or(0)
+        let q = format!("SELECT uniqExact(actor) AS people FROM ({seqs}) WHERE has(labels, {{from:String}})");
+        state.ch.query(&q, &params.refs()).await?.first().and_then(|r| r["people"].as_i64()).unwrap_or(0)
     } else {
         0
     };
@@ -529,12 +439,7 @@ pub async fn paths(state: &AppState, p: &Principal, a: PathParams) -> QResult<Va
 }
 
 /// The event catalog: which event names exist, how often, and which property keys they carry.
-pub async fn event_catalog(
-    state: &AppState,
-    p: &Principal,
-    a: AnalyticsParams,
-    limit: Option<i64>,
-) -> QResult<Value> {
+pub async fn event_catalog(state: &AppState, p: &Principal, a: AnalyticsParams, limit: Option<i64>) -> QResult<Value> {
     let project = project_for(state, p, &a.project).await?;
     let w = analytics_where(state, &project.id, &a).await?;
     let mut params = Params::from_where(&w.params);
@@ -573,11 +478,7 @@ pub struct UserListParams {
 pub async fn list_users(state: &AppState, p: &Principal, u: UserListParams) -> QResult<Value> {
     let project = project_for(state, p, &u.project).await?;
     let now = now_ms();
-    let since = u
-        .since
-        .as_deref()
-        .and_then(|s| parse_time_expr(s, now))
-        .unwrap_or(now - 30 * 86_400_000);
+    let since = u.since.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 30 * 86_400_000);
     let params = vec![
         ("p", project.id.clone()),
         ("since", since.to_string()),
@@ -595,29 +496,18 @@ pub async fn list_users(state: &AppState, p: &Principal, u: UserListParams) -> Q
         ) WHERE positionCaseInsensitive(user_id, {q:String}) > 0 OR {q:String} = '' \
         GROUP BY user_id ORDER BY max(last) DESC LIMIT {lim:UInt32}";
     let rows = state.ch.query(sql, &params).await?;
-    Ok(
-        json!({"project": project.slug, "since": iso_time(since), "users": rows,
-        "note": "Only users the app identified with identify(userId) appear here; anonymous visitors are never listed."}),
-    )
+    Ok(json!({"project": project.slug, "since": iso_time(since), "users": rows,
+        "note": "Only users the app identified with identify(userId) appear here; anonymous visitors are never listed."}))
 }
 
 /// Everything one identified user did, newest first: analytics events, errors and sessions.
-pub async fn user_timeline(
-    state: &AppState,
-    p: &Principal,
-    project: &str,
-    user_id: &str,
-    since: Option<&str>,
-    limit: Option<i64>,
-) -> QResult<Value> {
+pub async fn user_timeline(state: &AppState, p: &Principal, project: &str, user_id: &str, since: Option<&str>, limit: Option<i64>) -> QResult<Value> {
     let project = project_for(state, p, project).await?;
     if user_id.is_empty() {
         return Err(ApiError::bad("user id is required"));
     }
     let now = now_ms();
-    let since = since
-        .and_then(|s| parse_time_expr(s, now))
-        .unwrap_or(now - 7 * 86_400_000);
+    let since = since.and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 7 * 86_400_000);
     let params = vec![
         ("p", project.id.clone()),
         ("u", user_id.to_string()),
@@ -643,15 +533,7 @@ pub async fn user_timeline(
         ) ORDER BY t DESC LIMIT {{lim:UInt32}}"
     );
     let rows = state.ch.query(&sql, &params).await?;
-    let mut issue_ids: Vec<String> = rows
-        .iter()
-        .filter_map(|r| {
-            r["issue_id"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .map(String::from)
-        })
-        .collect();
+    let mut issue_ids: Vec<String> = rows.iter().filter_map(|r| r["issue_id"].as_str().filter(|s| !s.is_empty()).map(String::from)).collect();
     issue_ids.sort();
     issue_ids.dedup();
     let mut short: BTreeMap<String, Value> = BTreeMap::new();
@@ -684,23 +566,13 @@ pub async fn user_timeline(
         })
         .collect();
     let mut items = items;
-    for f in
-        crate::feedback::for_timeline(state, &project.id, None, Some(user_id), since, now + 60_000)
-            .await
-    {
+    for f in crate::feedback::for_timeline(state, &project.id, None, Some(user_id), since, now + 60_000).await {
         items.push(json!({"kind": "feedback", "timestamp": f["ts"], "what": f["message"], "feedback": f["short_id"], "sentiment": f["sentiment"], "source": f["source"]}));
     }
-    items.sort_by(|a, b| {
-        b["timestamp"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(a["timestamp"].as_str().unwrap_or(""))
-    });
+    items.sort_by(|a, b| b["timestamp"].as_str().unwrap_or("").cmp(a["timestamp"].as_str().unwrap_or("")));
     items.truncate(limit.unwrap_or(200).clamp(1, 2000) as usize);
-    Ok(
-        json!({"project": project.slug, "user_id": user_id, "since": iso_time(since), "timeline": items,
-        "hint": "Newest first. To see what led to a crash, read the entries just below (older than) the error, and open the issue with get_issue."}),
-    )
+    Ok(json!({"project": project.slug, "user_id": user_id, "since": iso_time(since), "timeline": items,
+        "hint": "Newest first. To see what led to a crash, read the entries just below (older than) the error, and open the issue with get_issue."}))
 }
 
 // ---------------------------------------------------------------------------
@@ -708,12 +580,7 @@ pub async fn user_timeline(
 // ---------------------------------------------------------------------------
 
 fn prop_key(k: &str) -> QResult<String> {
-    if k.is_empty()
-        || k.len() > 128
-        || !k
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "_-.".contains(c))
-    {
+    if k.is_empty() || k.len() > 128 || !k.chars().all(|c| c.is_ascii_alphanumeric() || "_-.".contains(c)) {
         return Err(ApiError::bad(format!("bad property name `{k}`")));
     }
     Ok(k.to_string())
@@ -736,8 +603,7 @@ async fn revenue_rows(
     params.push("lim", limit.clamp(1, 100).to_string());
     let (dim_sel, dim_group) = match breakdown.filter(|b| !b.is_empty()) {
         Some(b) => {
-            let expr = crate::query::dimension_expr(b)
-                .ok_or_else(|| ApiError::bad(format!("unknown breakdown dimension `{b}`")))?;
+            let expr = crate::query::dimension_expr(b).ok_or_else(|| ApiError::bad(format!("unknown breakdown dimension `{b}`")))?;
             (format!(", {expr} AS value"), ", value")
         }
         None => (String::new(), ""),
@@ -778,9 +644,7 @@ pub async fn revenue(state: &AppState, p: &Principal, r: RevenueParams) -> QResu
     let cp = r.currency_prop.as_deref().unwrap_or("currency");
     let totals = revenue_rows(state, &w, &step, vp, cp, None, 20).await?;
     let breakdown = match r.breakdown.as_deref().filter(|b| !b.is_empty()) {
-        Some(b) => {
-            Some(revenue_rows(state, &w, &step, vp, cp, Some(b), r.limit.unwrap_or(10)).await?)
-        }
+        Some(b) => Some(revenue_rows(state, &w, &step, vp, cp, Some(b), r.limit.unwrap_or(10)).await?),
         None => None,
     };
     Ok(json!({
@@ -809,38 +673,18 @@ pub async fn list_goals(state: &AppState, p: &Principal, a: AnalyticsParams) -> 
     for (i, r) in rows.iter().enumerate() {
         let step = Step::parse(&r.s("step"))?;
         let cond = step_cond(i, &step, &mut params)?;
-        sel.push(format!(
-            "countIf({cond}) AS c{i}, uniqIf(visitor_id, {cond}) AS u{i}"
-        ));
+        sel.push(format!("countIf({cond}) AS c{i}, uniqIf(visitor_id, {cond}) AS u{i}"));
         steps.push(step);
     }
-    let stats = state
-        .ch
-        .query(
-            &format!("SELECT {} FROM events WHERE {}", sel.join(", "), w.sql),
-            &params.refs(),
-        )
-        .await?;
+    let stats = state.ch.query(&format!("SELECT {} FROM events WHERE {}", sel.join(", "), w.sql), &params.refs()).await?;
     let stats = stats.into_iter().next().unwrap_or(json!({}));
-    let visitors = stats["visitors"]
-        .as_f64()
-        .or_else(|| stats["visitors"].as_str().and_then(|s| s.parse().ok()))
-        .unwrap_or(0.0);
+    let visitors = stats["visitors"].as_f64().or_else(|| stats["visitors"].as_str().and_then(|s| s.parse().ok())).unwrap_or(0.0);
     let mut goals = Vec::new();
     for (i, r) in rows.iter().enumerate() {
-        let n = |k: String| {
-            stats[&k]
-                .as_f64()
-                .or_else(|| stats[&k].as_str().and_then(|s| s.parse().ok()))
-                .unwrap_or(0.0)
-        };
+        let n = |k: String| stats[&k].as_f64().or_else(|| stats[&k].as_str().and_then(|s| s.parse().ok())).unwrap_or(0.0);
         let converters = n(format!("u{i}"));
         let vp = r.s("value_prop");
-        let revenue = if vp.is_empty() {
-            None
-        } else {
-            Some(revenue_rows(state, &w, &steps[i], &vp, "currency", None, 20).await?)
-        };
+        let revenue = if vp.is_empty() { None } else { Some(revenue_rows(state, &w, &steps[i], &vp, "currency", None, 20).await?) };
         goals.push(json!({
             "id": r.s("id"), "name": r.s("name"), "step": r.s("step"), "value_prop": if vp.is_empty() { None } else { Some(vp) },
             "conversions": n(format!("c{i}")) as i64, "converters": converters as i64,
@@ -868,12 +712,7 @@ pub struct GoalIn {
     pub value_prop: Option<String>,
 }
 
-pub async fn create_goal(
-    state: &AppState,
-    p: &Principal,
-    project: &str,
-    g: GoalIn,
-) -> QResult<Value> {
+pub async fn create_goal(state: &AppState, p: &Principal, project: &str, g: GoalIn) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     if !p.can_write(&proj.id) {
         return Err(ApiError::forbidden());
@@ -883,12 +722,7 @@ pub async fn create_goal(
         return Err(ApiError::bad("goal name must be 1 to 100 characters"));
     }
     Step::parse(&g.step)?;
-    let vp = match g
-        .value_prop
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-    {
+    let vp = match g.value_prop.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
         Some(v) => prop_key(v)?,
         None => String::new(),
     };
@@ -907,30 +741,17 @@ pub async fn create_goal(
     .execute(&state.db)
     .await?;
     if res.rows_affected() == 0 {
-        return Err(ApiError::bad(format!(
-            "a goal named `{name}` already exists"
-        )));
+        return Err(ApiError::bad(format!("a goal named `{name}` already exists")));
     }
-    Ok(
-        json!({"id": id, "project": proj.slug, "name": name, "step": g.step.trim(), "value_prop": if vp.is_empty() { None } else { Some(vp) }}),
-    )
+    Ok(json!({"id": id, "project": proj.slug, "name": name, "step": g.step.trim(), "value_prop": if vp.is_empty() { None } else { Some(vp) }}))
 }
 
-pub async fn delete_goal(
-    state: &AppState,
-    p: &Principal,
-    project: &str,
-    goal: &str,
-) -> QResult<Value> {
+pub async fn delete_goal(state: &AppState, p: &Principal, project: &str, goal: &str) -> QResult<Value> {
     let proj = project_for(state, p, project).await?;
     if !p.can_write(&proj.id) {
         return Err(ApiError::forbidden());
     }
-    let res = sqlx::query("DELETE FROM goals WHERE project_id = $1 AND (id = $2 OR name = $2)")
-        .bind(&proj.id)
-        .bind(goal)
-        .execute(&state.db)
-        .await?;
+    let res = sqlx::query("DELETE FROM goals WHERE project_id = $1 AND (id = $2 OR name = $2)").bind(&proj.id).bind(goal).execute(&state.db).await?;
     if res.rows_affected() == 0 {
         return Err(ApiError::not_found("goal"));
     }
@@ -951,14 +772,8 @@ mod tests {
         assert!(Step::parse("").is_err());
         assert!(Step::parse("pageview|nocolon").is_err());
         // Values may contain colons (URLs).
-        assert_eq!(
-            Step::parse("pageview|url:https://x.se/a").unwrap().filters["url"],
-            "https://x.se/a"
-        );
-        assert_eq!(
-            Step::parse("purchase|prop:plan:pro").unwrap().filters["prop:plan"],
-            "pro"
-        );
+        assert_eq!(Step::parse("pageview|url:https://x.se/a").unwrap().filters["url"], "https://x.se/a");
+        assert_eq!(Step::parse("purchase|prop:plan:pro").unwrap().filters["prop:plan"], "pro");
     }
 
     #[test]
@@ -975,10 +790,7 @@ mod tests {
     fn step_sql_uses_parameters() {
         let mut p = Params(vec![]);
         let sql = step_cond(2, &Step::parse("pageview|path:~pric").unwrap(), &mut p).unwrap();
-        assert!(
-            sql.contains("{s2:String}") && sql.contains("{s2f0:String}"),
-            "{sql}"
-        );
+        assert!(sql.contains("{s2:String}") && sql.contains("{s2f0:String}"), "{sql}");
         assert!(!sql.contains("pric"));
         assert_eq!(p.0.len(), 2);
     }

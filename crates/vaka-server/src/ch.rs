@@ -88,10 +88,7 @@ impl ClickHouse {
             .await?;
         let status = resp.status();
         if !status.is_success() {
-            anyhow::bail!(
-                "clickhouse insert into {table} failed ({status}): {}",
-                resp.text().await?.trim()
-            );
+            anyhow::bail!("clickhouse insert into {table} failed ({status}): {}", resp.text().await?.trim());
         }
         Ok(())
     }
@@ -120,10 +117,7 @@ impl ClickHouse {
             anyhow::bail!("clickhouse query failed ({status}): {}", text.trim());
         }
         let v: Value = serde_json::from_str(&text)?;
-        Ok(v.get("data")
-            .and_then(|d| d.as_array())
-            .cloned()
-            .unwrap_or_default())
+        Ok(v.get("data").and_then(|d| d.as_array()).cloned().unwrap_or_default())
     }
 
     pub async fn ping(&self) -> bool {
@@ -131,11 +125,7 @@ impl ClickHouse {
     }
 
     pub async fn migrate(&self) -> anyhow::Result<()> {
-        self.execute_raw(
-            &format!("CREATE DATABASE IF NOT EXISTS {}", self.database),
-            false,
-        )
-        .await?;
+        self.execute_raw(&format!("CREATE DATABASE IF NOT EXISTS {}", self.database), false).await?;
         for stmt in SCHEMA.split(";\n").map(str::trim).filter(|s| !s.is_empty()) {
             self.execute(stmt).await?;
         }

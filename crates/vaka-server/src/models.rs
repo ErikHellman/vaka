@@ -238,16 +238,7 @@ pub struct EventItem {
 
 /// Flags as stored: at most 32, keys and values truncated, booleans as "true"/"false".
 pub fn flag_map(flags: &BTreeMap<String, Value>) -> BTreeMap<String, String> {
-    flags
-        .iter()
-        .take(32)
-        .map(|(k, v)| {
-            (
-                crate::util::truncate(k, 64),
-                crate::util::truncate(&value_to_string(v), 64),
-            )
-        })
-        .collect()
+    flags.iter().take(32).map(|(k, v)| (crate::util::truncate(k, 64), crate::util::truncate(&value_to_string(v), 64))).collect()
 }
 
 pub fn value_to_string(v: &Value) -> String {

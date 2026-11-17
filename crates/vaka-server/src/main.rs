@@ -12,8 +12,8 @@ mod db;
 mod docs;
 mod feedback;
 mod fixctx;
-mod flags;
 mod geoip;
+mod flags;
 mod github;
 mod grouping;
 mod ingest;
@@ -23,14 +23,14 @@ mod maintenance;
 mod mcp;
 mod migrate_db;
 mod models;
-mod monitors;
 mod netguard;
+mod monitors;
+mod probes;
 mod openapi;
 mod otel;
 mod otp;
 mod ownership;
 mod perf;
-mod probes;
 mod processor;
 mod product;
 mod projects;
@@ -216,29 +216,14 @@ fn api_router(config: &config::Config) -> anyhow::Result<Router<state::AppState>
         let list = config
             .api_cors_origins
             .iter()
-            .map(|o| {
-                HeaderValue::from_str(o)
-                    .map_err(|_| anyhow::anyhow!("invalid origin in VAKA_API_CORS_ORIGINS: {o}"))
-            })
+            .map(|o| HeaderValue::from_str(o).map_err(|_| anyhow::anyhow!("invalid origin in VAKA_API_CORS_ORIGINS: {o}")))
             .collect::<anyhow::Result<Vec<_>>>()?;
         tower_http::cors::AllowOrigin::list(list)
     };
     let cors = CorsLayer::new()
         .allow_origin(origin)
-        .allow_methods([
-            Method::GET,
-            Method::POST,
-            Method::PATCH,
-            Method::PUT,
-            Method::DELETE,
-            Method::OPTIONS,
-        ])
-        .allow_headers([
-            axum::http::header::AUTHORIZATION,
-            axum::http::header::CONTENT_TYPE,
-            axum::http::header::ACCEPT,
-            axum::http::header::CACHE_CONTROL,
-        ])
+        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::PUT, Method::DELETE, Method::OPTIONS])
+        .allow_headers([axum::http::header::AUTHORIZATION, axum::http::header::CONTENT_TYPE, axum::http::header::ACCEPT, axum::http::header::CACHE_CONTROL])
         .max_age(std::time::Duration::from_secs(3600));
     Ok(api::router().layer(cors))
 }

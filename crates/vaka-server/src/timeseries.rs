@@ -61,12 +61,9 @@ impl Bucketing {
     fn floor(&self, secs: i64) -> i64 {
         match self {
             Bucketing::Fixed(s) => secs.div_euclid(*s) * s,
-            Bucketing::Week => {
-                (secs - MONDAY_OFFSET_S).div_euclid(604_800) * 604_800 + MONDAY_OFFSET_S
-            }
+            Bucketing::Week => (secs - MONDAY_OFFSET_S).div_euclid(604_800) * 604_800 + MONDAY_OFFSET_S,
             Bucketing::Month => {
-                let dt = time::OffsetDateTime::from_unix_timestamp(secs)
-                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+                let dt = time::OffsetDateTime::from_unix_timestamp(secs).unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
                 month_start(dt.year(), dt.month() as u8)
             }
         }
@@ -77,13 +74,8 @@ impl Bucketing {
             Bucketing::Fixed(s) => start + s,
             Bucketing::Week => start + 604_800,
             Bucketing::Month => {
-                let dt = time::OffsetDateTime::from_unix_timestamp(start)
-                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-                let (y, m) = if dt.month() as u8 == 12 {
-                    (dt.year() + 1, 1)
-                } else {
-                    (dt.year(), dt.month() as u8 + 1)
-                };
+                let dt = time::OffsetDateTime::from_unix_timestamp(start).unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+                let (y, m) = if dt.month() as u8 == 12 { (dt.year() + 1, 1) } else { (dt.year(), dt.month() as u8 + 1) };
                 month_start(y, m)
             }
         }
@@ -104,15 +96,12 @@ impl Bucketing {
 
 fn month_start(year: i32, month: u8) -> i64 {
     let m = time::Month::try_from(month).unwrap_or(time::Month::January);
-    time::Date::from_calendar_date(year, m, 1)
-        .map(|d| d.midnight().assume_utc().unix_timestamp())
-        .unwrap_or(0)
+    time::Date::from_calendar_date(year, m, 1).map(|d| d.midnight().assume_utc().unix_timestamp()).unwrap_or(0)
 }
 
 /// RFC 3339 for a bucket start, in the same format as [`Bucketing::sql`].
 pub fn bucket_label(secs: i64) -> String {
-    let dt =
-        time::OffsetDateTime::from_unix_timestamp(secs).unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    let dt = time::OffsetDateTime::from_unix_timestamp(secs).unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
         dt.year(),
@@ -199,21 +188,12 @@ pub fn rename(rows: Vec<Value>, pairs: &[(&str, &str)]) -> Vec<Value> {
 
 /// True for `fill=true` / `1` / `yes`.
 pub fn truthy(v: Option<&str>) -> bool {
-    matches!(
-        v.map(|s| s.trim().to_ascii_lowercase()).as_deref(),
-        Some("true" | "1" | "yes")
-    )
+    matches!(v.map(|s| s.trim().to_ascii_lowercase()).as_deref(), Some("true" | "1" | "yes"))
 }
 
 /// Fill missing buckets. `rows` must carry a `bucket` string; `empty` is the row used for an
 /// empty bucket (without `bucket`).
-pub fn fill(
-    rows: Vec<Value>,
-    b: &Bucketing,
-    since_ms: i64,
-    until_ms: i64,
-    empty: &Value,
-) -> Vec<Value> {
+pub fn fill(rows: Vec<Value>, b: &Bucketing, since_ms: i64, until_ms: i64, empty: &Value) -> Vec<Value> {
     let mut by: HashMap<String, Value> = HashMap::new();
     for r in rows {
         if let Some(k) = r["bucket"].as_str() {
@@ -256,10 +236,7 @@ pub fn split_groups(rows: Vec<Value>, rank_by: &str) -> Vec<(String, f64, Vec<Va
             Value::Null => String::new(),
             v => v.to_string(),
         };
-        let n = r[rank_by]
-            .as_f64()
-            .or_else(|| r[rank_by].as_str().and_then(|s| s.parse().ok()))
-            .unwrap_or(0.0);
+        let n = r[rank_by].as_f64().or_else(|| r[rank_by].as_str().and_then(|s| s.parse().ok())).unwrap_or(0.0);
         if let Some(o) = r.as_object_mut() {
             o.remove("grp");
         }
@@ -267,13 +244,8 @@ pub fn split_groups(rows: Vec<Value>, rank_by: &str) -> Vec<(String, f64, Vec<Va
         e.0 += n;
         e.1.push(r);
     }
-    let mut out: Vec<(String, f64, Vec<Value>)> =
-        groups.into_iter().map(|(k, (t, v))| (k, t, v)).collect();
-    out.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.0.cmp(&b.0))
-    });
+    let mut out: Vec<(String, f64, Vec<Value>)> = groups.into_iter().map(|(k, (t, v))| (k, t, v)).collect();
+    out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0)));
     out
 }
 
@@ -301,10 +273,7 @@ impl SeriesOpts {
         let s = |k: &str| a.get(k).and_then(|v| v.as_str()).map(str::to_string);
         SeriesOpts {
             interval: s("interval"),
-            fill: a
-                .get("fill")
-                .map(|v| v.as_bool().unwrap_or_else(|| truthy(v.as_str())))
-                .unwrap_or(false),
+            fill: a.get("fill").map(|v| v.as_bool().unwrap_or_else(|| truthy(v.as_str()))).unwrap_or(false),
             group_by: s("group_by"),
             limit: a.get("limit").and_then(|v| v.as_i64()),
         }
@@ -335,17 +304,7 @@ pub struct ErrorSeriesParams {
     pub handled: Option<String>,
 }
 
-pub const ERROR_GROUPS: &[&str] = &[
-    "issue",
-    "release",
-    "level",
-    "environment",
-    "exception_type",
-    "platform",
-    "os",
-    "browser",
-    "country",
-];
+pub const ERROR_GROUPS: &[&str] = &["issue", "release", "level", "environment", "exception_type", "platform", "os", "browser", "country"];
 
 fn error_group_expr(g: &str) -> Option<&'static str> {
     Some(match g {
@@ -362,42 +321,24 @@ fn error_group_expr(g: &str) -> Option<&'static str> {
     })
 }
 
-const ERROR_METRICS: &str =
-    "count() AS n_errors, countIf(handled = 0) AS unhandled, countIf(fatal = 1) AS fatal, \
+const ERROR_METRICS: &str = "count() AS n_errors, countIf(handled = 0) AS unhandled, countIf(fatal = 1) AS fatal, \
     uniq(if(user_id != '', user_id, anon_id)) AS users, uniq(issue_id) AS issues";
 const ERR_RENAME: &[(&str, &str)] = &[("n_errors", "errors")];
 const ERROR_ZEROS: &[&str] = &["errors", "unhandled", "fatal", "users", "issues"];
 
 /// Error counts per bucket: `errors`, `unhandled`, `fatal`, `users` (affected), `issues`.
-pub async fn errors_timeseries(
-    state: &AppState,
-    p: &Principal,
-    a: ErrorSeriesParams,
-    opts: SeriesOpts,
-) -> QResult<Value> {
+pub async fn errors_timeseries(state: &AppState, p: &Principal, a: ErrorSeriesParams, opts: SeriesOpts) -> QResult<Value> {
     let project = project_for(state, p, &a.project).await?;
     let now = now_ms();
-    let since = a
-        .since
-        .as_deref()
-        .and_then(|s| parse_time_expr(s, now))
-        .unwrap_or(now - 86_400_000);
-    let until = a
-        .until
-        .as_deref()
-        .and_then(|s| parse_time_expr(s, now))
-        .unwrap_or(now);
+    let since = a.since.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 86_400_000);
+    let until = a.until.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now);
     let b = parse_interval(opts.interval.as_deref(), since, until)?;
     let mut conds = vec![
         "project_id = {p:String}".to_string(),
         "timestamp >= fromUnixTimestamp64Milli({since:Int64})".to_string(),
         "timestamp <= fromUnixTimestamp64Milli({until:Int64})".to_string(),
     ];
-    let mut ps: Vec<(&'static str, String)> = vec![
-        ("p", project.id.clone()),
-        ("since", since.to_string()),
-        ("until", until.to_string()),
-    ];
+    let mut ps: Vec<(&'static str, String)> = vec![("p", project.id.clone()), ("since", since.to_string()), ("until", until.to_string())];
     let mut add = |name: &'static str, col: &str, v: Option<String>| {
         if let Some(v) = v.filter(|v| !v.is_empty()) {
             conds.push(format!("{col} = {{{name}:String}}"));
@@ -413,11 +354,7 @@ pub async fn errors_timeseries(
         if issue["project_id"].as_str() != Some(project.id.as_str()) {
             return Err(ApiError::bad("that issue belongs to another project"));
         }
-        add(
-            "issue",
-            "issue_id",
-            issue["id"].as_str().map(str::to_string),
-        );
+        add("issue", "issue_id", issue["id"].as_str().map(str::to_string));
     }
     match a.handled.as_deref() {
         Some("true" | "1") => conds.push("handled = 1".into()),
@@ -438,12 +375,7 @@ pub async fn errors_timeseries(
         "series": if opts.fill { fill(rows, &b, since, until, &empty) } else { rows },
     });
     if let Some(g) = opts.group_by.as_deref().filter(|g| !g.is_empty()) {
-        let expr = error_group_expr(g).ok_or_else(|| {
-            ApiError::bad(format!(
-                "unknown group_by `{g}`; one of {}",
-                ERROR_GROUPS.join(", ")
-            ))
-        })?;
+        let expr = error_group_expr(g).ok_or_else(|| ApiError::bad(format!("unknown group_by `{g}`; one of {}", ERROR_GROUPS.join(", "))))?;
         ps.push(("glim", opts.limit.unwrap_or(10).clamp(1, 50).to_string()));
         let rows = state
             .ch
@@ -474,14 +406,7 @@ pub async fn errors_timeseries(
     Ok(out)
 }
 
-pub const PERF_GROUPS: &[&str] = &[
-    "transaction",
-    "op",
-    "release",
-    "environment",
-    "service",
-    "http_status",
-];
+pub const PERF_GROUPS: &[&str] = &["transaction", "op", "release", "environment", "service", "http_status"];
 
 fn perf_group_expr(g: &str) -> Option<&'static str> {
     Some(match g {
@@ -514,32 +439,13 @@ fn perf_row(r: Value, bucket_s: i64) -> Value {
 }
 
 /// Latency per bucket for root spans (transactions): count, throughput, p50..p99, avg, error rate.
-pub async fn performance_timeseries(
-    state: &AppState,
-    p: &Principal,
-    a: crate::perf::PerfParams,
-    opts: SeriesOpts,
-) -> QResult<Value> {
+pub async fn performance_timeseries(state: &AppState, p: &Principal, a: crate::perf::PerfParams, opts: SeriesOpts) -> QResult<Value> {
     let proj = project_for(state, p, &a.project).await?;
-    let w = crate::perf::where_for(
-        &proj.id,
-        &a,
-        a.op.as_deref().map(|o| o.is_empty()).unwrap_or(true),
-    );
+    let w = crate::perf::where_for(&proj.id, &a, a.op.as_deref().map(|o| o.is_empty()).unwrap_or(true));
     let until = w.until.min(now_ms());
     let b = parse_interval(opts.interval.as_deref(), w.since, until)?;
     let bucket = b.sql("start");
-    let empty = empty_row(
-        &["count", "per_minute", "errors"],
-        &[
-            "p50_ms",
-            "p75_ms",
-            "p95_ms",
-            "p99_ms",
-            "avg_ms",
-            "error_rate",
-        ],
-    );
+    let empty = empty_row(&["count", "per_minute", "errors"], &["p50_ms", "p75_ms", "p95_ms", "p99_ms", "avg_ms", "error_rate"]);
     let rows = state
         .ch
         .query(&format!("SELECT {bucket} AS bucket, {PERF_METRICS} FROM spans WHERE {} GROUP BY bucket ORDER BY bucket", w.sql), &w.params)
@@ -551,12 +457,7 @@ pub async fn performance_timeseries(
         "series": if opts.fill { fill(rows, &b, w.since, until, &empty) } else { rows },
     });
     if let Some(g) = opts.group_by.as_deref().filter(|g| !g.is_empty()) {
-        let expr = perf_group_expr(g).ok_or_else(|| {
-            ApiError::bad(format!(
-                "unknown group_by `{g}`; one of {}",
-                PERF_GROUPS.join(", ")
-            ))
-        })?;
+        let expr = perf_group_expr(g).ok_or_else(|| ApiError::bad(format!("unknown group_by `{g}`; one of {}", PERF_GROUPS.join(", "))))?;
         let mut ps = w.params.clone();
         ps.push(("glim", opts.limit.unwrap_or(10).clamp(1, 50).to_string()));
         let rows = state
@@ -606,31 +507,14 @@ const SESSION_METRICS: &str = "count() AS n_sessions, countIf(s_status = 'crashe
 
 /// Sessions per bucket (by session start) with crash-free rates; `group_by=release` gives
 /// crash-free sessions per release over time.
-pub async fn sessions_timeseries(
-    state: &AppState,
-    p: &Principal,
-    a: SessionSeriesParams,
-    opts: SeriesOpts,
-) -> QResult<Value> {
+pub async fn sessions_timeseries(state: &AppState, p: &Principal, a: SessionSeriesParams, opts: SeriesOpts) -> QResult<Value> {
     let project = project_for(state, p, &a.project).await?;
     let now = now_ms();
-    let since = a
-        .since
-        .as_deref()
-        .and_then(|s| parse_time_expr(s, now))
-        .unwrap_or(now - 7 * 86_400_000);
-    let until = a
-        .until
-        .as_deref()
-        .and_then(|s| parse_time_expr(s, now))
-        .unwrap_or(now);
+    let since = a.since.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now - 7 * 86_400_000);
+    let until = a.until.as_deref().and_then(|s| parse_time_expr(s, now)).unwrap_or(now);
     let b = parse_interval(opts.interval.as_deref(), since, until)?;
     let mut cond = "project_id = {p:String} AND started >= fromUnixTimestamp64Milli({since:Int64}) AND started <= fromUnixTimestamp64Milli({until:Int64})".to_string();
-    let mut ps: Vec<(&'static str, String)> = vec![
-        ("p", project.id.clone()),
-        ("since", since.to_string()),
-        ("until", until.to_string()),
-    ];
+    let mut ps: Vec<(&'static str, String)> = vec![("p", project.id.clone()), ("since", since.to_string()), ("until", until.to_string())];
     if let Some(r) = a.release.as_deref().filter(|r| !r.is_empty()) {
         cond.push_str(" AND release = {rel:String}");
         ps.push(("rel", r.to_string()));
@@ -642,22 +526,14 @@ pub async fn sessions_timeseries(
     let group = match opts.group_by.as_deref().filter(|g| !g.is_empty()) {
         None => None,
         Some(g @ ("release" | "environment" | "platform")) => Some(g),
-        Some(g) => {
-            return Err(ApiError::bad(format!(
-                "unknown group_by `{g}`; one of {}",
-                SESSION_GROUPS.join(", ")
-            )))
-        }
+        Some(g) => return Err(ApiError::bad(format!("unknown group_by `{g}`; one of {}", SESSION_GROUPS.join(", ")))),
     };
     let inner = format!(
         "SELECT session_id, argMax(status, timestamp) AS s_status, any(distinct_id) AS s_distinct, any(release) AS s_release, \
          any(environment) AS s_env, any(platform) AS s_platform, min(started) AS s_started FROM sessions WHERE {cond} GROUP BY session_id"
     );
     let bucket = b.sql("s_started");
-    let empty = empty_row(
-        &["sessions", "crashed", "errored", "users", "crashed_users"],
-        &["crash_free_sessions", "crash_free_users"],
-    );
+    let empty = empty_row(&["sessions", "crashed", "errored", "users", "crashed_users"], &["crash_free_sessions", "crash_free_users"]);
     let rows = state
         .ch
         .query(&format!("SELECT {bucket} AS bucket, {SESSION_METRICS} FROM ({inner}) GROUP BY bucket ORDER BY bucket"), &ps)
@@ -701,38 +577,14 @@ mod tests {
     #[test]
     fn parses_intervals() {
         let day = 86_400_000;
-        assert_eq!(
-            parse_interval(None, 0, day).unwrap(),
-            Bucketing::Fixed(3600)
-        );
-        assert_eq!(
-            parse_interval(None, 0, 10 * day).unwrap(),
-            Bucketing::Fixed(86_400)
-        );
-        assert_eq!(
-            parse_interval(Some("minute"), 0, day).unwrap(),
-            Bucketing::Fixed(60)
-        );
-        assert_eq!(
-            parse_interval(Some("5m"), 0, day).unwrap(),
-            Bucketing::Fixed(300)
-        );
-        assert_eq!(
-            parse_interval(Some("30s"), 0, day).unwrap(),
-            Bucketing::Fixed(60)
-        );
-        assert_eq!(
-            parse_interval(Some("90s"), 0, day).unwrap(),
-            Bucketing::Fixed(120)
-        );
-        assert_eq!(
-            parse_interval(Some("1w"), 0, 30 * day).unwrap(),
-            Bucketing::Week
-        );
-        assert_eq!(
-            parse_interval(Some("6h"), 0, 30 * day).unwrap().name(),
-            "6h"
-        );
+        assert_eq!(parse_interval(None, 0, day).unwrap(), Bucketing::Fixed(3600));
+        assert_eq!(parse_interval(None, 0, 10 * day).unwrap(), Bucketing::Fixed(86_400));
+        assert_eq!(parse_interval(Some("minute"), 0, day).unwrap(), Bucketing::Fixed(60));
+        assert_eq!(parse_interval(Some("5m"), 0, day).unwrap(), Bucketing::Fixed(300));
+        assert_eq!(parse_interval(Some("30s"), 0, day).unwrap(), Bucketing::Fixed(60));
+        assert_eq!(parse_interval(Some("90s"), 0, day).unwrap(), Bucketing::Fixed(120));
+        assert_eq!(parse_interval(Some("1w"), 0, 30 * day).unwrap(), Bucketing::Week);
+        assert_eq!(parse_interval(Some("6h"), 0, 30 * day).unwrap().name(), "6h");
         assert!(parse_interval(Some("minute"), 0, 30 * day).is_err());
         assert!(parse_interval(Some("fortnight"), 0, day).is_err());
     }
@@ -743,18 +595,9 @@ mod tests {
         let wed = 1_795_000_000; // 2026-11-18T...
         let b = Bucketing::Week;
         assert_eq!(bucket_label(b.floor(wed)), "2026-11-16T00:00:00Z");
-        assert_eq!(
-            bucket_label(Bucketing::Month.floor(wed)),
-            "2026-11-01T00:00:00Z"
-        );
-        assert_eq!(
-            bucket_label(Bucketing::Month.next(Bucketing::Month.floor(wed))),
-            "2026-12-01T00:00:00Z"
-        );
-        assert_eq!(
-            bucket_label(Bucketing::Fixed(300).floor(wed)),
-            bucket_label(wed - wed % 300)
-        );
+        assert_eq!(bucket_label(Bucketing::Month.floor(wed)), "2026-11-01T00:00:00Z");
+        assert_eq!(bucket_label(Bucketing::Month.next(Bucketing::Month.floor(wed))), "2026-12-01T00:00:00Z");
+        assert_eq!(bucket_label(Bucketing::Fixed(300).floor(wed)), bucket_label(wed - wed % 300));
     }
 
     #[test]
@@ -763,10 +606,7 @@ mod tests {
         let rows = vec![json!({"bucket": "1970-01-01T00:01:00Z", "n": 5})];
         let out = fill(rows, &b, 0, 179_000, &empty_row(&["n"], &["p95"]));
         assert_eq!(out.len(), 3);
-        assert_eq!(
-            out[0],
-            json!({"bucket": "1970-01-01T00:00:00Z", "n": 0, "p95": null})
-        );
+        assert_eq!(out[0], json!({"bucket": "1970-01-01T00:00:00Z", "n": 0, "p95": null}));
         assert_eq!(out[1]["n"], 5);
         assert_eq!(out[2]["bucket"], "1970-01-01T00:02:00Z");
     }

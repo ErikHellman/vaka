@@ -42,12 +42,7 @@ pub async fn run_cli(args: &[String]) -> anyhow::Result<()> {
             Some((f, v)) => (f, Some(v.to_string())),
             None => (a.as_str(), None),
         };
-        let mut value = || {
-            inline
-                .clone()
-                .or_else(|| it.next().cloned())
-                .ok_or_else(|| anyhow::anyhow!("{flag} needs a value\n{USAGE}"))
-        };
+        let mut value = || inline.clone().or_else(|| it.next().cloned()).ok_or_else(|| anyhow::anyhow!("{flag} needs a value\n{USAGE}"));
         match flag {
             "--from" => o.from = value()?,
             "--to" => o.to = value()?,
@@ -65,23 +60,11 @@ pub async fn run_cli(args: &[String]) -> anyhow::Result<()> {
     if o.from.is_empty() {
         o.from = crate::config::Config::from_env()?.db_url;
     }
-    println!(
-        "Copying metadata from {} to {}",
-        redact(&o.from),
-        redact(&o.to)
-    );
+    println!("Copying metadata from {} to {}", redact(&o.from), redact(&o.to));
     let started = std::time::Instant::now();
     let report = migrate(&o).await?;
-    let width = report
-        .iter()
-        .map(|r| r.table.len())
-        .max()
-        .unwrap_or(5)
-        .max(5);
-    println!(
-        "{:width$}  {:>8}  {:>8}  status",
-        "table", "copied", "target"
-    );
+    let width = report.iter().map(|r| r.table.len()).max().unwrap_or(5).max(5);
+    println!("{:width$}  {:>8}  {:>8}  status", "table", "copied", "target");
     let mut drift = 0;
     for r in &report {
         let status = if r.copied != r.target {
@@ -92,17 +75,10 @@ pub async fn run_cli(args: &[String]) -> anyhow::Result<()> {
         } else {
             "ok"
         };
-        println!(
-            "{:width$}  {:>8}  {:>8}  {status}",
-            r.table, r.copied, r.target
-        );
+        println!("{:width$}  {:>8}  {:>8}  {status}", r.table, r.copied, r.target);
     }
     let total: i64 = report.iter().map(|r| r.copied).sum();
-    println!(
-        "Copied {total} rows in {} tables in {:.1}s.",
-        report.len(),
-        started.elapsed().as_secs_f64()
-    );
+    println!("Copied {total} rows in {} tables in {:.1}s.", report.len(), started.elapsed().as_secs_f64());
     if drift > 0 {
         println!(
             "Note: {drift} table(s) changed in the source while copying. That is expected while the server is writable; \
@@ -134,11 +110,7 @@ fn kind_of(declared: &str) -> Kind {
     let t = declared.to_ascii_lowercase();
     if t.contains("int") {
         Kind::Int
-    } else if t.contains("real")
-        || t.contains("double")
-        || t.contains("float")
-        || t.contains("numeric")
-    {
+    } else if t.contains("real") || t.contains("double") || t.contains("float") || t.contains("numeric") {
         Kind::Real
     } else if t.contains("blob") || t.contains("bytea") {
         Kind::Blob
@@ -159,12 +131,7 @@ enum Val {
 /// Read a column as the target's type, converting what SQLite's loose typing may have stored.
 fn read(row: &AnyRow, i: usize, kind: Kind) -> Val {
     let int = || row.try_get::<Option<i64>, _>(i).ok().flatten();
-    let int32 = || {
-        row.try_get::<Option<i32>, _>(i)
-            .ok()
-            .flatten()
-            .map(i64::from)
-    };
+    let int32 = || row.try_get::<Option<i32>, _>(i).ok().flatten().map(i64::from);
     let real = || row.try_get::<Option<f64>, _>(i).ok().flatten();
     let text = || row.try_get::<Option<String>, _>(i).ok().flatten();
     let blob = || row.try_get::<Option<Vec<u8>>, _>(i).ok().flatten();
@@ -174,18 +141,13 @@ fn read(row: &AnyRow, i: usize, kind: Kind) -> Val {
             .map(Val::Int)
             .or_else(|| real().map(|f| Val::Int(f as i64)))
             .or_else(|| text().and_then(|s| s.trim().parse().ok()).map(Val::Int)),
-        Kind::Real => real()
-            .or_else(|| int().map(|n| n as f64))
-            .or_else(|| text().and_then(|s| s.parse().ok()))
-            .map(Val::Real),
+        Kind::Real => real().or_else(|| int().map(|n| n as f64)).or_else(|| text().and_then(|s| s.parse().ok())).map(Val::Real),
         Kind::Text => text()
             .map(Val::Text)
             .or_else(|| int().or_else(int32).map(|n| Val::Text(n.to_string())))
             .or_else(|| real().map(|f| Val::Text(f.to_string())))
             .or_else(|| blob().map(|b| Val::Text(String::from_utf8_lossy(&b).into_owned()))),
-        Kind::Blob => blob()
-            .or_else(|| text().map(String::into_bytes))
-            .map(Val::Blob),
+        Kind::Blob => blob().or_else(|| text().map(String::into_bytes)).map(Val::Blob),
     };
     v.unwrap_or(Val::Null)
 }
@@ -214,10 +176,7 @@ async fn schema(pool: &Pool, sqlite: bool) -> anyhow::Result<Vec<(String, Vec<(S
     let mut out = Vec::new();
     for t in tables.into_iter().filter(|t| t != "schema_migrations") {
         let rows = if sqlite {
-            sqlx::query("SELECT name, type FROM pragma_table_info($1) ORDER BY cid")
-                .bind(&t)
-                .fetch_all(pool)
-                .await?
+            sqlx::query("SELECT name, type FROM pragma_table_info($1) ORDER BY cid").bind(&t).fetch_all(pool).await?
         } else {
             sqlx::query(
                 "SELECT column_name::text AS name, data_type::text AS type FROM information_schema.columns \
@@ -227,15 +186,7 @@ async fn schema(pool: &Pool, sqlite: bool) -> anyhow::Result<Vec<(String, Vec<(S
             .fetch_all(pool)
             .await?
         };
-        let cols = rows
-            .iter()
-            .map(|r| {
-                (
-                    r.get::<String, _>("name"),
-                    kind_of(&r.get::<String, _>("type")),
-                )
-            })
-            .collect();
+        let cols = rows.iter().map(|r| (r.get::<String, _>("name"), kind_of(&r.get::<String, _>("type")))).collect();
         out.push((t, cols));
     }
     Ok(out)
@@ -245,18 +196,17 @@ async fn schema_version(pool: &Pool) -> anyhow::Result<i64> {
     let v: Option<i64> = sqlx::query_scalar("SELECT MAX(version) FROM schema_migrations")
         .fetch_one(pool)
         .await
-        .map_err(|e| {
-            anyhow::anyhow!("source has no Vaka schema ({e}); is --from the right database?")
-        })?;
+        .map_err(|e| anyhow::anyhow!("source has no Vaka schema ({e}); is --from the right database?"))?;
     Ok(v.unwrap_or(0))
 }
 
 async fn count(pool: &Pool, table: &str) -> anyhow::Result<i64> {
-    Ok(
-        sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {}", quote(table)))
-            .fetch_one(pool)
-            .await?,
-    )
+    Ok(sqlx::query_scalar::<_, i64>(&format!(
+        "SELECT COUNT(*) FROM {}",
+        quote(table)
+    ))
+    .fetch_one(pool)
+    .await?)
 }
 
 /// Rows per INSERT statement: stay well under SQLite's 32766 and Postgres' 65535 bind limits.
@@ -264,20 +214,11 @@ fn rows_per_insert(columns: usize) -> usize {
     (20_000 / columns.max(1)).clamp(1, 500)
 }
 
-async fn insert_chunk(
-    tx: &mut Transaction<'_, Any>,
-    table: &str,
-    cols: &[(String, Kind)],
-    rows: &[Vec<Val>],
-) -> anyhow::Result<()> {
+async fn insert_chunk(tx: &mut Transaction<'_, Any>, table: &str, cols: &[(String, Kind)], rows: &[Vec<Val>]) -> anyhow::Result<()> {
     if rows.is_empty() {
         return Ok(());
     }
-    let names = cols
-        .iter()
-        .map(|(c, _)| quote(c))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let names = cols.iter().map(|(c, _)| quote(c)).collect::<Vec<_>>().join(", ");
     let mut sql = format!("INSERT INTO {} ({names}) VALUES ", quote(table));
     let mut n = 0;
     for (ri, _) in rows.iter().enumerate() {
@@ -364,10 +305,7 @@ pub async fn migrate(o: &Options) -> anyhow::Result<Vec<TableReport>> {
         let Some((_, scols)) = src_schema.iter().find(|(s, _)| s == t) else {
             anyhow::bail!("source has no table `{t}`");
         };
-        if let Some((c, _)) = cols
-            .iter()
-            .find(|(c, _)| !scols.iter().any(|(s, _)| s == c))
-        {
+        if let Some((c, _)) = cols.iter().find(|(c, _)| !scols.iter().any(|(s, _)| s == c)) {
             anyhow::bail!("source table `{t}` has no column `{c}`");
         }
     }
@@ -386,9 +324,7 @@ pub async fn migrate(o: &Options) -> anyhow::Result<Vec<TableReport>> {
     // keeps the server writing meanwhile); on Postgres ask for it explicitly.
     let mut stx = src.begin().await?;
     if !src_sqlite {
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-            .execute(&mut *stx)
-            .await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY").execute(&mut *stx).await?;
     }
     let mut ttx = dst.begin().await?;
     if dst_sqlite {
@@ -415,24 +351,17 @@ pub async fn migrate(o: &Options) -> anyhow::Result<Vec<TableReport>> {
             .map(|(c, _)| quote(c))
             .collect::<Vec<_>>()
             .join(", ");
-        let rows = sqlx::query(&format!("SELECT {names} FROM {}", quote(t)))
-            .fetch_all(&mut *stx)
-            .await?;
+        let rows = sqlx::query(&format!(
+            "SELECT {names} FROM {}",
+            quote(t)
+        ))
+        .fetch_all(&mut *stx)
+        .await?;
         let per = rows_per_insert(cols.len());
         let mut n = 0i64;
         for chunk in rows.chunks(per) {
-            let vals: Vec<Vec<Val>> = chunk
-                .iter()
-                .map(|r| {
-                    cols.iter()
-                        .enumerate()
-                        .map(|(i, (_, k))| read(r, i, *k))
-                        .collect()
-                })
-                .collect();
-            insert_chunk(&mut ttx, t, cols, &vals)
-                .await
-                .map_err(|e| anyhow::anyhow!("copying {t}: {e:#}"))?;
+            let vals: Vec<Vec<Val>> = chunk.iter().map(|r| cols.iter().enumerate().map(|(i, (_, k))| read(r, i, *k)).collect()).collect();
+            insert_chunk(&mut ttx, t, cols, &vals).await.map_err(|e| anyhow::anyhow!("copying {t}: {e:#}"))?;
             n += vals.len() as i64;
         }
         copied.push((t.clone(), n));
@@ -445,22 +374,12 @@ pub async fn migrate(o: &Options) -> anyhow::Result<Vec<TableReport>> {
 
     let mut report = Vec::new();
     for (t, n) in copied {
-        report.push(TableReport {
-            target: count(&dst, &t).await?,
-            source_now: count(&src, &t).await?,
-            table: t,
-            copied: n,
-        });
+        report.push(TableReport { target: count(&dst, &t).await?, source_now: count(&src, &t).await?, table: t, copied: n });
     }
     src.close().await;
     dst.close().await;
     if let Some(bad) = report.iter().find(|r| r.copied != r.target) {
-        anyhow::bail!(
-            "row count mismatch in `{}`: copied {}, target has {}",
-            bad.table,
-            bad.copied,
-            bad.target
-        );
+        anyhow::bail!("row count mismatch in `{}`: copied {}, target has {}", bad.table, bad.copied, bad.target);
     }
     Ok(report)
 }
@@ -480,13 +399,11 @@ mod tests {
     /// tables added by future migrations without changes.
     async fn seed(pool: &Pool, n: usize, offset: usize) {
         for (t, cols) in schema(pool, true).await.unwrap() {
-            let nullable: Vec<String> = sqlx::query_scalar(
-                "SELECT name FROM pragma_table_info($1) WHERE \"notnull\" = 0 AND pk = 0",
-            )
-            .bind(&t)
-            .fetch_all(pool)
-            .await
-            .unwrap();
+            let nullable: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info($1) WHERE \"notnull\" = 0 AND pk = 0")
+                .bind(&t)
+                .fetch_all(pool)
+                .await
+                .unwrap();
             let rows: Vec<Vec<Val>> = (offset..offset + n)
                 .map(|i| {
                     cols.iter()
@@ -503,9 +420,7 @@ mod tests {
                 })
                 .collect();
             let mut tx = pool.begin().await.unwrap();
-            insert_chunk(&mut tx, &t, &cols, &rows)
-                .await
-                .unwrap_or_else(|e| panic!("seed {t}: {e:#}"));
+            insert_chunk(&mut tx, &t, &cols, &rows).await.unwrap_or_else(|e| panic!("seed {t}: {e:#}"));
             tx.commit().await.unwrap();
         }
     }
@@ -519,21 +434,16 @@ mod tests {
                 .map(|(c, _)| quote(c))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let rows = sqlx::query(&format!("SELECT {names} FROM {}", quote(&t)))
-                .fetch_all(pool)
-                .await
-                .unwrap();
+            let rows = sqlx::query(&format!(
+                "SELECT {names} FROM {}",
+                quote(&t)
+            ))
+            .fetch_all(pool)
+            .await
+            .unwrap();
             let mut lines: Vec<String> = rows
                 .iter()
-                .map(|r| {
-                    format!(
-                        "{:?}",
-                        cols.iter()
-                            .enumerate()
-                            .map(|(i, (_, k))| read(r, i, *k))
-                            .collect::<Vec<_>>()
-                    )
-                })
+                .map(|r| format!("{:?}", cols.iter().enumerate().map(|(i, (_, k))| read(r, i, *k)).collect::<Vec<_>>()))
                 .collect();
             lines.sort();
             out.push((t, lines));
@@ -546,40 +456,20 @@ mod tests {
         let (dir, from) = temp_sqlite();
         let src = db::connect(&from).await.unwrap();
         seed(&src, 3, 0).await;
-        let o = Options {
-            from: from.clone(),
-            to: target.to_string(),
-            replace: false,
-        };
+        let o = Options { from: from.clone(), to: target.to_string(), replace: false };
 
         let report = migrate(&o).await.unwrap();
-        assert!(
-            report.len() >= 20,
-            "all metadata tables are copied: {report:?}"
-        );
-        assert!(
-            report
-                .iter()
-                .all(|r| r.copied == 3 && r.target == 3 && r.source_now == 3),
-            "{report:?}"
-        );
+        assert!(report.len() >= 20, "all metadata tables are copied: {report:?}");
+        assert!(report.iter().all(|r| r.copied == 3 && r.target == 3 && r.source_now == 3), "{report:?}");
         let dst = db::open(target).await.unwrap();
         assert_eq!(dump(&src, true).await, dump(&dst, is_sqlite(target)).await);
 
         // A second copy needs --replace, and then mirrors the source again.
         let err = migrate(&o).await.unwrap_err().to_string();
         assert!(err.contains("--replace"), "{err}");
-        sqlx::query("DELETE FROM users WHERE email LIKE '%.0 %'")
-            .execute(&src)
-            .await
-            .unwrap();
+        sqlx::query("DELETE FROM users WHERE email LIKE '%.0 %'").execute(&src).await.unwrap();
         seed(&src, 2, 10).await;
-        let report = migrate(&Options {
-            replace: true,
-            ..o.clone()
-        })
-        .await
-        .unwrap();
+        let report = migrate(&Options { replace: true, ..o.clone() }).await.unwrap();
         let users = report.iter().find(|r| r.table == "users").unwrap();
         assert_eq!((users.copied, users.target), (4, 4));
         assert_eq!(dump(&src, true).await, dump(&dst, is_sqlite(target)).await);
@@ -617,44 +507,28 @@ mod tests {
         let mut url = url::Url::parse(&base).unwrap();
         url.set_path(&name);
         round_trip(url.as_str()).await;
-        sqlx::query(&format!("DROP DATABASE {name} WITH (FORCE)"))
-            .execute(&admin)
-            .await
-            .unwrap();
+        sqlx::query(&format!(
+            "DROP DATABASE {name} WITH (FORCE)"
+        ))
+        .execute(&admin)
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
     async fn refuses_missing_source_and_same_database() {
         let (dir, url) = temp_sqlite();
-        let err = migrate(&Options {
-            from: url.clone(),
-            to: "sqlite:///tmp/x.db".into(),
-            replace: false,
-        })
-        .await
-        .unwrap_err();
+        let err = migrate(&Options { from: url.clone(), to: "sqlite:///tmp/x.db".into(), replace: false }).await.unwrap_err();
         assert!(err.to_string().contains("does not exist"), "{err}");
-        assert!(
-            !dir.join("vaka.db").exists(),
-            "must not create an empty source"
-        );
-        let err = migrate(&Options {
-            from: url.clone(),
-            to: url,
-            replace: true,
-        })
-        .await
-        .unwrap_err();
+        assert!(!dir.join("vaka.db").exists(), "must not create an empty source");
+        let err = migrate(&Options { from: url.clone(), to: url, replace: true }).await.unwrap_err();
         assert!(err.to_string().contains("same database"), "{err}");
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn redacts_passwords_and_maps_types() {
-        assert_eq!(
-            redact("postgres://vaka:secret@db:5432/vaka"),
-            "postgres://vaka:***@db:5432/vaka"
-        );
+        assert_eq!(redact("postgres://vaka:secret@db:5432/vaka"), "postgres://vaka:***@db:5432/vaka");
         assert_eq!(redact("sqlite:///data/vaka.db"), "sqlite:///data/vaka.db");
         assert_eq!(kind_of("BIGINT"), Kind::Int);
         assert_eq!(kind_of("integer"), Kind::Int);

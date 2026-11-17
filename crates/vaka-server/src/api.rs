@@ -3,9 +3,7 @@
 
 use crate::auth::{ApiError, Principal, Role};
 use crate::db::RowExt;
-use crate::query::{
-    self, AnalyticsParams, EventSearchParams, IssueListParams, IssueUpdate, QResult,
-};
+use crate::query::{self, AnalyticsParams, EventSearchParams, IssueListParams, IssueUpdate, QResult};
 use crate::state::AppState;
 use crate::util::{iso_time, new_id, now_ms};
 use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, RawQuery, State};
@@ -23,10 +21,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/me", get(me))
         .route("/api/v1/projects", get(list_projects).post(create_project))
-        .route(
-            "/api/v1/projects/{p}",
-            get(get_project).patch(update_project),
-        )
+        .route("/api/v1/projects/{p}", get(get_project).patch(update_project))
         .route("/api/v1/projects/{p}/keys", post(create_key))
         .route("/api/v1/projects/{p}/keys/{key}", delete(revoke_key))
         .route("/api/v1/projects/{p}/issues", get(list_issues))
@@ -34,259 +29,99 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/projects/{p}/events/{event_id}", get(get_event))
         .route("/api/v1/projects/{p}/releases", get(list_releases))
         .route("/api/v1/projects/{p}/releases/health", get(release_health))
-        .route(
-            "/api/v1/projects/{p}/releases/compare",
-            get(compare_releases),
-        )
+        .route("/api/v1/projects/{p}/releases/compare", get(compare_releases))
         .route(
             "/api/v1/projects/{p}/releases/{version}/commits",
-            get(get_release_commits)
-                .put(put_release_commits)
-                .layer(DefaultBodyLimit::max(32 * 1024 * 1024)),
+            get(get_release_commits).put(put_release_commits).layer(DefaultBodyLimit::max(32 * 1024 * 1024)),
         )
-        .route(
-            "/api/v1/projects/{p}/ownership",
-            get(get_ownership).put(put_ownership),
-        )
-        .route(
-            "/api/v1/projects/{p}/ownership/apply",
-            post(apply_ownership),
-        )
-        .route(
-            "/api/v1/projects/{p}/code-mappings",
-            get(get_code_mappings).put(put_code_mappings),
-        )
+        .route("/api/v1/projects/{p}/ownership", get(get_ownership).put(put_ownership))
+        .route("/api/v1/projects/{p}/ownership/apply", post(apply_ownership))
+        .route("/api/v1/projects/{p}/code-mappings", get(get_code_mappings).put(put_code_mappings))
         .route("/api/v1/issues/{id}/fix-context", get(fix_context))
         .route("/api/v1/issues/{id}/precursors", get(issue_precursors))
-        .route(
-            "/api/v1/projects/{p}/sessions/{session_id}/timeline",
-            get(session_timeline),
-        )
-        .route(
-            "/api/v1/projects/{p}/performance/summary",
-            get(perf_summary),
-        )
-        .route(
-            "/api/v1/projects/{p}/performance/endpoints",
-            get(perf_endpoints),
-        )
-        .route(
-            "/api/v1/projects/{p}/performance/app-start",
-            get(perf_app_start),
-        )
-        .route(
-            "/api/v1/projects/{p}/performance/web-vitals",
-            get(perf_web_vitals),
-        )
+        .route("/api/v1/projects/{p}/sessions/{session_id}/timeline", get(session_timeline))
+        .route("/api/v1/projects/{p}/performance/summary", get(perf_summary))
+        .route("/api/v1/projects/{p}/performance/endpoints", get(perf_endpoints))
+        .route("/api/v1/projects/{p}/performance/app-start", get(perf_app_start))
+        .route("/api/v1/projects/{p}/performance/web-vitals", get(perf_web_vitals))
         .route("/api/v1/projects/{p}/performance/traces", get(perf_traces))
-        .route(
-            "/api/v1/projects/{p}/performance/breakdown",
-            get(perf_breakdown),
-        )
-        .route(
-            "/api/v1/projects/{p}/performance/compare",
-            get(perf_compare),
-        )
+        .route("/api/v1/projects/{p}/performance/breakdown", get(perf_breakdown))
+        .route("/api/v1/projects/{p}/performance/compare", get(perf_compare))
         .route("/api/v1/projects/{p}/traces/{trace_id}", get(get_trace))
         .route("/api/v1/issues/{id}/links", get(list_links).post(add_link))
         .route("/api/v1/issues/{id}/links/{link}", delete(delete_link))
-        .route(
-            "/api/v1/projects/{p}/analytics/summary",
-            get(analytics_summary),
-        )
-        .route(
-            "/api/v1/projects/{p}/analytics/timeseries",
-            get(analytics_timeseries),
-        )
-        .route(
-            "/api/v1/projects/{p}/errors/timeseries",
-            get(errors_timeseries),
-        )
-        .route(
-            "/api/v1/projects/{p}/performance/timeseries",
-            get(perf_timeseries),
-        )
-        .route(
-            "/api/v1/projects/{p}/sessions/timeseries",
-            get(sessions_timeseries),
-        )
-        .route(
-            "/api/v1/projects/{p}/analytics/breakdown",
-            get(analytics_breakdown),
-        )
+        .route("/api/v1/projects/{p}/analytics/summary", get(analytics_summary))
+        .route("/api/v1/projects/{p}/analytics/timeseries", get(analytics_timeseries))
+        .route("/api/v1/projects/{p}/errors/timeseries", get(errors_timeseries))
+        .route("/api/v1/projects/{p}/performance/timeseries", get(perf_timeseries))
+        .route("/api/v1/projects/{p}/sessions/timeseries", get(sessions_timeseries))
+        .route("/api/v1/projects/{p}/analytics/breakdown", get(analytics_breakdown))
         .route("/api/v1/projects/{p}/explain-spike", get(explain_spike))
-        .route(
-            "/api/v1/projects/{p}/analytics/funnel",
-            get(analytics_funnel),
-        )
-        .route(
-            "/api/v1/projects/{p}/analytics/retention",
-            get(analytics_retention),
-        )
+        .route("/api/v1/projects/{p}/analytics/funnel", get(analytics_funnel))
+        .route("/api/v1/projects/{p}/analytics/retention", get(analytics_retention))
         .route("/api/v1/projects/{p}/analytics/paths", get(analytics_paths))
-        .route(
-            "/api/v1/projects/{p}/analytics/events",
-            get(analytics_events),
-        )
-        .route(
-            "/api/v1/projects/{p}/analytics/revenue",
-            get(analytics_revenue),
-        )
-        .route(
-            "/api/v1/projects/{p}/analytics/realtime",
-            get(analytics_realtime),
-        )
+        .route("/api/v1/projects/{p}/analytics/events", get(analytics_events))
+        .route("/api/v1/projects/{p}/analytics/revenue", get(analytics_revenue))
+        .route("/api/v1/projects/{p}/analytics/realtime", get(analytics_realtime))
         .route("/api/v1/projects/{p}/stream", get(crate::live::stream))
-        .route(
-            "/api/v1/projects/{p}/goals",
-            get(list_goals).post(create_goal),
-        )
-        .route(
-            "/api/v1/projects/{p}/flags",
-            get(list_flags).post(create_flag),
-        )
-        .route(
-            "/api/v1/projects/{p}/flags/{key}",
-            get(get_flag).patch(update_flag).delete(delete_flag),
-        )
+        .route("/api/v1/projects/{p}/goals", get(list_goals).post(create_goal))
+        .route("/api/v1/projects/{p}/flags", get(list_flags).post(create_flag))
+        .route("/api/v1/projects/{p}/flags/{key}", get(get_flag).patch(update_flag).delete(delete_flag))
         .route("/api/v1/projects/{p}/flags/{key}/health", get(flag_health))
         .route("/api/v1/projects/{p}/anomalies", get(anomalies))
         .route("/api/v1/projects/{p}/logs", get(search_logs))
         .route("/api/v1/projects/{p}/digest/preview", get(digest_preview))
-        .route(
-            "/api/v1/projects/{p}/flags/{key}/results",
-            get(flag_results),
-        )
-        .route(
-            "/api/v1/projects/{p}/experiments",
-            get(list_experiments).post(create_experiment),
-        )
-        .route(
-            "/api/v1/projects/{p}/experiments/{name}/results",
-            get(experiment_results),
-        )
-        .route(
-            "/api/v1/projects/{p}/cohorts",
-            get(list_cohorts).post(create_cohort),
-        )
-        .route(
-            "/api/v1/projects/{p}/cohorts/{cohort}",
-            get(get_cohort).delete(delete_cohort),
-        )
-        .route(
-            "/api/v1/projects/{p}/analytics/stickiness",
-            get(analytics_stickiness),
-        )
-        .route(
-            "/api/v1/projects/{p}/analytics/lifecycle",
-            get(analytics_lifecycle),
-        )
+        .route("/api/v1/projects/{p}/flags/{key}/results", get(flag_results))
+        .route("/api/v1/projects/{p}/experiments", get(list_experiments).post(create_experiment))
+        .route("/api/v1/projects/{p}/experiments/{name}/results", get(experiment_results))
+        .route("/api/v1/projects/{p}/cohorts", get(list_cohorts).post(create_cohort))
+        .route("/api/v1/projects/{p}/cohorts/{cohort}", get(get_cohort).delete(delete_cohort))
+        .route("/api/v1/projects/{p}/analytics/stickiness", get(analytics_stickiness))
+        .route("/api/v1/projects/{p}/analytics/lifecycle", get(analytics_lifecycle))
         .route("/api/v1/projects/{p}/goals/{goal}", delete(delete_goal))
-        .route(
-            "/api/v1/projects/{p}/releases/adoption",
-            get(release_adoption),
-        )
+        .route("/api/v1/projects/{p}/releases/adoption", get(release_adoption))
         .route("/api/v1/projects/{p}/users", get(list_identified_users))
-        .route(
-            "/api/v1/projects/{p}/users/{user_id}/timeline",
-            get(user_timeline),
-        )
+        .route("/api/v1/projects/{p}/users/{user_id}/timeline", get(user_timeline))
         .route(
             "/api/v1/projects/{p}/artifacts",
-            get(list_artifacts)
-                .post(upload_artifact)
-                .layer(DefaultBodyLimit::max(1024 * 1024 * 1024)),
+            get(list_artifacts).post(upload_artifact).layer(DefaultBodyLimit::max(1024 * 1024 * 1024)),
         )
-        .route(
-            "/api/v1/projects/{p}/artifacts/{id}",
-            delete(delete_artifact),
-        )
+        .route("/api/v1/projects/{p}/artifacts/{id}", delete(delete_artifact))
         .route("/api/v1/projects/{p}/users/{user_id}", delete(erase_user))
-        .route(
-            "/api/v1/projects/{p}/install/{platform}",
-            get(install_instructions),
-        )
+        .route("/api/v1/projects/{p}/install/{platform}", get(install_instructions))
         .route("/api/v1/projects/{p}/feedback", get(list_feedback))
-        .route(
-            "/api/v1/projects/{p}/feedback/summary",
-            get(feedback_summary),
-        )
-        .route(
-            "/api/v1/feedback/{id}",
-            get(get_feedback).patch(update_feedback),
-        )
-        .route(
-            "/api/v1/feedback/{id}/attachments/{n}",
-            get(feedback_attachment),
-        )
+        .route("/api/v1/projects/{p}/feedback/summary", get(feedback_summary))
+        .route("/api/v1/feedback/{id}", get(get_feedback).patch(update_feedback))
+        .route("/api/v1/feedback/{id}/attachments/{n}", get(feedback_attachment))
         .route("/api/v1/issues/{id}", get(get_issue).patch(update_issue))
         .route("/api/v1/issues/{id}/events", get(issue_events))
         .route("/api/v1/issues/{id}/comments", post(comment_issue))
-        .route(
-            "/api/v1/projects/{p}/monitors",
-            get(list_monitors).post(create_monitor),
-        )
-        .route(
-            "/api/v1/projects/{p}/monitors/{slug}",
-            get(get_monitor)
-                .patch(update_monitor)
-                .delete(delete_monitor),
-        )
-        .route(
-            "/api/v1/projects/{p}/monitors/{slug}/checks",
-            get(monitor_checks),
-        )
-        .route(
-            "/api/v1/projects/{p}/monitors/{slug}/run",
-            post(run_monitor),
-        )
+        .route("/api/v1/projects/{p}/monitors", get(list_monitors).post(create_monitor))
+        .route("/api/v1/projects/{p}/monitors/{slug}", get(get_monitor).patch(update_monitor).delete(delete_monitor))
+        .route("/api/v1/projects/{p}/monitors/{slug}/checks", get(monitor_checks))
+        .route("/api/v1/projects/{p}/monitors/{slug}/run", post(run_monitor))
         .route("/api/v1/projects/{p}/incidents", get(list_incidents))
-        .route(
-            "/api/v1/incidents/{id}",
-            get(get_incident).patch(update_incident),
-        )
+        .route("/api/v1/incidents/{id}", get(get_incident).patch(update_incident))
         .route("/api/v1/alert-rules", get(list_rules).post(create_rule))
-        .route(
-            "/api/v1/alert-rules/{id}",
-            patch(update_rule).delete(delete_rule),
-        )
+        .route("/api/v1/alert-rules/{id}", patch(update_rule).delete(delete_rule))
         .route("/api/v1/alert-rules/{id}/test", post(test_rule))
         .route("/api/v1/alert-rules/{id}/deliveries", get(rule_deliveries))
-        .route(
-            "/api/v1/alert-rules/{id}/deliveries/{delivery}/redeliver",
-            post(redeliver),
-        )
+        .route("/api/v1/alert-rules/{id}/deliveries/{delivery}/redeliver", post(redeliver))
         .route("/api/v1/tokens", get(list_tokens).post(create_token))
         .route("/api/v1/tokens/{id}", delete(revoke_token))
-        .route(
-            "/api/v1/admin/read-only",
-            get(get_read_only).put(put_read_only),
-        )
+        .route("/api/v1/admin/read-only", get(get_read_only).put(put_read_only))
         .route("/api/v1/users", get(list_users))
         .route("/api/v1/users/invite", post(invite_user))
         .route("/api/v1/users/{id}", patch(update_user).delete(delete_user))
-        .route(
-            "/api/v1/openapi.json",
-            get(|| async { Json(crate::openapi::spec()) }),
-        )
+        .route("/api/v1/openapi.json", get(|| async { Json(crate::openapi::spec()) }))
 }
 
-async fn list_feedback(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(mut q): Query<crate::feedback::ListParams>,
-) -> J {
+async fn list_feedback(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(mut q): Query<crate::feedback::ListParams>) -> J {
     q.project = project;
     Ok(Json(crate::feedback::list(&s, &p, q).await?))
 }
 
-async fn feedback_summary(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(mut q): Query<crate::feedback::SummaryParams>,
-) -> J {
+async fn feedback_summary(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(mut q): Query<crate::feedback::SummaryParams>) -> J {
     q.project = project;
     Ok(Json(crate::feedback::summary(&s, &p, q).await?))
 }
@@ -295,33 +130,18 @@ async fn get_feedback(State(s): State<AppState>, p: Principal, Path(id): Path<St
     Ok(Json(crate::feedback::get(&s, &p, &id).await?))
 }
 
-async fn update_feedback(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(id): Path<String>,
-    Json(u): Json<crate::feedback::Update>,
-) -> J {
+async fn update_feedback(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Json(u): Json<crate::feedback::Update>) -> J {
     Ok(Json(crate::feedback::update(&s, &p, &id, u).await?))
 }
 
-async fn feedback_attachment(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((id, n)): Path<(String, i64)>,
-) -> Result<axum::response::Response, ApiError> {
+async fn feedback_attachment(State(s): State<AppState>, p: Principal, Path((id, n)): Path<(String, i64)>) -> Result<axum::response::Response, ApiError> {
     use axum::response::IntoResponse;
     let (ct, bytes) = crate::feedback::attachment(&s, &p, &id, n).await?;
     Ok((
         [
             (axum::http::header::CONTENT_TYPE, ct),
-            (
-                axum::http::header::CACHE_CONTROL,
-                "private, max-age=3600".to_string(),
-            ),
-            (
-                axum::http::header::X_CONTENT_TYPE_OPTIONS,
-                "nosniff".to_string(),
-            ),
+            (axum::http::header::CACHE_CONTROL, "private, max-age=3600".to_string()),
+            (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
         ],
         bytes,
     )
@@ -329,30 +149,12 @@ async fn feedback_attachment(
 }
 
 /// Feature names clients (such as the Grafana plugin) can probe for in `GET /me`.
-pub const CAPABILITIES: &[&str] = &[
-    "stream",
-    "analytics_group_by",
-    "errors_timeseries",
-    "performance_timeseries",
-    "sessions_timeseries",
-    "interval_durations",
-    "fill",
-];
+pub const CAPABILITIES: &[&str] = &["stream", "analytics_group_by", "errors_timeseries", "performance_timeseries", "sessions_timeseries", "interval_durations", "fill"];
 
 async fn me(p: Principal) -> J {
     let mut v = match p {
-        Principal::User {
-            id,
-            email,
-            name,
-            role,
-        } => json!({"type": "user", "id": id, "email": email, "name": name, "role": role}),
-        Principal::Token {
-            id,
-            name,
-            project_id,
-            write,
-        } => {
+        Principal::User { id, email, name, role } => json!({"type": "user", "id": id, "email": email, "name": name, "role": role}),
+        Principal::Token { id, name, project_id, write } => {
             json!({"type": "token", "id": id, "name": name, "project_id": project_id, "scope": if write {"write"} else {"read"}})
         }
     };
@@ -365,14 +167,8 @@ async fn list_projects(State(s): State<AppState>, p: Principal) -> J {
     Ok(Json(query::list_projects(&s, &p).await?))
 }
 
-async fn get_release_commits(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, version)): Path<(String, String)>,
-) -> J {
-    Ok(Json(
-        crate::ownership::get_release_commits(&s, &p, &project, &version).await?,
-    ))
+async fn get_release_commits(State(s): State<AppState>, p: Principal, Path((project, version)): Path<(String, String)>) -> J {
+    Ok(Json(crate::ownership::get_release_commits(&s, &p, &project, &version).await?))
 }
 
 async fn put_release_commits(
@@ -381,9 +177,7 @@ async fn put_release_commits(
     Path((project, version)): Path<(String, String)>,
     Json(body): Json<crate::ownership::SetCommits>,
 ) -> J {
-    Ok(Json(
-        crate::ownership::put_release_commits(&s, &p, &project, &version, body).await?,
-    ))
+    Ok(Json(crate::ownership::put_release_commits(&s, &p, &project, &version, body).await?))
 }
 
 #[derive(Deserialize)]
@@ -392,25 +186,12 @@ struct ApplyQuery {
     all: Option<bool>,
 }
 
-async fn apply_ownership(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<ApplyQuery>,
-) -> J {
-    Ok(Json(
-        crate::ownership::apply_ownership(&s, &p, &project, q.all.unwrap_or(false)).await?,
-    ))
+async fn apply_ownership(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<ApplyQuery>) -> J {
+    Ok(Json(crate::ownership::apply_ownership(&s, &p, &project, q.all.unwrap_or(false)).await?))
 }
 
-async fn get_code_mappings(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-) -> J {
-    Ok(Json(
-        crate::fixctx::get_code_mappings(&s, &p, &project).await?,
-    ))
+async fn get_code_mappings(State(s): State<AppState>, p: Principal, Path(project): Path<String>) -> J {
+    Ok(Json(crate::fixctx::get_code_mappings(&s, &p, &project).await?))
 }
 
 #[derive(Deserialize)]
@@ -418,15 +199,8 @@ struct MappingsBody {
     mappings: Vec<crate::fixctx::CodeMapping>,
 }
 
-async fn put_code_mappings(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Json(b): Json<MappingsBody>,
-) -> J {
-    Ok(Json(
-        crate::fixctx::set_code_mappings(&s, &p, &project, b.mappings).await?,
-    ))
+async fn put_code_mappings(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(b): Json<MappingsBody>) -> J {
+    Ok(Json(crate::fixctx::set_code_mappings(&s, &p, &project, b.mappings).await?))
 }
 
 #[derive(Deserialize)]
@@ -469,109 +243,42 @@ impl PerfQuery {
     }
 }
 
-async fn perf_summary(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<PerfQuery>,
-) -> J {
+async fn perf_summary(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<PerfQuery>) -> J {
     Ok(Json(crate::perf::summary(&s, &p, q.params(project)).await?))
 }
 
-async fn perf_endpoints(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<PerfQuery>,
-) -> J {
-    Ok(Json(
-        crate::perf::slow_endpoints(&s, &p, q.params(project), q.min_count).await?,
-    ))
+async fn perf_endpoints(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<PerfQuery>) -> J {
+    Ok(Json(crate::perf::slow_endpoints(&s, &p, q.params(project), q.min_count).await?))
 }
 
-async fn perf_app_start(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<PerfQuery>,
-) -> J {
-    Ok(Json(
-        crate::perf::app_startup(&s, &p, q.params(project)).await?,
-    ))
+async fn perf_app_start(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<PerfQuery>) -> J {
+    Ok(Json(crate::perf::app_startup(&s, &p, q.params(project)).await?))
 }
 
-async fn perf_web_vitals(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<PerfQuery>,
-) -> J {
-    Ok(Json(
-        crate::perf::web_vitals(&s, &p, q.params(project), q.by_page).await?,
-    ))
+async fn perf_web_vitals(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<PerfQuery>) -> J {
+    Ok(Json(crate::perf::web_vitals(&s, &p, q.params(project), q.by_page).await?))
 }
 
-async fn perf_traces(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<PerfQuery>,
-) -> J {
-    Ok(Json(
-        crate::perf::slow_traces(&s, &p, q.params(project), q.min_ms).await?,
-    ))
+async fn perf_traces(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<PerfQuery>) -> J {
+    Ok(Json(crate::perf::slow_traces(&s, &p, q.params(project), q.min_ms).await?))
 }
 
-async fn perf_breakdown(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<PerfQuery>,
-) -> J {
-    Ok(Json(
-        crate::perf::span_breakdown(&s, &p, q.params(project)).await?,
-    ))
+async fn perf_breakdown(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<PerfQuery>) -> J {
+    Ok(Json(crate::perf::span_breakdown(&s, &p, q.params(project)).await?))
 }
 
-async fn perf_compare(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<PerfQuery>,
-) -> J {
-    let base = q
-        .base
-        .clone()
-        .ok_or_else(|| ApiError::bad("`base` is required"))?;
-    let target = q
-        .target
-        .clone()
-        .ok_or_else(|| ApiError::bad("`target` is required"))?;
-    Ok(Json(
-        crate::perf::compare_releases(&s, &p, &project, &base, &target, q.min_count, q.threshold)
-            .await?,
-    ))
+async fn perf_compare(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<PerfQuery>) -> J {
+    let base = q.base.clone().ok_or_else(|| ApiError::bad("`base` is required"))?;
+    let target = q.target.clone().ok_or_else(|| ApiError::bad("`target` is required"))?;
+    Ok(Json(crate::perf::compare_releases(&s, &p, &project, &base, &target, q.min_count, q.threshold).await?))
 }
 
-async fn get_trace(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, trace_id)): Path<(String, String)>,
-) -> J {
-    Ok(Json(
-        crate::perf::get_trace(&s, &p, &project, &trace_id).await?,
-    ))
+async fn get_trace(State(s): State<AppState>, p: Principal, Path((project, trace_id)): Path<(String, String)>) -> J {
+    Ok(Json(crate::perf::get_trace(&s, &p, &project, &trace_id).await?))
 }
 
-async fn issue_precursors(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(id): Path<String>,
-    Query(q): Query<PrecursorQuery>,
-) -> J {
-    Ok(Json(
-        crate::timeline::precursors(&s, &p, &id, q.minutes, q.limit).await?,
-    ))
+async fn issue_precursors(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Query(q): Query<PrecursorQuery>) -> J {
+    Ok(Json(crate::timeline::precursors(&s, &p, &id, q.minutes, q.limit).await?))
 }
 
 #[derive(Deserialize)]
@@ -579,15 +286,8 @@ struct LimitQuery {
     limit: Option<i64>,
 }
 
-async fn session_timeline(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, sid)): Path<(String, String)>,
-    Query(q): Query<LimitQuery>,
-) -> J {
-    Ok(Json(
-        crate::timeline::session_timeline(&s, &p, &project, &sid, q.limit).await?,
-    ))
+async fn session_timeline(State(s): State<AppState>, p: Principal, Path((project, sid)): Path<(String, String)>, Query(q): Query<LimitQuery>) -> J {
+    Ok(Json(crate::timeline::session_timeline(&s, &p, &project, &sid, q.limit).await?))
 }
 
 async fn fix_context(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {
@@ -596,32 +296,19 @@ async fn fix_context(State(s): State<AppState>, p: Principal, Path(id): Path<Str
 
 async fn list_links(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {
     let issue = query::issue_for(&s, &p, &id).await?;
-    Ok(Json(
-        json!({"issue": issue["short_id"], "links": crate::fixctx::links_for(&s, issue["id"].as_str().unwrap_or("")).await?}),
-    ))
+    Ok(Json(json!({"issue": issue["short_id"], "links": crate::fixctx::links_for(&s, issue["id"].as_str().unwrap_or("")).await?})))
 }
 
-async fn add_link(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(id): Path<String>,
-    Json(l): Json<crate::fixctx::LinkIn>,
-) -> J {
+async fn add_link(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Json(l): Json<crate::fixctx::LinkIn>) -> J {
     Ok(Json(crate::fixctx::add_link(&s, &p, &id, l).await?))
 }
 
-async fn delete_link(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((id, link)): Path<(String, String)>,
-) -> J {
+async fn delete_link(State(s): State<AppState>, p: Principal, Path((id, link)): Path<(String, String)>) -> J {
     Ok(Json(crate::fixctx::delete_link(&s, &p, &id, &link).await?))
 }
 
 async fn get_ownership(State(s): State<AppState>, p: Principal, Path(project): Path<String>) -> J {
-    Ok(Json(
-        crate::ownership::get_ownership(&s, &p, &project).await?,
-    ))
+    Ok(Json(crate::ownership::get_ownership(&s, &p, &project).await?))
 }
 
 #[derive(Deserialize)]
@@ -629,15 +316,8 @@ struct OwnershipBody {
     rules: String,
 }
 
-async fn put_ownership(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Json(body): Json<OwnershipBody>,
-) -> J {
-    Ok(Json(
-        crate::ownership::set_ownership(&s, &p, &project, &body.rules).await?,
-    ))
+async fn put_ownership(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(body): Json<OwnershipBody>) -> J {
+    Ok(Json(crate::ownership::set_ownership(&s, &p, &project, &body.rules).await?))
 }
 
 #[derive(Deserialize)]
@@ -647,24 +327,9 @@ pub struct CreateProject {
     pub slug: Option<String>,
 }
 
-pub const PLATFORMS: &[&str] = &[
-    "javascript",
-    "android",
-    "ios",
-    "rust",
-    "node",
-    "jvm",
-    "go",
-    "dotnet",
-    "python",
-    "other",
-];
+pub const PLATFORMS: &[&str] = &["javascript", "android", "ios", "rust", "node", "jvm", "go", "dotnet", "python", "other"];
 
-pub async fn create_project_inner(
-    s: &AppState,
-    p: &Principal,
-    req: CreateProject,
-) -> QResult<Value> {
+pub async fn create_project_inner(s: &AppState, p: &Principal, req: CreateProject) -> QResult<Value> {
     if !p.can_create_project() {
         return Err(ApiError::forbidden());
     }
@@ -673,40 +338,24 @@ pub async fn create_project_inner(
     }
     let platform = req.platform.to_lowercase();
     if !PLATFORMS.contains(&platform.as_str()) {
-        return Err(ApiError::bad(format!(
-            "unknown platform `{platform}`; use one of {}",
-            PLATFORMS.join(", ")
-        )));
+        return Err(ApiError::bad(format!("unknown platform `{platform}`; use one of {}", PLATFORMS.join(", "))));
     }
-    let (proj, key) =
-        crate::projects::create(s, req.name.trim(), &platform, req.slug.as_deref()).await?;
+    let (proj, key) = crate::projects::create(s, req.name.trim(), &platform, req.slug.as_deref()).await?;
     crate::auth::audit(s, &p.label(), "create_project", &proj.id, &proj.slug).await;
     let mut v = query::project_json(s, &proj, true).await?;
     v["ingest_key"] = json!(key);
     v["endpoint"] = json!(s.config.public_url);
-    v["install_instructions_url"] = json!(format!(
-        "{}/api/v1/projects/{}/install/{}",
-        s.config.public_url, proj.slug, platform
-    ));
+    v["install_instructions_url"] = json!(format!("{}/api/v1/projects/{}/install/{}", s.config.public_url, proj.slug, platform));
     Ok(v)
 }
 
-async fn create_project(
-    State(s): State<AppState>,
-    p: Principal,
-    Json(req): Json<CreateProject>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
-    Ok((
-        StatusCode::CREATED,
-        Json(create_project_inner(&s, &p, req).await?),
-    ))
+async fn create_project(State(s): State<AppState>, p: Principal, Json(req): Json<CreateProject>) -> Result<(StatusCode, Json<Value>), ApiError> {
+    Ok((StatusCode::CREATED, Json(create_project_inner(&s, &p, req).await?)))
 }
 
 async fn get_project(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {
     let proj = query::project_for(&s, &p, &id).await?;
-    Ok(Json(
-        query::project_json(&s, &proj, p.can_write(&proj.id)).await?,
-    ))
+    Ok(Json(query::project_json(&s, &proj, p.can_write(&proj.id)).await?))
 }
 
 #[derive(Deserialize)]
@@ -717,12 +366,7 @@ struct UpdateProject {
     scrub_fields: Option<String>,
 }
 
-async fn update_project(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(id): Path<String>,
-    Json(req): Json<UpdateProject>,
-) -> J {
+async fn update_project(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Json(req): Json<UpdateProject>) -> J {
     let proj = query::project_for(&s, &p, &id).await?;
     if !p.is_admin() {
         return Err(ApiError::forbidden());
@@ -758,11 +402,7 @@ async fn create_key(State(s): State<AppState>, p: Principal, Path(id): Path<Stri
     Ok(Json(json!({"ingest_key": key})))
 }
 
-async fn revoke_key(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((id, key)): Path<(String, String)>,
-) -> J {
+async fn revoke_key(State(s): State<AppState>, p: Principal, Path((id, key)): Path<(String, String)>) -> J {
     let proj = query::project_for(&s, &p, &id).await?;
     if !p.is_admin() {
         return Err(ApiError::forbidden());
@@ -788,26 +428,12 @@ struct IssueQuery {
     limit: Option<i64>,
 }
 
-async fn list_issues(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<IssueQuery>,
-) -> J {
+async fn list_issues(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<IssueQuery>) -> J {
     Ok(Json(
         query::list_issues(
             &s,
             &p,
-            IssueListParams {
-                project,
-                status: q.status,
-                query: q.query,
-                release: q.release,
-                environment: q.environment,
-                since: q.since,
-                sort: q.sort,
-                limit: q.limit,
-            },
+            IssueListParams { project, status: q.status, query: q.query, release: q.release, environment: q.environment, since: q.since, sort: q.sort, limit: q.limit },
         )
         .await?,
     ))
@@ -826,12 +452,7 @@ struct EventQuery {
     limit: Option<i64>,
 }
 
-async fn search_events(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<EventQuery>,
-) -> J {
+async fn search_events(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<EventQuery>) -> J {
     Ok(Json(
         query::search_events(
             &s,
@@ -853,11 +474,7 @@ async fn search_events(
     ))
 }
 
-async fn get_event(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, event_id)): Path<(String, String)>,
-) -> J {
+async fn get_event(State(s): State<AppState>, p: Principal, Path((project, event_id)): Path<(String, String)>) -> J {
     Ok(Json(query::get_event(&s, &p, &project, &event_id).await?))
 }
 
@@ -867,9 +484,7 @@ async fn list_releases(State(s): State<AppState>, p: Principal, Path(project): P
         .bind(&proj.id)
         .fetch_all(&s.db)
         .await?;
-    Ok(Json(
-        json!({"project": proj.slug, "releases": rows.iter().map(|r| json!({"version": r.s("version"), "first_seen": iso_time(r.i("created_at"))})).collect::<Vec<_>>()}),
-    ))
+    Ok(Json(json!({"project": proj.slug, "releases": rows.iter().map(|r| json!({"version": r.s("version"), "first_seen": iso_time(r.i("created_at"))})).collect::<Vec<_>>()})))
 }
 
 #[derive(Deserialize)]
@@ -878,15 +493,8 @@ struct HealthQuery {
     since: Option<String>,
 }
 
-async fn release_health(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<HealthQuery>,
-) -> J {
-    Ok(Json(
-        query::release_health(&s, &p, &project, q.release.as_deref(), q.since.as_deref()).await?,
-    ))
+async fn release_health(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<HealthQuery>) -> J {
+    Ok(Json(query::release_health(&s, &p, &project, q.release.as_deref(), q.since.as_deref()).await?))
 }
 
 #[derive(Deserialize)]
@@ -895,27 +503,14 @@ struct CompareQuery {
     target: String,
 }
 
-async fn compare_releases(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<CompareQuery>,
-) -> J {
-    Ok(Json(
-        query::compare_releases(&s, &p, &project, &q.base, &q.target).await?,
-    ))
+async fn compare_releases(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<CompareQuery>) -> J {
+    Ok(Json(query::compare_releases(&s, &p, &project, &q.base, &q.target).await?))
 }
 
 /// Parse analytics query strings: since, until, type, interval, dimension, limit, and
 /// repeated `filter=dimension:value` (prefix the value with `~` for contains, `!` for not-equal).
-fn analytics_params(
-    project: String,
-    raw: Option<String>,
-) -> (AnalyticsParams, BTreeMap<String, String>) {
-    let mut a = AnalyticsParams {
-        project,
-        ..Default::default()
-    };
+fn analytics_params(project: String, raw: Option<String>) -> (AnalyticsParams, BTreeMap<String, String>) {
+    let mut a = AnalyticsParams { project, ..Default::default() };
     let mut extra = BTreeMap::new();
     for (k, v) in url::form_urlencoded::parse(raw.unwrap_or_default().as_bytes()) {
         match k.as_ref() {
@@ -935,35 +530,17 @@ fn analytics_params(
     (a, extra)
 }
 
-async fn analytics_summary(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    RawQuery(raw): RawQuery,
-) -> J {
+async fn analytics_summary(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
     let (a, _) = analytics_params(project, raw);
     Ok(Json(query::analytics_summary(&s, &p, a).await?))
 }
 
-async fn analytics_timeseries(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    RawQuery(raw): RawQuery,
-) -> J {
+async fn analytics_timeseries(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
     let (a, extra) = analytics_params(project, raw);
-    Ok(Json(
-        query::analytics_timeseries(&s, &p, a, crate::timeseries::SeriesOpts::from_map(&extra))
-            .await?,
-    ))
+    Ok(Json(query::analytics_timeseries(&s, &p, a, crate::timeseries::SeriesOpts::from_map(&extra)).await?))
 }
 
-async fn errors_timeseries(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<BTreeMap<String, String>>,
-) -> J {
+async fn errors_timeseries(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<BTreeMap<String, String>>) -> J {
     let g = |k: &str| q.get(k).cloned();
     let a = crate::timeseries::ErrorSeriesParams {
         project,
@@ -976,23 +553,10 @@ async fn errors_timeseries(
         exception_type: g("exception_type"),
         handled: g("handled"),
     };
-    Ok(Json(
-        crate::timeseries::errors_timeseries(
-            &s,
-            &p,
-            a,
-            crate::timeseries::SeriesOpts::from_map(&q),
-        )
-        .await?,
-    ))
+    Ok(Json(crate::timeseries::errors_timeseries(&s, &p, a, crate::timeseries::SeriesOpts::from_map(&q)).await?))
 }
 
-async fn perf_timeseries(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<BTreeMap<String, String>>,
-) -> J {
+async fn perf_timeseries(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<BTreeMap<String, String>>) -> J {
     let g = |k: &str| q.get(k).cloned();
     let a = crate::perf::PerfParams {
         project,
@@ -1005,59 +569,20 @@ async fn perf_timeseries(
         limit: None,
         sort: None,
     };
-    Ok(Json(
-        crate::timeseries::performance_timeseries(
-            &s,
-            &p,
-            a,
-            crate::timeseries::SeriesOpts::from_map(&q),
-        )
-        .await?,
-    ))
+    Ok(Json(crate::timeseries::performance_timeseries(&s, &p, a, crate::timeseries::SeriesOpts::from_map(&q)).await?))
 }
 
-async fn sessions_timeseries(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<BTreeMap<String, String>>,
-) -> J {
+async fn sessions_timeseries(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<BTreeMap<String, String>>) -> J {
     let g = |k: &str| q.get(k).cloned();
-    let a = crate::timeseries::SessionSeriesParams {
-        project,
-        since: g("since"),
-        until: g("until"),
-        release: g("release"),
-        environment: g("environment"),
-    };
-    Ok(Json(
-        crate::timeseries::sessions_timeseries(
-            &s,
-            &p,
-            a,
-            crate::timeseries::SeriesOpts::from_map(&q),
-        )
-        .await?,
-    ))
+    let a = crate::timeseries::SessionSeriesParams { project, since: g("since"), until: g("until"), release: g("release"), environment: g("environment") };
+    Ok(Json(crate::timeseries::sessions_timeseries(&s, &p, a, crate::timeseries::SeriesOpts::from_map(&q)).await?))
 }
 
-async fn analytics_breakdown(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    RawQuery(raw): RawQuery,
-) -> J {
+async fn analytics_breakdown(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
     let (a, extra) = analytics_params(project, raw);
-    let dim = extra.get("dimension").cloned().ok_or_else(|| {
-        ApiError::bad(format!(
-            "`dimension` is required; one of {}",
-            query::DIMENSIONS.join(", ")
-        ))
-    })?;
+    let dim = extra.get("dimension").cloned().ok_or_else(|| ApiError::bad(format!("`dimension` is required; one of {}", query::DIMENSIONS.join(", "))))?;
     let limit = extra.get("limit").and_then(|l| l.parse().ok());
-    Ok(Json(
-        query::analytics_breakdown(&s, &p, a, &dim, limit).await?,
-    ))
+    Ok(Json(query::analytics_breakdown(&s, &p, a, &dim, limit).await?))
 }
 
 // ---------------------------------------------------------------------------
@@ -1065,28 +590,15 @@ async fn analytics_breakdown(
 // ---------------------------------------------------------------------------
 
 fn opt_step(v: Option<&String>) -> QResult<Option<crate::product::Step>> {
-    v.filter(|s| !s.is_empty())
-        .map(|s| crate::product::Step::parse(s))
-        .transpose()
+    v.filter(|s| !s.is_empty()).map(|s| crate::product::Step::parse(s)).transpose()
 }
 
 fn opt_int(extra: &BTreeMap<String, String>, k: &str) -> QResult<Option<i64>> {
-    extra
-        .get(k)
-        .map(|v| {
-            v.parse::<i64>()
-                .map_err(|_| ApiError::bad(format!("`{k}` must be a number")))
-        })
-        .transpose()
+    extra.get(k).map(|v| v.parse::<i64>().map_err(|_| ApiError::bad(format!("`{k}` must be a number")))).transpose()
 }
 
 /// Funnel: repeated `step=event|dimension:value`, plus `window`, `identity`, `breakdown`, `limit`.
-async fn analytics_funnel(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    RawQuery(raw): RawQuery,
-) -> J {
+async fn analytics_funnel(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
     let steps = url::form_urlencoded::parse(raw.as_deref().unwrap_or("").as_bytes())
         .filter(|(k, _)| k == "step")
         .map(|(_, v)| crate::product::Step::parse(&v))
@@ -1104,12 +616,7 @@ async fn analytics_funnel(
 }
 
 /// Retention: `start` and `return` steps (same syntax as funnel steps), `period`, `periods`, `identity`.
-async fn analytics_retention(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    RawQuery(raw): RawQuery,
-) -> J {
+async fn analytics_retention(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
     let (base, extra) = analytics_params(project, raw);
     let r = crate::product::RetentionParams {
         base,
@@ -1123,12 +630,7 @@ async fn analytics_retention(
 }
 
 /// Paths: `from` (a label like `pageview /pricing`), `direction`, `depth`, `identity`, `limit`.
-async fn analytics_paths(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    RawQuery(raw): RawQuery,
-) -> J {
+async fn analytics_paths(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
     let (base, extra) = analytics_params(project, raw);
     let a = crate::product::PathParams {
         base,
@@ -1141,24 +643,12 @@ async fn analytics_paths(
     Ok(Json(crate::product::paths(&s, &p, a).await?))
 }
 
-async fn analytics_events(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    RawQuery(raw): RawQuery,
-) -> J {
+async fn analytics_events(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
     let (a, extra) = analytics_params(project, raw);
-    Ok(Json(
-        crate::product::event_catalog(&s, &p, a, opt_int(&extra, "limit")?).await?,
-    ))
+    Ok(Json(crate::product::event_catalog(&s, &p, a, opt_int(&extra, "limit")?).await?))
 }
 
-async fn analytics_revenue(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    RawQuery(raw): RawQuery,
-) -> J {
+async fn analytics_revenue(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
     let (base, extra) = analytics_params(project, raw);
     let r = crate::product::RevenueParams {
         base,
@@ -1176,161 +666,72 @@ struct RealtimeQuery {
     minutes: Option<i64>,
 }
 
-async fn analytics_realtime(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<RealtimeQuery>,
-) -> J {
-    Ok(Json(
-        crate::insights::realtime(&s, &p, &project, q.minutes).await?,
-    ))
+async fn analytics_realtime(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<RealtimeQuery>) -> J {
+    Ok(Json(crate::insights::realtime(&s, &p, &project, q.minutes).await?))
 }
 
-async fn list_goals(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    RawQuery(raw): RawQuery,
-) -> J {
+async fn list_goals(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
     let (a, _) = analytics_params(project, raw);
     Ok(Json(crate::product::list_goals(&s, &p, a).await?))
 }
 
-async fn create_goal(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Json(g): Json<crate::product::GoalIn>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
-    Ok((
-        StatusCode::CREATED,
-        Json(crate::product::create_goal(&s, &p, &project, g).await?),
-    ))
+async fn create_goal(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(g): Json<crate::product::GoalIn>) -> Result<(StatusCode, Json<Value>), ApiError> {
+    Ok((StatusCode::CREATED, Json(crate::product::create_goal(&s, &p, &project, g).await?)))
 }
 
 async fn list_monitors(State(s): State<AppState>, p: Principal, Path(project): Path<String>) -> J {
     Ok(Json(crate::monitors::list(&s, &p, &project).await?))
 }
 
-async fn create_monitor(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Json(m): Json<crate::monitors::MonitorIn>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
-    Ok((
-        StatusCode::CREATED,
-        Json(crate::monitors::create(&s, &p, &project, m).await?),
-    ))
+async fn create_monitor(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(m): Json<crate::monitors::MonitorIn>) -> Result<(StatusCode, Json<Value>), ApiError> {
+    Ok((StatusCode::CREATED, Json(crate::monitors::create(&s, &p, &project, m).await?)))
 }
 
-async fn get_monitor(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, slug)): Path<(String, String)>,
-) -> J {
+async fn get_monitor(State(s): State<AppState>, p: Principal, Path((project, slug)): Path<(String, String)>) -> J {
     Ok(Json(crate::monitors::get(&s, &p, &project, &slug).await?))
 }
 
-async fn update_monitor(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, slug)): Path<(String, String)>,
-    Json(m): Json<crate::monitors::MonitorIn>,
-) -> J {
-    Ok(Json(
-        crate::monitors::update(&s, &p, &project, &slug, m).await?,
-    ))
+async fn update_monitor(State(s): State<AppState>, p: Principal, Path((project, slug)): Path<(String, String)>, Json(m): Json<crate::monitors::MonitorIn>) -> J {
+    Ok(Json(crate::monitors::update(&s, &p, &project, &slug, m).await?))
 }
 
-async fn delete_monitor(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, slug)): Path<(String, String)>,
-) -> J {
-    Ok(Json(
-        crate::monitors::delete(&s, &p, &project, &slug).await?,
-    ))
+async fn delete_monitor(State(s): State<AppState>, p: Principal, Path((project, slug)): Path<(String, String)>) -> J {
+    Ok(Json(crate::monitors::delete(&s, &p, &project, &slug).await?))
 }
 
-async fn run_monitor(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, slug)): Path<(String, String)>,
-) -> J {
-    Ok(Json(
-        crate::monitors::run_now(&s, &p, &project, &slug).await?,
-    ))
+async fn run_monitor(State(s): State<AppState>, p: Principal, Path((project, slug)): Path<(String, String)>) -> J {
+    Ok(Json(crate::monitors::run_now(&s, &p, &project, &slug).await?))
 }
 
-async fn monitor_checks(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, slug)): Path<(String, String)>,
-    Query(q): Query<crate::monitors::ChecksQuery>,
-) -> J {
-    Ok(Json(
-        crate::monitors::checks(&s, &p, &project, &slug, q).await?,
-    ))
+async fn monitor_checks(State(s): State<AppState>, p: Principal, Path((project, slug)): Path<(String, String)>, Query(q): Query<crate::monitors::ChecksQuery>) -> J {
+    Ok(Json(crate::monitors::checks(&s, &p, &project, &slug, q).await?))
 }
 
-async fn list_incidents(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<crate::monitors::IncidentQuery>,
-) -> J {
-    Ok(Json(
-        crate::monitors::list_incidents(&s, &p, &project, q).await?,
-    ))
+async fn list_incidents(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<crate::monitors::IncidentQuery>) -> J {
+    Ok(Json(crate::monitors::list_incidents(&s, &p, &project, q).await?))
 }
 
 async fn get_incident(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {
     Ok(Json(crate::monitors::get_incident(&s, &p, &id).await?))
 }
 
-async fn update_incident(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(id): Path<String>,
-    Json(u): Json<crate::monitors::IncidentUpdate>,
-) -> J {
-    Ok(Json(
-        crate::monitors::update_incident(&s, &p, &id, u).await?,
-    ))
+async fn update_incident(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Json(u): Json<crate::monitors::IncidentUpdate>) -> J {
+    Ok(Json(crate::monitors::update_incident(&s, &p, &id, u).await?))
 }
 
 async fn list_flags(State(s): State<AppState>, p: Principal, Path(project): Path<String>) -> J {
     Ok(Json(crate::flags::list_flags(&s, &p, &project).await?))
 }
 
-async fn create_flag(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Json(f): Json<crate::flags::FlagIn>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
-    Ok((
-        StatusCode::CREATED,
-        Json(crate::flags::create_flag(&s, &p, &project, f).await?),
-    ))
+async fn create_flag(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(f): Json<crate::flags::FlagIn>) -> Result<(StatusCode, Json<Value>), ApiError> {
+    Ok((StatusCode::CREATED, Json(crate::flags::create_flag(&s, &p, &project, f).await?)))
 }
 
-async fn get_flag(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, key)): Path<(String, String)>,
-) -> J {
+async fn get_flag(State(s): State<AppState>, p: Principal, Path((project, key)): Path<(String, String)>) -> J {
     Ok(Json(crate::flags::get_flag(&s, &p, &project, &key).await?))
 }
 
-async fn search_logs(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(mut q): Query<crate::otel::LogParams>,
-) -> J {
+async fn search_logs(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(mut q): Query<crate::otel::LogParams>) -> J {
     q.project = project;
     Ok(Json(crate::otel::search_logs(&s, &p, q).await?))
 }
@@ -1342,70 +743,28 @@ struct AnomalyQuery {
     narrative: Option<bool>,
 }
 
-async fn anomalies(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<AnomalyQuery>,
-) -> J {
-    Ok(Json(
-        crate::anomalies::detect(&s, &p, &project, q.window.as_deref()).await?,
-    ))
+async fn anomalies(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<AnomalyQuery>) -> J {
+    Ok(Json(crate::anomalies::detect(&s, &p, &project, q.window.as_deref()).await?))
 }
 
-pub async fn digest_preview_inner(
-    s: &AppState,
-    p: &Principal,
-    project: &str,
-    frequency: Option<&str>,
-    narrative: bool,
-) -> QResult<Value> {
+pub async fn digest_preview_inner(s: &AppState, p: &Principal, project: &str, frequency: Option<&str>, narrative: bool) -> QResult<Value> {
     let proj = query::project_for(s, p, project).await?;
-    let sched = crate::alerts::Schedule::parse(&json!({"frequency": frequency.unwrap_or("daily")}))
-        .map_err(ApiError::bad)?;
-    let mut payload =
-        crate::alerts::build_digest(s, Some(&proj.id), &sched, now_ms(), narrative).await?;
+    let sched = crate::alerts::Schedule::parse(&json!({"frequency": frequency.unwrap_or("daily")})).map_err(ApiError::bad)?;
+    let mut payload = crate::alerts::build_digest(s, Some(&proj.id), &sched, now_ms(), narrative).await?;
     payload["text"] = json!(crate::alerts::digest_lines(&payload, false).join("\n"));
     Ok(payload)
 }
 
-async fn digest_preview(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<AnomalyQuery>,
-) -> J {
-    Ok(Json(
-        digest_preview_inner(
-            &s,
-            &p,
-            &project,
-            q.frequency.as_deref(),
-            q.narrative.unwrap_or(true),
-        )
-        .await?,
-    ))
+async fn digest_preview(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<AnomalyQuery>) -> J {
+    Ok(Json(digest_preview_inner(&s, &p, &project, q.frequency.as_deref(), q.narrative.unwrap_or(true)).await?))
 }
 
-async fn update_flag(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, key)): Path<(String, String)>,
-    Json(f): Json<crate::flags::FlagIn>,
-) -> J {
-    Ok(Json(
-        crate::flags::update_flag(&s, &p, &project, &key, f).await?,
-    ))
+async fn update_flag(State(s): State<AppState>, p: Principal, Path((project, key)): Path<(String, String)>, Json(f): Json<crate::flags::FlagIn>) -> J {
+    Ok(Json(crate::flags::update_flag(&s, &p, &project, &key, f).await?))
 }
 
-async fn delete_flag(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, key)): Path<(String, String)>,
-) -> J {
-    Ok(Json(
-        crate::flags::delete_flag(&s, &p, &project, &key).await?,
-    ))
+async fn delete_flag(State(s): State<AppState>, p: Principal, Path((project, key)): Path<(String, String)>) -> J {
+    Ok(Json(crate::flags::delete_flag(&s, &p, &project, &key).await?))
 }
 
 #[derive(Deserialize, Default)]
@@ -1417,80 +776,25 @@ struct FlagQuery {
     identity: Option<String>,
 }
 
-async fn flag_health(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, key)): Path<(String, String)>,
-    Query(q): Query<FlagQuery>,
-) -> J {
-    Ok(Json(
-        crate::flags::flag_health(
-            &s,
-            &p,
-            &project,
-            &key,
-            q.since.as_deref(),
-            q.release.as_deref(),
-        )
-        .await?,
-    ))
+async fn flag_health(State(s): State<AppState>, p: Principal, Path((project, key)): Path<(String, String)>, Query(q): Query<FlagQuery>) -> J {
+    Ok(Json(crate::flags::flag_health(&s, &p, &project, &key, q.since.as_deref(), q.release.as_deref()).await?))
 }
 
-async fn flag_results(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, key)): Path<(String, String)>,
-    Query(q): Query<FlagQuery>,
-) -> J {
-    let a = crate::flags::ResultsParams {
-        project,
-        experiment: None,
-        flag: Some(key),
-        goal: q.goal,
-        control: q.control,
-        since: q.since,
-        identity: q.identity,
-    };
+async fn flag_results(State(s): State<AppState>, p: Principal, Path((project, key)): Path<(String, String)>, Query(q): Query<FlagQuery>) -> J {
+    let a = crate::flags::ResultsParams { project, experiment: None, flag: Some(key), goal: q.goal, control: q.control, since: q.since, identity: q.identity };
     Ok(Json(crate::flags::experiment_results(&s, &p, a).await?))
 }
 
-async fn list_experiments(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-) -> J {
-    Ok(Json(
-        crate::flags::list_experiments(&s, &p, &project).await?,
-    ))
+async fn list_experiments(State(s): State<AppState>, p: Principal, Path(project): Path<String>) -> J {
+    Ok(Json(crate::flags::list_experiments(&s, &p, &project).await?))
 }
 
-async fn create_experiment(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Json(e): Json<crate::flags::ExperimentIn>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
-    Ok((
-        StatusCode::CREATED,
-        Json(crate::flags::create_experiment(&s, &p, &project, e).await?),
-    ))
+async fn create_experiment(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(e): Json<crate::flags::ExperimentIn>) -> Result<(StatusCode, Json<Value>), ApiError> {
+    Ok((StatusCode::CREATED, Json(crate::flags::create_experiment(&s, &p, &project, e).await?)))
 }
 
-async fn experiment_results(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, name)): Path<(String, String)>,
-    Query(q): Query<FlagQuery>,
-) -> J {
-    let a = crate::flags::ResultsParams {
-        project,
-        experiment: Some(name),
-        flag: None,
-        goal: None,
-        control: q.control,
-        since: q.since,
-        identity: q.identity,
-    };
+async fn experiment_results(State(s): State<AppState>, p: Principal, Path((project, name)): Path<(String, String)>, Query(q): Query<FlagQuery>) -> J {
+    let a = crate::flags::ResultsParams { project, experiment: Some(name), flag: None, goal: None, control: q.control, since: q.since, identity: q.identity };
     Ok(Json(crate::flags::experiment_results(&s, &p, a).await?))
 }
 
@@ -1499,92 +803,39 @@ struct CohortListQuery {
     sizes: Option<bool>,
 }
 
-async fn list_cohorts(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<CohortListQuery>,
-) -> J {
-    Ok(Json(
-        crate::cohorts::list_cohorts(&s, &p, &project, q.sizes.unwrap_or(true)).await?,
-    ))
+async fn list_cohorts(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<CohortListQuery>) -> J {
+    Ok(Json(crate::cohorts::list_cohorts(&s, &p, &project, q.sizes.unwrap_or(true)).await?))
 }
 
-async fn create_cohort(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Json(c): Json<crate::cohorts::CohortIn>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
-    Ok((
-        StatusCode::CREATED,
-        Json(crate::cohorts::create_cohort(&s, &p, &project, c).await?),
-    ))
+async fn create_cohort(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Json(c): Json<crate::cohorts::CohortIn>) -> Result<(StatusCode, Json<Value>), ApiError> {
+    Ok((StatusCode::CREATED, Json(crate::cohorts::create_cohort(&s, &p, &project, c).await?)))
 }
 
-async fn get_cohort(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, cohort)): Path<(String, String)>,
-    Query(q): Query<LimitQuery>,
-) -> J {
-    Ok(Json(
-        crate::cohorts::get_cohort(&s, &p, &project, &cohort, q.limit).await?,
-    ))
+async fn get_cohort(State(s): State<AppState>, p: Principal, Path((project, cohort)): Path<(String, String)>, Query(q): Query<LimitQuery>) -> J {
+    Ok(Json(crate::cohorts::get_cohort(&s, &p, &project, &cohort, q.limit).await?))
 }
 
-async fn delete_cohort(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, cohort)): Path<(String, String)>,
-) -> J {
-    Ok(Json(
-        crate::cohorts::delete_cohort(&s, &p, &project, &cohort).await?,
-    ))
+async fn delete_cohort(State(s): State<AppState>, p: Principal, Path((project, cohort)): Path<(String, String)>) -> J {
+    Ok(Json(crate::cohorts::delete_cohort(&s, &p, &project, &cohort).await?))
 }
 
 fn engagement_params(project: String, raw: Option<String>) -> crate::cohorts::EngagementParams {
     let (base, extra) = analytics_params(project, raw);
-    crate::cohorts::EngagementParams {
-        base,
-        event: extra.get("event").cloned(),
-        identity: extra.get("identity").cloned(),
-        period: extra.get("period").cloned(),
-    }
+    crate::cohorts::EngagementParams { base, event: extra.get("event").cloned(), identity: extra.get("identity").cloned(), period: extra.get("period").cloned() }
 }
 
 /// Stickiness: DAU/WAU/MAU and days active per week (`event`, `identity`).
-async fn analytics_stickiness(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    RawQuery(raw): RawQuery,
-) -> J {
-    Ok(Json(
-        crate::cohorts::stickiness(&s, &p, engagement_params(project, raw)).await?,
-    ))
+async fn analytics_stickiness(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
+    Ok(Json(crate::cohorts::stickiness(&s, &p, engagement_params(project, raw)).await?))
 }
 
 /// Lifecycle: new, returning, resurrecting, dormant per `period` (`event`, `identity`).
-async fn analytics_lifecycle(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    RawQuery(raw): RawQuery,
-) -> J {
-    Ok(Json(
-        crate::cohorts::lifecycle(&s, &p, engagement_params(project, raw)).await?,
-    ))
+async fn analytics_lifecycle(State(s): State<AppState>, p: Principal, Path(project): Path<String>, RawQuery(raw): RawQuery) -> J {
+    Ok(Json(crate::cohorts::lifecycle(&s, &p, engagement_params(project, raw)).await?))
 }
 
-async fn delete_goal(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, goal)): Path<(String, String)>,
-) -> J {
-    Ok(Json(
-        crate::product::delete_goal(&s, &p, &project, &goal).await?,
-    ))
+async fn delete_goal(State(s): State<AppState>, p: Principal, Path((project, goal)): Path<(String, String)>) -> J {
+    Ok(Json(crate::product::delete_goal(&s, &p, &project, &goal).await?))
 }
 
 #[derive(Deserialize)]
@@ -1595,23 +846,9 @@ struct AdoptionQuery {
     limit: Option<i64>,
 }
 
-async fn release_adoption(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<AdoptionQuery>,
-) -> J {
+async fn release_adoption(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<AdoptionQuery>) -> J {
     Ok(Json(
-        crate::insights::release_adoption(
-            &s,
-            &p,
-            &project,
-            q.since.as_deref(),
-            q.interval.as_deref(),
-            q.environment.as_deref(),
-            q.limit,
-        )
-        .await?,
+        crate::insights::release_adoption(&s, &p, &project, q.since.as_deref(), q.interval.as_deref(), q.environment.as_deref(), q.limit).await?,
     ))
 }
 
@@ -1622,37 +859,12 @@ struct UsersQuery {
     limit: Option<i64>,
 }
 
-async fn list_identified_users(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<UsersQuery>,
-) -> J {
-    Ok(Json(
-        crate::product::list_users(
-            &s,
-            &p,
-            crate::product::UserListParams {
-                project,
-                since: q.since,
-                query: q.query,
-                limit: q.limit,
-            },
-        )
-        .await?,
-    ))
+async fn list_identified_users(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<UsersQuery>) -> J {
+    Ok(Json(crate::product::list_users(&s, &p, crate::product::UserListParams { project, since: q.since, query: q.query, limit: q.limit }).await?))
 }
 
-async fn user_timeline(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, user_id)): Path<(String, String)>,
-    Query(q): Query<UsersQuery>,
-) -> J {
-    Ok(Json(
-        crate::product::user_timeline(&s, &p, &project, &user_id, q.since.as_deref(), q.limit)
-            .await?,
-    ))
+async fn user_timeline(State(s): State<AppState>, p: Principal, Path((project, user_id)): Path<(String, String)>, Query(q): Query<UsersQuery>) -> J {
+    Ok(Json(crate::product::user_timeline(&s, &p, &project, &user_id, q.since.as_deref(), q.limit).await?))
 }
 
 #[derive(Deserialize)]
@@ -1661,36 +873,20 @@ struct SpikeQuery {
     baseline: Option<String>,
 }
 
-async fn explain_spike(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<SpikeQuery>,
-) -> J {
-    Ok(Json(
-        query::explain_spike(&s, &p, &project, q.window.as_deref(), q.baseline.as_deref()).await?,
-    ))
+async fn explain_spike(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<SpikeQuery>) -> J {
+    Ok(Json(query::explain_spike(&s, &p, &project, q.window.as_deref(), q.baseline.as_deref()).await?))
 }
 
 async fn get_issue(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {
     Ok(Json(query::get_issue(&s, &p, &id).await?))
 }
 
-async fn update_issue(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(id): Path<String>,
-    Json(u): Json<IssueUpdate>,
-) -> J {
+async fn update_issue(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Json(u): Json<IssueUpdate>) -> J {
     Ok(Json(query::update_issue(&s, &p, &id, u).await?))
 }
 
-async fn issue_events(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(id): Path<String>,
-    Query(q): Query<LimitQuery>,
-) -> J {
+
+async fn issue_events(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Query(q): Query<LimitQuery>) -> J {
     Ok(Json(query::list_issue_events(&s, &p, &id, q.limit).await?))
 }
 
@@ -1699,12 +895,7 @@ struct CommentBody {
     body: String,
 }
 
-async fn comment_issue(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(id): Path<String>,
-    Json(c): Json<CommentBody>,
-) -> J {
+async fn comment_issue(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Json(c): Json<CommentBody>) -> J {
     Ok(Json(query::comment_issue(&s, &p, &id, &c.body).await?))
 }
 
@@ -1714,12 +905,7 @@ async fn comment_issue(
 
 pub const ARTIFACT_KINDS: &[&str] = &["sourcemap", "proguard", "native"];
 
-async fn list_artifacts(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    Query(q): Query<HealthQuery>,
-) -> J {
+async fn list_artifacts(State(s): State<AppState>, p: Principal, Path(project): Path<String>, Query(q): Query<HealthQuery>) -> J {
     let proj = query::project_for(&s, &p, &project).await?;
     let rows = sqlx::query("SELECT id, release, kind, name, debug_id, size, created_at FROM artifacts WHERE project_id = $1 AND ($2 = '' OR release = $2) ORDER BY created_at DESC LIMIT 500")
         .bind(&proj.id)
@@ -1734,12 +920,7 @@ async fn list_artifacts(
 
 /// Multipart upload: fields `kind` (sourcemap | proguard | native), `release`,
 /// `name` (sourcemaps: URL path of the minified file), then `file`.
-async fn upload_artifact(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(project): Path<String>,
-    mut mp: Multipart,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
+async fn upload_artifact(State(s): State<AppState>, p: Principal, Path(project): Path<String>, mut mp: Multipart) -> Result<(StatusCode, Json<Value>), ApiError> {
     let proj = query::project_for(&s, &p, &project).await?;
     if !p.can_write(&proj.id) {
         return Err(ApiError::forbidden());
@@ -1760,33 +941,12 @@ async fn upload_artifact(
         .await?
         .i("n");
     let dir = format!("{}/{}", s.config.artifact_dir(), proj.id);
-    tokio::fs::create_dir_all(&dir)
-        .await
-        .map_err(anyhow::Error::from)?;
-    while let Some(mut field) = mp
-        .next_field()
-        .await
-        .map_err(|e| ApiError::bad(format!("bad multipart body: {e}")))?
-    {
+    tokio::fs::create_dir_all(&dir).await.map_err(anyhow::Error::from)?;
+    while let Some(mut field) = mp.next_field().await.map_err(|e| ApiError::bad(format!("bad multipart body: {e}")))? {
         match field.name().unwrap_or("") {
-            "kind" => {
-                kind = field
-                    .text()
-                    .await
-                    .map_err(|e| ApiError::bad(e.to_string()))?
-            }
-            "release" => {
-                release = field
-                    .text()
-                    .await
-                    .map_err(|e| ApiError::bad(e.to_string()))?
-            }
-            "name" => {
-                name = field
-                    .text()
-                    .await
-                    .map_err(|e| ApiError::bad(e.to_string()))?
-            }
+            "kind" => kind = field.text().await.map_err(|e| ApiError::bad(e.to_string()))?,
+            "release" => release = field.text().await.map_err(|e| ApiError::bad(e.to_string()))?,
+            "name" => name = field.text().await.map_err(|e| ApiError::bad(e.to_string()))?,
             "file" => {
                 if name.is_empty() {
                     name = field.file_name().unwrap_or("upload").to_string();
@@ -1797,11 +957,7 @@ async fn upload_artifact(
                     .await
                     .map_err(anyhow::Error::from)?;
                 let mut size = 0i64;
-                while let Some(chunk) = field
-                    .chunk()
-                    .await
-                    .map_err(|e| ApiError::bad(format!("upload interrupted: {e}")))?
-                {
+                while let Some(chunk) = field.chunk().await.map_err(|e| ApiError::bad(format!("upload interrupted: {e}")))? {
                     size += chunk.len() as i64;
                     if used + size > quota {
                         return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, format!("project artifact storage is over its quota of {} MB (VAKA_ARTIFACT_QUOTA_MB); delete old artifacts first", quota / 1_048_576)));
@@ -1889,10 +1045,7 @@ async fn upload_artifact(
         sqlx::query("INSERT INTO releases (project_id, version, created_at) VALUES ($1, $2, $3) ON CONFLICT (project_id, version) DO NOTHING")
             .bind(&proj.id).bind(&release).bind(now).execute(&s.db).await?;
     }
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({"kind": kind, "release": release, "size": size, "artifacts": created})),
-    ))
+    Ok((StatusCode::CREATED, Json(json!({"kind": kind, "release": release, "size": size, "artifacts": created}))))
 }
 
 /// Removes an uploaded file when the upload fails part-way.
@@ -1915,24 +1068,11 @@ async fn delete_artifact(
     if !p.can_write(&proj.id) {
         return Err(ApiError::forbidden());
     }
-    let row = sqlx::query("SELECT path FROM artifacts WHERE id = $1 AND project_id = $2")
-        .bind(&id)
-        .bind(&proj.id)
-        .fetch_optional(&s.db)
-        .await?;
-    let Some(row) = row else {
-        return Err(ApiError::not_found("artifact"));
-    };
+    let row = sqlx::query("SELECT path FROM artifacts WHERE id = $1 AND project_id = $2").bind(&id).bind(&proj.id).fetch_optional(&s.db).await?;
+    let Some(row) = row else { return Err(ApiError::not_found("artifact")) };
     let path = row.s("path");
-    sqlx::query("DELETE FROM artifacts WHERE id = $1")
-        .bind(&id)
-        .execute(&s.db)
-        .await?;
-    let still_used = sqlx::query("SELECT COUNT(*) AS n FROM artifacts WHERE path = $1")
-        .bind(&path)
-        .fetch_one(&s.db)
-        .await?
-        .i("n");
+    sqlx::query("DELETE FROM artifacts WHERE id = $1").bind(&id).execute(&s.db).await?;
+    let still_used = sqlx::query("SELECT COUNT(*) AS n FROM artifacts WHERE path = $1").bind(&path).fetch_one(&s.db).await?.i("n");
     if still_used == 0 {
         let _ = tokio::fs::remove_file(&path).await;
         crate::s3::delete_artifact(&s, &path).await;
@@ -1940,41 +1080,20 @@ async fn delete_artifact(
     Ok(Json(json!({"deleted": id})))
 }
 
-async fn erase_user(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, user_id)): Path<(String, String)>,
-) -> J {
+async fn erase_user(State(s): State<AppState>, p: Principal, Path((project, user_id)): Path<(String, String)>) -> J {
     let proj = query::project_for(&s, &p, &project).await?;
     if !p.can_write(&proj.id) {
         return Err(ApiError::forbidden());
     }
-    Ok(Json(json!(
-        crate::maintenance::erase_user(&s, &proj.id, &user_id, &p.label()).await?
-    )))
+    Ok(Json(json!(crate::maintenance::erase_user(&s, &proj.id, &user_id, &p.label()).await?)))
 }
 
-async fn install_instructions(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((project, platform)): Path<(String, String)>,
-) -> J {
+async fn install_instructions(State(s): State<AppState>, p: Principal, Path((project, platform)): Path<(String, String)>) -> J {
     let proj = query::project_for(&s, &p, &project).await?;
-    let key = crate::projects::ingest_keys(&s, &proj.id)
-        .await?
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| "<create an ingest key>".into());
+    let key = crate::projects::ingest_keys(&s, &proj.id).await?.into_iter().next().unwrap_or_else(|| "<create an ingest key>".into());
     let md = crate::docs::install_markdown(&platform, &s.config.public_url, &key, &proj.slug)
-        .ok_or_else(|| {
-            ApiError::bad(format!(
-                "no instructions for `{platform}`; available: {}",
-                crate::docs::INSTALL_PLATFORMS.join(", ")
-            ))
-        })?;
-    Ok(Json(
-        json!({"platform": platform, "project": proj.slug, "ingest_key": key, "endpoint": s.config.public_url, "markdown": md}),
-    ))
+        .ok_or_else(|| ApiError::bad(format!("no instructions for `{platform}`; available: {}", crate::docs::INSTALL_PLATFORMS.join(", "))))?;
+    Ok(Json(json!({"platform": platform, "project": proj.slug, "ingest_key": key, "endpoint": s.config.public_url, "markdown": md})))
 }
 
 // ---------------------------------------------------------------------------
@@ -2001,14 +1120,10 @@ fn schedule_str(trigger: &str, v: &Option<Value>) -> QResult<Option<String>> {
     match v {
         None => Ok(None),
         Some(Value::Null) => Ok(Some(String::new())),
-        Some(_) if trigger != "digest" => {
-            Err(ApiError::bad("schedule only applies to digest rules"))
-        }
+        Some(_) if trigger != "digest" => Err(ApiError::bad("schedule only applies to digest rules")),
         Some(v) => {
             let s = crate::alerts::Schedule::parse(v).map_err(ApiError::bad)?;
-            Ok(Some(
-                serde_json::to_string(&s).map_err(anyhow::Error::from)?,
-            ))
+            Ok(Some(serde_json::to_string(&s).map_err(anyhow::Error::from)?))
         }
     }
 }
@@ -2036,9 +1151,7 @@ pub async fn list_rules_inner(s: &AppState, p: &Principal) -> QResult<Value> {
             json!(r)
         })
         .collect();
-    Ok(
-        json!({"rules": rules, "triggers": crate::alerts::TRIGGERS, "channels": crate::alerts::CHANNELS, "filters": crate::alerts::FILTER_KEYS}),
-    )
+    Ok(json!({"rules": rules, "triggers": crate::alerts::TRIGGERS, "channels": crate::alerts::CHANNELS, "filters": crate::alerts::FILTER_KEYS}))
 }
 
 async fn list_rules(State(s): State<AppState>, p: Principal) -> J {
@@ -2065,9 +1178,7 @@ fn validate_target(s: &AppState, channel: &str, target: &str) -> QResult<()> {
         "email" if !target.contains('@') => Err(ApiError::bad(
             "email target must be one or more comma-separated email addresses",
         )),
-        "sms" => crate::sms::parse_numbers(target)
-            .map(|_| ())
-            .map_err(ApiError::bad),
+        "sms" => crate::sms::parse_numbers(target).map(|_| ()).map_err(ApiError::bad),
         "github_dispatch" | "github_issue" if crate::github::repo_slug(target).is_none() => Err(
             ApiError::bad("GitHub target must be owner/repo or https://github.com/owner/repo"),
         ),
@@ -2102,17 +1213,7 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
     };
     let allowed = match &project_id {
         Some(pid) => p.can_write(pid),
-        None => {
-            p.is_admin()
-                || matches!(
-                    p,
-                    Principal::Token {
-                        write: true,
-                        project_id: None,
-                        ..
-                    }
-                )
-        }
+        None => p.is_admin() || matches!(p, Principal::Token { write: true, project_id: None, .. }),
     };
     if !allowed {
         return Err(ApiError::forbidden());
@@ -2120,46 +1221,26 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
     let trigger = b.trigger.unwrap_or_else(|| "new_issue".into());
     let channel = b.channel.unwrap_or_else(|| "webhook".into());
     if !crate::alerts::TRIGGERS.contains(&trigger.as_str()) {
-        return Err(ApiError::bad(format!(
-            "trigger must be one of {}",
-            crate::alerts::TRIGGERS.join(", ")
-        )));
+        return Err(ApiError::bad(format!("trigger must be one of {}", crate::alerts::TRIGGERS.join(", "))));
     }
     if !crate::alerts::CHANNELS.contains(&channel.as_str()) {
-        return Err(ApiError::bad(format!(
-            "channel must be one of {}",
-            crate::alerts::CHANNELS.join(", ")
-        )));
+        return Err(ApiError::bad(format!("channel must be one of {}", crate::alerts::CHANNELS.join(", "))));
     }
     let target = b.target.unwrap_or_default();
     validate_target(s, &channel, &target)?;
     ensure_may_use_url_target(p, &channel)?;
     validate_filters(&b.filters)?;
     if trigger == "digest" && !(0..=23).contains(&b.threshold.unwrap_or(8)) {
-        return Err(ApiError::bad(
-            "for digests, threshold is the UTC hour to send at (0 to 23, default 8)",
-        ));
+        return Err(ApiError::bad("for digests, threshold is the UTC hour to send at (0 to 23, default 8)"));
     }
-    if channel == "github_issue"
-        && matches!(
-            trigger.as_str(),
-            "monitor_down" | "monitor_up" | "tls_expiring"
-        )
-    {
+    if channel == "github_issue" && matches!(trigger.as_str(), "monitor_down" | "monitor_up" | "tls_expiring") {
         return Err(ApiError::bad("github_issue works with issue triggers; use github_dispatch or a webhook for monitor alerts"));
     }
-    if channel == "github_issue"
-        && matches!(
-            trigger.as_str(),
-            "digest" | "release_created" | "perf_regression"
-        )
-    {
+    if channel == "github_issue" && matches!(trigger.as_str(), "digest" | "release_created" | "perf_regression") {
         return Err(ApiError::bad("github_issue works with issue triggers; use github_dispatch or a webhook for digests, releases and performance regressions"));
     }
     if trigger == "perf_regression" && !(1..=1000).contains(&b.threshold.unwrap_or(20)) {
-        return Err(ApiError::bad(
-            "for perf_regression, threshold is the p95 increase in percent (1 to 1000, default 20)",
-        ));
+        return Err(ApiError::bad("for perf_regression, threshold is the p95 increase in percent (1 to 1000, default 20)"));
     }
     if channel.starts_with("github_") && b.secret.as_deref().unwrap_or("").is_empty() {
         return Err(ApiError::bad("GitHub channels need `secret`: a GitHub token that can write to the repository (contents for dispatch, issues for issues)"));
@@ -2203,15 +1284,8 @@ pub async fn create_rule_inner(s: &AppState, p: &Principal, b: RuleBody) -> QRes
     Ok(json!(crate::alerts::rule_from_row(&row)))
 }
 
-async fn create_rule(
-    State(s): State<AppState>,
-    p: Principal,
-    Json(b): Json<RuleBody>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
-    Ok((
-        StatusCode::CREATED,
-        Json(create_rule_inner(&s, &p, b).await?),
-    ))
+async fn create_rule(State(s): State<AppState>, p: Principal, Json(b): Json<RuleBody>) -> Result<(StatusCode, Json<Value>), ApiError> {
+    Ok((StatusCode::CREATED, Json(create_rule_inner(&s, &p, b).await?)))
 }
 
 /// Whether `p` may change (and see the full target of) an alert rule.
@@ -2248,12 +1322,7 @@ async fn rule_for_write(s: &AppState, p: &Principal, id: &str) -> QResult<crate:
     Ok(rule)
 }
 
-pub async fn update_rule_inner(
-    s: &AppState,
-    p: &Principal,
-    id: &str,
-    b: RuleBody,
-) -> QResult<Value> {
+pub async fn update_rule_inner(s: &AppState, p: &Principal, id: &str, b: RuleBody) -> QResult<Value> {
     let rule = rule_for_write(s, p, id).await?;
     if let Some(t) = &b.target {
         validate_target(s, &rule.channel, t)?;
@@ -2286,21 +1355,13 @@ pub async fn update_rule_inner(
     Ok(json!(crate::alerts::rule_from_row(&row)))
 }
 
-async fn update_rule(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(id): Path<String>,
-    Json(b): Json<RuleBody>,
-) -> J {
+async fn update_rule(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Json(b): Json<RuleBody>) -> J {
     Ok(Json(update_rule_inner(&s, &p, &id, b).await?))
 }
 
 pub async fn delete_rule_inner(s: &AppState, p: &Principal, id: &str) -> QResult<Value> {
     rule_for_write(s, p, id).await?;
-    sqlx::query("DELETE FROM alert_rules WHERE id = $1")
-        .bind(id)
-        .execute(&s.db)
-        .await?;
+    sqlx::query("DELETE FROM alert_rules WHERE id = $1").bind(id).execute(&s.db).await?;
     crate::auth::audit(s, &p.label(), "delete_alert_rule", id, "").await;
     Ok(json!({"deleted": id}))
 }
@@ -2321,13 +1382,7 @@ async fn test_rule(State(s): State<AppState>, p: Principal, Path(id): Path<Strin
     Ok(Json(test_rule_inner(&s, &p, &id).await?))
 }
 
-pub async fn deliveries_inner(
-    s: &AppState,
-    p: &Principal,
-    id: &str,
-    include_payload: bool,
-    limit: Option<i64>,
-) -> QResult<Value> {
+pub async fn deliveries_inner(s: &AppState, p: &Principal, id: &str, include_payload: bool, limit: Option<i64>) -> QResult<Value> {
     rule_for_write(s, p, id).await?;
     let rows = sqlx::query(
         "SELECT id, issue_id, trigger, status, detail, created_at, attempts, next_attempt_at, payload FROM alert_deliveries WHERE rule_id = $1 ORDER BY created_at DESC LIMIT $2",
@@ -2358,34 +1413,16 @@ struct DeliveriesQuery {
     limit: Option<i64>,
 }
 
-async fn rule_deliveries(
-    State(s): State<AppState>,
-    p: Principal,
-    Path(id): Path<String>,
-    Query(q): Query<DeliveriesQuery>,
-) -> J {
-    Ok(Json(
-        deliveries_inner(&s, &p, &id, q.payload.unwrap_or(false), q.limit).await?,
-    ))
+async fn rule_deliveries(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Query(q): Query<DeliveriesQuery>) -> J {
+    Ok(Json(deliveries_inner(&s, &p, &id, q.payload.unwrap_or(false), q.limit).await?))
 }
 
-pub async fn redeliver_inner(
-    s: &AppState,
-    p: &Principal,
-    id: &str,
-    delivery: &str,
-) -> QResult<Value> {
+pub async fn redeliver_inner(s: &AppState, p: &Principal, id: &str, delivery: &str) -> QResult<Value> {
     rule_for_write(s, p, id).await?;
-    crate::alerts::redeliver(s, id, delivery)
-        .await
-        .map_err(|e| ApiError::bad(e.to_string()))
+    crate::alerts::redeliver(s, id, delivery).await.map_err(|e| ApiError::bad(e.to_string()))
 }
 
-async fn redeliver(
-    State(s): State<AppState>,
-    p: Principal,
-    Path((id, delivery)): Path<(String, String)>,
-) -> J {
+async fn redeliver(State(s): State<AppState>, p: Principal, Path((id, delivery)): Path<(String, String)>) -> J {
     Ok(Json(redeliver_inner(&s, &p, &id, &delivery).await?))
 }
 
@@ -2399,16 +1436,7 @@ async fn redeliver(
 
 /// Admins, and write tokens for all projects (so an operator script can drive the cutover).
 fn require_operator(p: &Principal) -> QResult<()> {
-    if p.is_admin()
-        || matches!(
-            p,
-            Principal::Token {
-                write: true,
-                project_id: None,
-                ..
-            }
-        )
-    {
+    if p.is_admin() || matches!(p, Principal::Token { write: true, project_id: None, .. }) {
         Ok(())
     } else {
         Err(ApiError::forbidden())
@@ -2445,20 +1473,12 @@ async fn put_read_only(State(s): State<AppState>, p: Principal, Json(b): Json<Re
         crate::auth::audit(&s, &p.label(), "read_only.disable", "", "").await;
         crate::readonly::status_json()
     };
-    out["message"] = json!(if b.enabled {
-        crate::readonly::MESSAGE
-    } else {
-        "metadata writes are enabled"
-    });
+    out["message"] = json!(if b.enabled { crate::readonly::MESSAGE } else { "metadata writes are enabled" });
     Ok(Json(out))
 }
 
 fn require_admin(p: &Principal) -> QResult<()> {
-    if p.is_admin() {
-        Ok(())
-    } else {
-        Err(ApiError::forbidden())
-    }
+    if p.is_admin() { Ok(()) } else { Err(ApiError::forbidden()) }
 }
 
 async fn list_tokens(State(s): State<AppState>, p: Principal) -> J {
@@ -2480,11 +1500,7 @@ struct TokenBody {
     expires_in_days: Option<i64>,
 }
 
-async fn create_token(
-    State(s): State<AppState>,
-    p: Principal,
-    Json(b): Json<TokenBody>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
+async fn create_token(State(s): State<AppState>, p: Principal, Json(b): Json<TokenBody>) -> Result<(StatusCode, Json<Value>), ApiError> {
     require_admin(&p)?;
     let project_id = match b.project.as_deref().filter(|x| !x.is_empty()) {
         Some(pr) => Some(query::project_for(&s, &p, pr).await?.id),
@@ -2493,52 +1509,25 @@ async fn create_token(
     let write = match b.scope.as_deref().unwrap_or("read") {
         "read" => false,
         "write" => true,
-        other => {
-            return Err(ApiError::bad(format!(
-                "scope must be read or write, not `{other}`"
-            )))
-        }
+        other => return Err(ApiError::bad(format!("scope must be read or write, not `{other}`"))),
     };
     let expires = b.expires_in_days.map(|d| now_ms() + d * 86_400_000);
-    let t = crate::auth::create_api_token(
-        &s,
-        &b.name,
-        project_id.as_deref(),
-        write,
-        expires,
-        &p.label(),
-    )
-    .await?;
+    let t = crate::auth::create_api_token(&s, &b.name, project_id.as_deref(), write, expires, &p.label()).await?;
     crate::auth::audit(&s, &p.label(), "create_token", &t.id, &b.name).await;
-    Ok((
-        StatusCode::CREATED,
-        Json(
-            json!({"id": t.id, "token": t.token, "note": "Store this token now; it is not shown again."}),
-        ),
-    ))
+    Ok((StatusCode::CREATED, Json(json!({"id": t.id, "token": t.token, "note": "Store this token now; it is not shown again."}))))
 }
 
 async fn revoke_token(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {
     require_admin(&p)?;
-    sqlx::query("UPDATE api_tokens SET revoked_at = $1 WHERE id = $2")
-        .bind(now_ms())
-        .bind(&id)
-        .execute(&s.db)
-        .await?;
+    sqlx::query("UPDATE api_tokens SET revoked_at = $1 WHERE id = $2").bind(now_ms()).bind(&id).execute(&s.db).await?;
     crate::auth::audit(&s, &p.label(), "revoke_token", &id, "").await;
     Ok(Json(json!({"revoked": id})))
 }
 
 async fn list_users(State(s): State<AppState>, p: Principal) -> J {
     require_admin(&p)?;
-    let rows = sqlx::query(
-        "SELECT id, email, name, role, created_at, disabled FROM users ORDER BY created_at",
-    )
-    .fetch_all(&s.db)
-    .await?;
-    Ok(Json(
-        json!({"users": rows.iter().map(|r| json!({"id": r.s("id"), "email": r.s("email"), "name": r.s("name"), "role": r.s("role"), "disabled": r.i("disabled") != 0, "created_at": iso_time(r.i("created_at"))})).collect::<Vec<_>>()}),
-    ))
+    let rows = sqlx::query("SELECT id, email, name, role, created_at, disabled FROM users ORDER BY created_at").fetch_all(&s.db).await?;
+    Ok(Json(json!({"users": rows.iter().map(|r| json!({"id": r.s("id"), "email": r.s("email"), "name": r.s("name"), "role": r.s("role"), "disabled": r.i("disabled") != 0, "created_at": iso_time(r.i("created_at"))})).collect::<Vec<_>>()})))
 }
 
 #[derive(Deserialize)]
@@ -2549,13 +1538,10 @@ pub struct InviteBody {
 
 pub async fn invite_inner(s: &AppState, p: &Principal, b: InviteBody) -> QResult<Value> {
     require_admin(p)?;
-    let role = Role::parse(&b.role)
-        .ok_or_else(|| ApiError::bad("role must be viewer, member, admin or owner"))?;
+    let role = Role::parse(&b.role).ok_or_else(|| ApiError::bad("role must be viewer, member, admin or owner"))?;
     if let Principal::User { role: my, .. } = p {
         if role > *my {
-            return Err(ApiError::bad(
-                "you cannot invite someone with a higher role than your own",
-            ));
+            return Err(ApiError::bad("you cannot invite someone with a higher role than your own"));
         }
     }
     let token = crate::util::random_token(24);
@@ -2572,16 +1558,10 @@ pub async fn invite_inner(s: &AppState, p: &Principal, b: InviteBody) -> QResult
     let link = format!("{}/ui/invite/{token}", s.config.public_url);
     let emailed = crate::admin::send_invite_email(s, &b.email, &link).await;
     crate::auth::audit(s, &p.label(), "invite_user", &b.email, role.as_str()).await;
-    Ok(
-        json!({"email": b.email, "role": role, "invite_link": link, "emailed": emailed, "expires_in_days": 7}),
-    )
+    Ok(json!({"email": b.email, "role": role, "invite_link": link, "emailed": emailed, "expires_in_days": 7}))
 }
 
-async fn invite_user(
-    State(s): State<AppState>,
-    p: Principal,
-    Json(b): Json<InviteBody>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
+async fn invite_user(State(s): State<AppState>, p: Principal, Json(b): Json<InviteBody>) -> Result<(StatusCode, Json<Value>), ApiError> {
     Ok((StatusCode::CREATED, Json(invite_inner(&s, &p, b).await?)))
 }
 
@@ -2617,13 +1597,10 @@ async fn update_user(
     require_admin(&p)?;
     require_may_manage(&s, &p, &id).await?;
     if let Some(r) = &b.role {
-        let role = Role::parse(r)
-            .ok_or_else(|| ApiError::bad("role must be viewer, member, admin or owner"))?;
+        let role = Role::parse(r).ok_or_else(|| ApiError::bad("role must be viewer, member, admin or owner"))?;
         if let Principal::User { role: my, .. } = &p {
             if role > *my {
-                return Err(ApiError::bad(
-                    "you cannot grant a higher role than your own",
-                ));
+                return Err(ApiError::bad("you cannot grant a higher role than your own"));
             }
         }
     }
@@ -2644,25 +1621,11 @@ async fn update_user(
     Ok(Json(json!({"updated": id})))
 }
 
-async fn ensure_not_last_owner(
-    s: &AppState,
-    user_id: &str,
-    new_role: Option<&str>,
-    disabled: Option<bool>,
-) -> QResult<()> {
-    let row = sqlx::query("SELECT role FROM users WHERE id = $1")
-        .bind(user_id)
-        .fetch_optional(&s.db)
-        .await?
-        .ok_or_else(|| ApiError::not_found("user"))?;
-    let demoting = row.s("role") == "owner"
-        && (new_role.map(|r| r != "owner").unwrap_or(false) || disabled == Some(true));
+async fn ensure_not_last_owner(s: &AppState, user_id: &str, new_role: Option<&str>, disabled: Option<bool>) -> QResult<()> {
+    let row = sqlx::query("SELECT role FROM users WHERE id = $1").bind(user_id).fetch_optional(&s.db).await?.ok_or_else(|| ApiError::not_found("user"))?;
+    let demoting = row.s("role") == "owner" && (new_role.map(|r| r != "owner").unwrap_or(false) || disabled == Some(true));
     if demoting {
-        let owners =
-            sqlx::query("SELECT COUNT(*) AS n FROM users WHERE role = 'owner' AND disabled = 0")
-                .fetch_one(&s.db)
-                .await?
-                .i("n");
+        let owners = sqlx::query("SELECT COUNT(*) AS n FROM users WHERE role = 'owner' AND disabled = 0").fetch_one(&s.db).await?.i("n");
         if owners <= 1 {
             return Err(ApiError::bad("cannot remove the last owner"));
         }
@@ -2674,18 +1637,9 @@ async fn delete_user(State(s): State<AppState>, p: Principal, Path(id): Path<Str
     require_admin(&p)?;
     require_may_manage(&s, &p, &id).await?;
     ensure_not_last_owner(&s, &id, Some("removed"), Some(true)).await?;
-    sqlx::query("DELETE FROM web_sessions WHERE user_id = $1")
-        .bind(&id)
-        .execute(&s.db)
-        .await?;
-    sqlx::query("UPDATE issues SET assignee_id = NULL WHERE assignee_id = $1")
-        .bind(&id)
-        .execute(&s.db)
-        .await?;
-    sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(&id)
-        .execute(&s.db)
-        .await?;
+    sqlx::query("DELETE FROM web_sessions WHERE user_id = $1").bind(&id).execute(&s.db).await?;
+    sqlx::query("UPDATE issues SET assignee_id = NULL WHERE assignee_id = $1").bind(&id).execute(&s.db).await?;
+    sqlx::query("DELETE FROM users WHERE id = $1").bind(&id).execute(&s.db).await?;
     crate::auth::audit(&s, &p.label(), "delete_user", &id, "").await;
     Ok(Json(json!({"deleted": id})))
 }

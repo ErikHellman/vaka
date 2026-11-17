@@ -48,15 +48,9 @@ pub async fn open(url: &str) -> anyhow::Result<Pool> {
         .after_connect(move |conn, _| {
             Box::pin(async move {
                 if is_sqlite {
-                    sqlx::query("PRAGMA journal_mode=WAL")
-                        .execute(&mut *conn)
-                        .await?;
-                    sqlx::query("PRAGMA busy_timeout=5000")
-                        .execute(&mut *conn)
-                        .await?;
-                    sqlx::query("PRAGMA foreign_keys=ON")
-                        .execute(&mut *conn)
-                        .await?;
+                    sqlx::query("PRAGMA journal_mode=WAL").execute(&mut *conn).await?;
+                    sqlx::query("PRAGMA busy_timeout=5000").execute(&mut *conn).await?;
+                    sqlx::query("PRAGMA foreign_keys=ON").execute(&mut *conn).await?;
                 }
                 if crate::readonly::enforced() {
                     set_read_only(conn, true).await?;
@@ -98,11 +92,10 @@ async fn migrate(pool: &Pool) -> anyhow::Result<()> {
         .execute(pool)
         .await?;
     for (version, sql) in MIGRATIONS {
-        let applied: Option<AnyRow> =
-            sqlx::query("SELECT version FROM schema_migrations WHERE version = $1")
-                .bind(*version)
-                .fetch_optional(pool)
-                .await?;
+        let applied: Option<AnyRow> = sqlx::query("SELECT version FROM schema_migrations WHERE version = $1")
+            .bind(*version)
+            .fetch_optional(pool)
+            .await?;
         if applied.is_some() {
             continue;
         }
@@ -131,10 +124,7 @@ pub trait RowExt {
 
 impl RowExt for AnyRow {
     fn s(&self, col: &str) -> String {
-        self.try_get::<Option<String>, _>(col)
-            .ok()
-            .flatten()
-            .unwrap_or_default()
+        self.try_get::<Option<String>, _>(col).ok().flatten().unwrap_or_default()
     }
     fn os(&self, col: &str) -> Option<String> {
         self.try_get::<Option<String>, _>(col).ok().flatten()

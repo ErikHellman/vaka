@@ -7,11 +7,7 @@ use crate::util::{now_ms, random_token};
 use std::time::Duration;
 
 pub async fn salt_for_day(state: &AppState, day: &str) -> anyhow::Result<String> {
-    if let Some(r) = sqlx::query("SELECT salt FROM daily_salts WHERE day = $1")
-        .bind(day)
-        .fetch_optional(&state.db)
-        .await?
-    {
+    if let Some(r) = sqlx::query("SELECT salt FROM daily_salts WHERE day = $1").bind(day).fetch_optional(&state.db).await? {
         return Ok(r.s("salt"));
     }
     sqlx::query("INSERT INTO daily_salts (day, salt) VALUES ($1, $2) ON CONFLICT (day) DO NOTHING")
@@ -20,15 +16,8 @@ pub async fn salt_for_day(state: &AppState, day: &str) -> anyhow::Result<String>
         .execute(&state.db)
         .await?;
     // Old salts are deleted so yesterday's visitor hashes can never be recomputed.
-    sqlx::query("DELETE FROM daily_salts WHERE day < $1")
-        .bind(day)
-        .execute(&state.db)
-        .await?;
-    Ok(sqlx::query("SELECT salt FROM daily_salts WHERE day = $1")
-        .bind(day)
-        .fetch_one(&state.db)
-        .await?
-        .s("salt"))
+    sqlx::query("DELETE FROM daily_salts WHERE day < $1").bind(day).execute(&state.db).await?;
+    Ok(sqlx::query("SELECT salt FROM daily_salts WHERE day = $1").bind(day).fetch_one(&state.db).await?.s("salt"))
 }
 
 pub fn spawn(state: AppState) {
@@ -42,14 +31,8 @@ pub fn spawn(state: AppState) {
             if let Err(e) = enforce_retention(&state).await {
                 tracing::warn!("retention job failed: {e:#}");
             }
-            let _ = sqlx::query("DELETE FROM web_sessions WHERE expires_at < $1")
-                .bind(now_ms())
-                .execute(&state.db)
-                .await;
-            let _ = sqlx::query("DELETE FROM login_codes WHERE expires_at < $1")
-                .bind(now_ms())
-                .execute(&state.db)
-                .await;
+            let _ = sqlx::query("DELETE FROM web_sessions WHERE expires_at < $1").bind(now_ms()).execute(&state.db).await;
+            let _ = sqlx::query("DELETE FROM login_codes WHERE expires_at < $1").bind(now_ms()).execute(&state.db).await;
         }
     });
 }
@@ -58,12 +41,7 @@ pub fn spawn(state: AppState) {
 /// rows written earlier with a longer TTL are deleted here.
 pub async fn enforce_retention(state: &AppState) -> anyhow::Result<()> {
     for p in crate::projects::list(state).await? {
-        for (table, col) in [
-            ("errors", "timestamp"),
-            ("events", "timestamp"),
-            ("sessions", "started"),
-            ("monitor_checks", "timestamp"),
-        ] {
+        for (table, col) in [("errors", "timestamp"), ("events", "timestamp"), ("sessions", "started"), ("monitor_checks", "timestamp")] {
             state
                 .ch
                 .execute_with(
@@ -91,12 +69,7 @@ pub struct ErasureResult {
 }
 
 /// Delete everything stored for `user_id` in a project (GDPR right to erasure).
-pub async fn erase_user(
-    state: &AppState,
-    project_id: &str,
-    user_id: &str,
-    actor: &str,
-) -> anyhow::Result<ErasureResult> {
+pub async fn erase_user(state: &AppState, project_id: &str, user_id: &str, actor: &str) -> anyhow::Result<ErasureResult> {
     let params = [("p", project_id.to_string()), ("u", user_id.to_string())];
     let mut counts = [0u64; 3];
     for (i, table) in ["errors", "events", "sessions"].iter().enumerate() {
@@ -119,17 +92,7 @@ pub async fn erase_user(
     }
     // Feedback is matched by user id, and by contact email when the id is an email address.
     let feedback = crate::feedback::erase_user(state, project_id, user_id).await?;
-    crate::auth::audit(
-        state,
-        actor,
-        "erase_user",
-        project_id,
-        &format!(
-            "user_id={user_id} errors={} events={} sessions={} feedback={feedback}",
-            counts[0], counts[1], counts[2]
-        ),
-    )
-    .await;
+    crate::auth::audit(state, actor, "erase_user", project_id, &format!("user_id={user_id} errors={} events={} sessions={} feedback={feedback}", counts[0], counts[1], counts[2])).await;
     Ok(ErasureResult {
         project_id: project_id.into(),
         user_id: user_id.into(),

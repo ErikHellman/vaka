@@ -52,29 +52,14 @@ impl Role {
 
 #[derive(Clone, Debug)]
 pub enum Principal {
-    User {
-        id: String,
-        email: String,
-        name: String,
-        role: Role,
-    },
-    Token {
-        id: String,
-        name: String,
-        project_id: Option<String>,
-        write: bool,
-    },
+    User { id: String, email: String, name: String, role: Role },
+    Token { id: String, name: String, project_id: Option<String>, write: bool },
 }
 
 impl Principal {
     /// Vaka itself (background jobs that reuse the query layer).
     pub fn system() -> Principal {
-        Principal::User {
-            id: "system".into(),
-            email: "vaka".into(),
-            name: "Vaka".into(),
-            role: Role::Owner,
-        }
+        Principal::User { id: "system".into(), email: "vaka".into(), name: "Vaka".into(), role: Role::Owner }
     }
 
     pub fn label(&self) -> String {
@@ -87,9 +72,7 @@ impl Principal {
     pub fn can_read(&self, project_id: &str) -> bool {
         match self {
             Principal::User { .. } => true,
-            Principal::Token { project_id: p, .. } => {
-                p.as_deref().map(|p| p == project_id).unwrap_or(true)
-            }
+            Principal::Token { project_id: p, .. } => p.as_deref().map(|p| p == project_id).unwrap_or(true),
         }
     }
 
@@ -110,9 +93,7 @@ impl Principal {
     pub fn can_create_project(&self) -> bool {
         match self {
             Principal::User { role, .. } => *role >= Role::Admin,
-            Principal::Token {
-                project_id, write, ..
-            } => *write && project_id.is_none(),
+            Principal::Token { project_id, write, .. } => *write && project_id.is_none(),
         }
     }
 
@@ -144,10 +125,7 @@ impl ApiError {
         ApiError(StatusCode::NOT_FOUND, format!("{what} not found"))
     }
     pub fn forbidden() -> Self {
-        ApiError(
-            StatusCode::FORBIDDEN,
-            "this token or user is not allowed to do that".into(),
-        )
+        ApiError(StatusCode::FORBIDDEN, "this token or user is not allowed to do that".into())
     }
     pub fn bad(msg: impl Into<String>) -> Self {
         ApiError(StatusCode::BAD_REQUEST, msg.into())
@@ -163,10 +141,7 @@ impl IntoResponse for ApiError {
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> Self {
         if crate::readonly::requested() && crate::readonly::is_read_only_error(&format!("{e:#}")) {
-            return ApiError(
-                StatusCode::SERVICE_UNAVAILABLE,
-                crate::readonly::MESSAGE.into(),
-            );
+            return ApiError(StatusCode::SERVICE_UNAVAILABLE, crate::readonly::MESSAGE.into());
         }
         // Details (SQL, ClickHouse messages, paths) stay in the log; the client gets an id to quote.
         let id = uuid::Uuid::new_v4().simple().to_string();
@@ -261,10 +236,7 @@ pub fn cookie_value(parts: &Parts, name: &str) -> Option<String> {
         .map(|(_, v)| v.to_string())
 }
 
-pub async fn principal_from_token(
-    state: &AppState,
-    token: &str,
-) -> anyhow::Result<Option<Principal>> {
+pub async fn principal_from_token(state: &AppState, token: &str) -> anyhow::Result<Option<Principal>> {
     let now = now_ms();
     let row = sqlx::query("SELECT id, name, project_id, scope, expires_at FROM api_tokens WHERE token_hash = $1 AND revoked_at IS NULL")
         .bind(sha256_hex(token))
@@ -288,10 +260,7 @@ pub async fn principal_from_token(
     }))
 }
 
-pub async fn principal_from_session(
-    state: &AppState,
-    token: &str,
-) -> anyhow::Result<Option<Principal>> {
+pub async fn principal_from_session(state: &AppState, token: &str) -> anyhow::Result<Option<Principal>> {
     let row = sqlx::query(
         "SELECT u.id, u.email, u.name, u.role FROM web_sessions s JOIN users u ON u.id = s.user_id \
          WHERE s.token_hash = $1 AND s.expires_at > $2 AND u.disabled = 0",
@@ -333,10 +302,7 @@ pub fn same_origin(state: &AppState, headers: &axum::http::HeaderMap) -> bool {
 impl FromRequestParts<AppState> for Principal {
     type Rejection = ApiError;
 
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &AppState,
-    ) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
         let bearer = parts
             .headers
             .get("authorization")
@@ -344,12 +310,9 @@ impl FromRequestParts<AppState> for Principal {
             .and_then(|v| v.strip_prefix("Bearer "))
             .map(|s| s.trim().to_string());
         if let Some(token) = bearer {
-            return principal_from_token(state, &token).await?.ok_or_else(|| {
-                ApiError(
-                    StatusCode::UNAUTHORIZED,
-                    "invalid, expired or revoked API token".into(),
-                )
-            });
+            return principal_from_token(state, &token)
+                .await?
+                .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "invalid, expired or revoked API token".into()));
         }
         if let Some(session) = cookie_value(parts, SESSION_COOKIE) {
             if let Some(p) = principal_from_session(state, &session).await? {
@@ -391,21 +354,11 @@ pub async fn create_session(state: &AppState, user_id: &str) -> anyhow::Result<S
 pub fn session_cookie(state: &AppState, token: &str, max_age_s: i64) -> String {
     format!(
         "{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age_s}{}",
-        if state.config.secure_cookies {
-            "; Secure"
-        } else {
-            ""
-        }
+        if state.config.secure_cookies { "; Secure" } else { "" }
     )
 }
 
-pub async fn create_user(
-    state: &AppState,
-    email: &str,
-    name: &str,
-    password: &str,
-    role: Role,
-) -> anyhow::Result<String> {
+pub async fn create_user(state: &AppState, email: &str, name: &str, password: &str, role: Role) -> anyhow::Result<String> {
     let id = new_id();
     sqlx::query("INSERT INTO users (id, email, name, password_hash, role, created_at, disabled) VALUES ($1, $2, $3, $4, $5, $6, 0)")
         .bind(&id)
@@ -425,10 +378,7 @@ pub async fn bootstrap_admin(state: &AppState) -> anyhow::Result<()> {
     if !state.config.password_login && !state.config.email_login() {
         tracing::warn!("VAKA_PASSWORD_LOGIN=false is ignored because email is not configured (set VAKA_RESEND_API_KEY)");
     }
-    let count = sqlx::query("SELECT COUNT(*) AS n FROM users")
-        .fetch_one(&state.db)
-        .await?
-        .i("n");
+    let count = sqlx::query("SELECT COUNT(*) AS n FROM users").fetch_one(&state.db).await?.i("n");
     if count > 0 {
         return Ok(());
     }

@@ -45,18 +45,11 @@ fn strip_url(p: &str) -> String {
 
 /// Frames to use for grouping: in-app frames if there are any, else all.
 pub fn grouping_frames(frames: &[Frame]) -> Vec<&Frame> {
-    let in_app: Vec<&Frame> = frames
-        .iter()
-        .filter(|f| is_in_app(f) && f.function.is_some())
-        .collect();
+    let in_app: Vec<&Frame> = frames.iter().filter(|f| is_in_app(f) && f.function.is_some()).collect();
     if !in_app.is_empty() {
         return in_app.into_iter().take(FRAMES_IN_FINGERPRINT).collect();
     }
-    frames
-        .iter()
-        .filter(|f| f.function.is_some())
-        .take(FRAMES_IN_FINGERPRINT)
-        .collect()
+    frames.iter().filter(|f| f.function.is_some()).take(FRAMES_IN_FINGERPRINT).collect()
 }
 
 pub fn fingerprint(
@@ -101,10 +94,9 @@ pub fn fingerprint(
 /// Human-readable title for an issue.
 pub fn title(exceptions: &[ExceptionData], message: Option<&str>) -> String {
     match exceptions.first() {
-        Some(e) if !e.value.is_empty() && !e.ty.is_empty() => crate::util::truncate(
-            &format!("{}: {}", e.ty, e.value.lines().next().unwrap_or("")),
-            200,
-        ),
+        Some(e) if !e.value.is_empty() && !e.ty.is_empty() => {
+            crate::util::truncate(&format!("{}: {}", e.ty, e.value.lines().next().unwrap_or("")), 200)
+        }
         Some(e) if !e.ty.is_empty() => e.ty.clone(),
         Some(e) => crate::util::truncate(&e.value, 200),
         None => crate::util::truncate(message.unwrap_or("Unknown error"), 200),
@@ -113,9 +105,7 @@ pub fn title(exceptions: &[ExceptionData], message: Option<&str>) -> String {
 
 /// Where the error happened: the top in-app frame, formatted for humans.
 pub fn culprit(exceptions: &[ExceptionData]) -> String {
-    let Some(exc) = exceptions.first() else {
-        return String::new();
-    };
+    let Some(exc) = exceptions.first() else { return String::new() };
     let frame = exc
         .stacktrace
         .iter()
@@ -163,18 +153,8 @@ mod tests {
 
     #[test]
     fn same_stack_different_lines_and_values_group_together() {
-        let a = fingerprint(
-            "js",
-            &[exc("TypeError", "x is 1", &[("foo", 10), ("bar", 20)])],
-            None,
-            None,
-        );
-        let b = fingerprint(
-            "js",
-            &[exc("TypeError", "x is 2", &[("foo", 11), ("bar", 25)])],
-            None,
-            None,
-        );
+        let a = fingerprint("js", &[exc("TypeError", "x is 1", &[("foo", 10), ("bar", 20)])], None, None);
+        let b = fingerprint("js", &[exc("TypeError", "x is 2", &[("foo", 11), ("bar", 25)])], None, None);
         assert_eq!(a, b);
     }
 

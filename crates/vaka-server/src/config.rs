@@ -80,19 +80,11 @@ impl Cidr {
         };
         match (self.addr, ip) {
             (IpAddr::V4(n), IpAddr::V4(a)) => {
-                let mask = if self.prefix == 0 {
-                    0
-                } else {
-                    u32::MAX << (32 - self.prefix as u32)
-                };
+                let mask = if self.prefix == 0 { 0 } else { u32::MAX << (32 - self.prefix as u32) };
                 u32::from(n) & mask == u32::from(a) & mask
             }
             (IpAddr::V6(n), IpAddr::V6(a)) => {
-                let mask = if self.prefix == 0 {
-                    0
-                } else {
-                    u128::MAX << (128 - self.prefix as u32)
-                };
+                let mask = if self.prefix == 0 { 0 } else { u128::MAX << (128 - self.prefix as u32) };
                 u128::from(n) & mask == u128::from(a) & mask
             }
             _ => false,
@@ -113,16 +105,13 @@ pub fn parse_trusted_proxies(s: &str) -> Vec<Cidr> {
     if s.trim().eq_ignore_ascii_case("none") {
         return Vec::new();
     }
-    s.split(',')
-        .filter(|p| !p.trim().is_empty())
-        .filter_map(|p| {
-            let c = Cidr::parse(p);
-            if c.is_none() {
-                tracing::warn!("VAKA_TRUSTED_PROXIES: ignoring {p:?} (not an IP address or CIDR)");
-            }
-            c
-        })
-        .collect()
+    s.split(',').filter(|p| !p.trim().is_empty()).filter_map(|p| {
+        let c = Cidr::parse(p);
+        if c.is_none() {
+            tracing::warn!("VAKA_TRUSTED_PROXIES: ignoring {p:?} (not an IP address or CIDR)");
+        }
+        c
+    }).collect()
 }
 
 /// A boolean environment variable: 1, true, yes or on.
@@ -153,10 +142,8 @@ impl Config {
             listen: var("VAKA_LISTEN").unwrap_or_else(|| "0.0.0.0:8080".into()),
             secure_cookies: public_url.starts_with("https://"),
             public_url: public_url.trim_end_matches('/').to_string(),
-            db_url: var("VAKA_DB_URL")
-                .unwrap_or_else(|| format!("sqlite://{data_dir}/vaka.db?mode=rwc")),
-            clickhouse_url: var("VAKA_CLICKHOUSE_URL")
-                .unwrap_or_else(|| "http://localhost:8123".into()),
+            db_url: var("VAKA_DB_URL").unwrap_or_else(|| format!("sqlite://{data_dir}/vaka.db?mode=rwc")),
+            clickhouse_url: var("VAKA_CLICKHOUSE_URL").unwrap_or_else(|| "http://localhost:8123".into()),
             clickhouse_user: var("VAKA_CLICKHOUSE_USER").unwrap_or_else(|| "default".into()),
             clickhouse_password: var("VAKA_CLICKHOUSE_PASSWORD").unwrap_or_default(),
             clickhouse_database: var("VAKA_CLICKHOUSE_DATABASE").unwrap_or_else(|| "vaka".into()),
@@ -165,24 +152,14 @@ impl Config {
             geoip_db: var("VAKA_GEOIP_DB"),
             geoip_enabled: flag_default_on("VAKA_GEOIP"),
             geoip_update: flag_default_on("VAKA_GEOIP_UPDATE"),
-            geoip_update_url: var("VAKA_GEOIP_UPDATE_URL")
-                .unwrap_or_else(|| crate::geoip::DEFAULT_UPDATE_URL.into()),
+            geoip_update_url: var("VAKA_GEOIP_UPDATE_URL").unwrap_or_else(|| crate::geoip::DEFAULT_UPDATE_URL.into()),
             resend_api_key: var("VAKA_RESEND_API_KEY"),
-            resend_api_url: var("VAKA_RESEND_API_URL")
-                .unwrap_or_else(|| "https://api.resend.com".into())
-                .trim_end_matches('/')
-                .to_string(),
+            resend_api_url: var("VAKA_RESEND_API_URL").unwrap_or_else(|| "https://api.resend.com".into()).trim_end_matches('/').to_string(),
             sms: crate::sms::SmsConfig::from_env(),
             llm_base_url: var("VAKA_LLM_BASE_URL").map(|u| u.trim_end_matches('/').to_string()),
             llm_model: var("VAKA_LLM_MODEL"),
             llm_api_key: var("VAKA_LLM_API_KEY"),
-            password_login: !matches!(
-                var("VAKA_PASSWORD_LOGIN")
-                    .as_deref()
-                    .map(str::to_lowercase)
-                    .as_deref(),
-                Some("false" | "0" | "no" | "off")
-            ),
+            password_login: !matches!(var("VAKA_PASSWORD_LOGIN").as_deref().map(str::to_lowercase).as_deref(), Some("false" | "0" | "no" | "off")),
             email_from: var("VAKA_EMAIL_FROM").unwrap_or_else(|| "Vaka <vaka@localhost>".into()),
             default_retention_days: var("VAKA_DEFAULT_RETENTION_DAYS")
                 .and_then(|v| v.parse().ok())
@@ -203,12 +180,7 @@ impl Config {
             ),
             allow_private_alert_targets: flag("VAKA_ALLOW_PRIVATE_ALERT_TARGETS"),
             api_cors_origins: var("VAKA_API_CORS_ORIGINS")
-                .map(|v| {
-                    v.split(',')
-                        .map(|o| o.trim().trim_end_matches('/').to_string())
-                        .filter(|o| !o.is_empty())
-                        .collect()
-                })
+                .map(|v| v.split(',').map(|o| o.trim().trim_end_matches('/').to_string()).filter(|o| !o.is_empty()).collect())
                 .unwrap_or_default(),
             ingest_per_project_minute: var("VAKA_INGEST_PER_PROJECT_MINUTE")
                 .and_then(|v| v.parse().ok())

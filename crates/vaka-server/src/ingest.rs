@@ -23,32 +23,14 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/ingest/v1/batch", post(batch))
         .route("/ingest/v1/flags", post(flags))
-        .route(
-            "/ingest/v1/feedback",
-            post(feedback).layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024)),
-        )
+        .route("/ingest/v1/feedback", post(feedback).layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024)))
         .route("/ingest/v1/{kind}", post(single_kind))
-        .route(
-            "/ingest/v1/monitors/{slug}/check-ins",
-            post(monitor_check_in),
-        )
-        .route(
-            "/ingest/v1/monitors/{slug}/{status}",
-            get(monitor_check_in_short).post(monitor_check_in_short),
-        )
-        .route(
-            "/ingest/v1/ping",
-            get(|| async { Json(json!({"ok": true})) }),
-        )
+        .route("/ingest/v1/monitors/{slug}/check-ins", post(monitor_check_in))
+        .route("/ingest/v1/monitors/{slug}/{status}", get(monitor_check_in_short).post(monitor_check_in_short))
+        .route("/ingest/v1/ping", get(|| async { Json(json!({"ok": true})) }))
         // OTLP/HTTP: set OTEL_EXPORTER_OTLP_ENDPOINT to <vaka>/ingest/otlp (the SDK appends /v1/traces).
-        .route(
-            "/ingest/otlp/v1/traces",
-            post(otlp_traces).layer(axum::extract::DefaultBodyLimit::max(20 * 1024 * 1024)),
-        )
-        .route(
-            "/ingest/otlp/v1/logs",
-            post(otlp_logs).layer(axum::extract::DefaultBodyLimit::max(20 * 1024 * 1024)),
-        )
+        .route("/ingest/otlp/v1/traces", post(otlp_traces).layer(axum::extract::DefaultBodyLimit::max(20 * 1024 * 1024)))
+        .route("/ingest/otlp/v1/logs", post(otlp_logs).layer(axum::extract::DefaultBodyLimit::max(20 * 1024 * 1024)))
         .route("/ingest/otlp/v1/metrics", post(otlp_metrics))
 }
 
@@ -67,18 +49,10 @@ pub struct IngestError(StatusCode, String);
 
 impl IntoResponse for IngestError {
     fn into_response(self) -> Response {
-        let retry =
-            self.0 == StatusCode::SERVICE_UNAVAILABLE || self.0 == StatusCode::TOO_MANY_REQUESTS;
-        let mut r = (
-            self.0,
-            Json(json!({"error": self.1, "docs": "/docs/ingest.md"})),
-        )
-            .into_response();
+        let retry = self.0 == StatusCode::SERVICE_UNAVAILABLE || self.0 == StatusCode::TOO_MANY_REQUESTS;
+        let mut r = (self.0, Json(json!({"error": self.1, "docs": "/docs/ingest.md"}))).into_response();
         if retry {
-            r.headers_mut().insert(
-                axum::http::header::RETRY_AFTER,
-                axum::http::HeaderValue::from_static("30"),
-            );
+            r.headers_mut().insert(axum::http::header::RETRY_AFTER, axum::http::HeaderValue::from_static("30"));
         }
         r
     }
@@ -105,16 +79,11 @@ fn extract_key(headers: &HeaderMap, q: &KeyQuery) -> Option<String> {
     q.key.clone()
 }
 
-async fn authenticate(
-    state: &AppState,
-    headers: &HeaderMap,
-    q: &KeyQuery,
-) -> Result<ProjectInfo, IngestError> {
+async fn authenticate(state: &AppState, headers: &HeaderMap, q: &KeyQuery) -> Result<ProjectInfo, IngestError> {
     let key = extract_key(headers, q).ok_or_else(|| {
         IngestError(
             StatusCode::UNAUTHORIZED,
-            "missing ingest key: send it as the `X-Vaka-Key` header (or `?key=` for sendBeacon)"
-                .into(),
+            "missing ingest key: send it as the `X-Vaka-Key` header (or `?key=` for sendBeacon)".into(),
         )
     })?;
     match crate::projects::by_ingest_key(state, &key).await {
@@ -141,34 +110,18 @@ pub struct RequestCtx {
 /// The client's address. Forwarding headers are only believed when the TCP peer is a trusted
 /// proxy (`VAKA_TRUSTED_PROXIES`); otherwise anyone could pick their own address and dodge the
 /// per-address limits. In `X-Forwarded-For` the rightmost hop that isn't itself trusted wins.
-pub(crate) fn client_ip(
-    headers: &HeaderMap,
-    peer: SocketAddr,
-    trusted: &[crate::config::Cidr],
-) -> Option<IpAddr> {
+pub(crate) fn client_ip(headers: &HeaderMap, peer: SocketAddr, trusted: &[crate::config::Cidr]) -> Option<IpAddr> {
     let is_trusted = |ip: IpAddr| trusted.iter().any(|c| c.contains(ip));
     if !is_trusted(peer.ip()) {
         return Some(peer.ip());
     }
     if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-        let hops: Vec<IpAddr> = xff
-            .split(',')
-            .filter_map(|s| s.trim().parse().ok())
-            .collect();
-        if let Some(ip) = hops
-            .iter()
-            .rev()
-            .find(|ip| !is_trusted(**ip))
-            .or(hops.first())
-        {
+        let hops: Vec<IpAddr> = xff.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        if let Some(ip) = hops.iter().rev().find(|ip| !is_trusted(**ip)).or(hops.first()) {
             return Some(*ip);
         }
     }
-    if let Some(ip) = headers
-        .get("x-real-ip")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.trim().parse().ok())
-    {
+    if let Some(ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()).and_then(|s| s.trim().parse().ok()) {
         return Some(ip);
     }
     Some(peer.ip())
@@ -183,16 +136,12 @@ fn country(state: &AppState, headers: &HeaderMap, ip: Option<IpAddr>) -> String 
             }
         }
     }
-    ip.and_then(|ip| state.geoip.country(ip))
-        .unwrap_or_default()
+    ip.and_then(|ip| state.geoip.country(ip)).unwrap_or_default()
 }
 
 fn parse_body(body: &Bytes) -> Result<Value, IngestError> {
     serde_json::from_slice(body).map_err(|e| {
-        IngestError(
-            StatusCode::BAD_REQUEST,
-            format!("request body is not valid JSON: {e}"),
-        )
+        IngestError(StatusCode::BAD_REQUEST, format!("request body is not valid JSON: {e}"))
     })
 }
 
@@ -206,41 +155,22 @@ async fn batch(
     let project = authenticate(&state, &headers, &q).await?;
     let v = parse_body(&body)?;
     let batch: Batch = serde_json::from_value(v).map_err(|e| {
-        IngestError(
-            StatusCode::BAD_REQUEST,
-            format!("expected {{\"sdk\": {{...}}, \"items\": [...]}}: {e}"),
-        )
+        IngestError(StatusCode::BAD_REQUEST, format!("expected {{\"sdk\": {{...}}, \"items\": [...]}}: {e}"))
     })?;
     let ctx = build_ctx(&state, &headers, peer, batch.sdk.unwrap_or_default());
     accept(&state, &project, &ctx, batch.items, None).await
 }
 
 /// Evaluate all feature flags for one identity: `{distinct_id, user_id?, properties?, environment?}`.
-async fn flags(
-    State(state): State<AppState>,
-    Query(q): Query<KeyQuery>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Result<Response, IngestError> {
+async fn flags(State(state): State<AppState>, Query(q): Query<KeyQuery>, headers: HeaderMap, body: Bytes) -> Result<Response, IngestError> {
     let project = authenticate(&state, &headers, &q).await?;
-    let req: crate::flags::EvalRequest =
-        serde_json::from_value(parse_body(&body)?).map_err(|e| {
-            IngestError(
-                StatusCode::BAD_REQUEST,
-                format!("invalid flag request: {e}"),
-            )
-        })?;
+    let req: crate::flags::EvalRequest = serde_json::from_value(parse_body(&body)?).map_err(|e| IngestError(StatusCode::BAD_REQUEST, format!("invalid flag request: {e}")))?;
     match crate::flags::evaluate_all(&state, &project, &req).await {
         Ok(v) => Ok(Json(v).into_response()),
-        Err(e) if e.to_string().contains("required") => {
-            Err(IngestError(StatusCode::BAD_REQUEST, e.to_string()))
-        }
+        Err(e) if e.to_string().contains("required") => Err(IngestError(StatusCode::BAD_REQUEST, e.to_string())),
         Err(e) => {
             tracing::error!("flag evaluation failed: {e:#}");
-            Err(IngestError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "flag evaluation failed".into(),
-            ))
+            Err(IngestError(StatusCode::INTERNAL_SERVER_ERROR, "flag evaluation failed".into()))
         }
     }
 }
@@ -261,27 +191,15 @@ fn check_in_error(e: crate::monitors::CheckInError) -> IngestError {
     match e {
         NotFound(m) => IngestError(StatusCode::NOT_FOUND, m),
         Bad(m) => IngestError(StatusCode::BAD_REQUEST, m),
-        RateLimited => IngestError(
-            StatusCode::TOO_MANY_REQUESTS,
-            "at most one check-in per second per monitor and status".into(),
-        ),
+        RateLimited => IngestError(StatusCode::TOO_MANY_REQUESTS, "at most one check-in per second per monitor and status".into()),
         Internal(e) => {
             tracing::error!("monitor check-in failed: {e:#}");
-            IngestError(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "temporarily unavailable, retry later".into(),
-            )
+            IngestError(StatusCode::SERVICE_UNAVAILABLE, "temporarily unavailable, retry later".into())
         }
     }
 }
 
-async fn monitor_check_in(
-    State(state): State<AppState>,
-    Path(slug): Path<String>,
-    Query(q): Query<KeyQuery>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Result<Response, IngestError> {
+async fn monitor_check_in(State(state): State<AppState>, Path(slug): Path<String>, Query(q): Query<KeyQuery>, headers: HeaderMap, body: Bytes) -> Result<Response, IngestError> {
     let project = authenticate(&state, &headers, &q).await?;
     if crate::readonly::requested() {
         return Err(read_only_error());
@@ -289,21 +207,13 @@ async fn monitor_check_in(
     let ci: crate::monitors::CheckIn = if body.is_empty() {
         Default::default()
     } else {
-        serde_json::from_value(parse_body(&body)?)
-            .map_err(|e| IngestError(StatusCode::BAD_REQUEST, format!("invalid check-in: {e}")))?
+        serde_json::from_value(parse_body(&body)?).map_err(|e| IngestError(StatusCode::BAD_REQUEST, format!("invalid check-in: {e}")))?
     };
-    let v = crate::monitors::check_in(&state, &project, &slug, ci)
-        .await
-        .map_err(check_in_error)?;
+    let v = crate::monitors::check_in(&state, &project, &slug, ci).await.map_err(check_in_error)?;
     Ok((StatusCode::ACCEPTED, Json(v)).into_response())
 }
 
-async fn monitor_check_in_short(
-    State(state): State<AppState>,
-    Path((slug, status)): Path<(String, String)>,
-    Query(q): Query<CheckInQuery>,
-    headers: HeaderMap,
-) -> Result<Response, IngestError> {
+async fn monitor_check_in_short(State(state): State<AppState>, Path((slug, status)): Path<(String, String)>, Query(q): Query<CheckInQuery>, headers: HeaderMap) -> Result<Response, IngestError> {
     let project = authenticate(&state, &headers, &KeyQuery { key: q.key.clone() }).await?;
     if crate::readonly::requested() {
         return Err(read_only_error());
@@ -312,12 +222,7 @@ async fn monitor_check_in_short(
         "start" | "in_progress" => "in_progress",
         "ok" | "success" => "ok",
         "error" | "fail" => "error",
-        _ => {
-            return Err(IngestError(
-                StatusCode::NOT_FOUND,
-                "use /ok, /error or /start (or POST /check-ins with a JSON body)".into(),
-            ))
-        }
+        _ => return Err(IngestError(StatusCode::NOT_FOUND, "use /ok, /error or /start (or POST /check-ins with a JSON body)".into())),
     };
     let ci = crate::monitors::CheckIn {
         status: Some(status.into()),
@@ -328,9 +233,7 @@ async fn monitor_check_in_short(
         message: q.message,
         monitor: None,
     };
-    let v = crate::monitors::check_in(&state, &project, &slug, ci)
-        .await
-        .map_err(check_in_error)?;
+    let v = crate::monitors::check_in(&state, &project, &slug, ci).await.map_err(check_in_error)?;
     Ok((StatusCode::ACCEPTED, Json(v)).into_response())
 }
 
@@ -347,12 +250,12 @@ async fn single_kind(
         "sessions" => "session",
         "events" => "event",
         "spans" => "span",
-        other => return Err(IngestError(
-            StatusCode::NOT_FOUND,
-            format!(
-                "unknown ingest endpoint `{other}`: use errors, sessions, events, spans or batch"
-            ),
-        )),
+        other => {
+            return Err(IngestError(
+                StatusCode::NOT_FOUND,
+                format!("unknown ingest endpoint `{other}`: use errors, sessions, events, spans or batch"),
+            ))
+        }
     };
     let project = authenticate(&state, &headers, &q).await?;
     let v = parse_body(&body)?;
@@ -371,10 +274,7 @@ fn sdk_from_headers(headers: &HeaderMap) -> SdkInfo {
         .and_then(|v| v.to_str().ok())
         .map(|s| {
             let (name, version) = s.split_once('/').unwrap_or((s, ""));
-            SdkInfo {
-                name: truncate(name, 64),
-                version: truncate(version, 32),
-            }
+            SdkInfo { name: truncate(name, 64), version: truncate(version, 32) }
         })
         .unwrap_or_default()
 }
@@ -386,10 +286,7 @@ fn feedback_error(r: crate::feedback::Reject) -> IngestError {
         Reject::RateLimited(m) => IngestError(StatusCode::TOO_MANY_REQUESTS, m),
         Reject::Unavailable(m) => {
             tracing::error!("feedback ingest failed: {m}");
-            IngestError(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "temporarily unavailable, retry later".into(),
-            )
+            IngestError(StatusCode::SERVICE_UNAVAILABLE, "temporarily unavailable, retry later".into())
         }
     }
 }
@@ -406,85 +303,39 @@ async fn feedback(
     let headers = req.headers().clone();
     let project = authenticate(&state, &headers, &q).await?;
     let _slot = crate::readonly::Pending::try_acquire(1).ok_or_else(read_only_error)?;
-    let ct = headers
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_lowercase();
+    let ct = headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_lowercase();
     let mut item: Option<crate::feedback::FeedbackItem> = None;
     let mut uploads = Vec::new();
-    let bad_json = |e: serde_json::Error| {
-        IngestError(
-            StatusCode::BAD_REQUEST,
-            format!("invalid feedback JSON: {e}"),
-        )
-    };
+    let bad_json = |e: serde_json::Error| IngestError(StatusCode::BAD_REQUEST, format!("invalid feedback JSON: {e}"));
     if ct.starts_with("multipart/form-data") {
-        let mut mp = axum::extract::Multipart::from_request(req, &state)
-            .await
-            .map_err(|e| {
-                IngestError(StatusCode::BAD_REQUEST, format!("bad multipart body: {e}"))
-            })?;
-        while let Some(mut field) = mp
-            .next_field()
-            .await
-            .map_err(|e| IngestError(StatusCode::BAD_REQUEST, format!("bad multipart body: {e}")))?
-        {
+        let mut mp = axum::extract::Multipart::from_request(req, &state).await.map_err(|e| IngestError(StatusCode::BAD_REQUEST, format!("bad multipart body: {e}")))?;
+        while let Some(mut field) = mp.next_field().await.map_err(|e| IngestError(StatusCode::BAD_REQUEST, format!("bad multipart body: {e}")))? {
             let name = field.name().unwrap_or("").to_string();
             if name == "feedback" && field.file_name().is_none() {
-                let text = field
-                    .text()
-                    .await
-                    .map_err(|e| IngestError(StatusCode::BAD_REQUEST, e.to_string()))?;
+                let text = field.text().await.map_err(|e| IngestError(StatusCode::BAD_REQUEST, e.to_string()))?;
                 item = Some(serde_json::from_str(&text).map_err(bad_json)?);
                 continue;
             }
             if uploads.len() >= crate::feedback::MAX_ATTACHMENTS {
-                return Err(IngestError(
-                    StatusCode::BAD_REQUEST,
-                    format!(
-                        "at most {} attachments per feedback",
-                        crate::feedback::MAX_ATTACHMENTS
-                    ),
-                ));
+                return Err(IngestError(StatusCode::BAD_REQUEST, format!("at most {} attachments per feedback", crate::feedback::MAX_ATTACHMENTS)));
             }
-            let file_name = field
-                .file_name()
-                .map(String::from)
-                .unwrap_or_else(|| name.clone());
+            let file_name = field.file_name().map(String::from).unwrap_or_else(|| name.clone());
             let mut bytes = Vec::new();
-            while let Some(chunk) = field.chunk().await.map_err(|e| {
-                IngestError(StatusCode::BAD_REQUEST, format!("upload interrupted: {e}"))
-            })? {
+            while let Some(chunk) = field.chunk().await.map_err(|e| IngestError(StatusCode::BAD_REQUEST, format!("upload interrupted: {e}")))? {
                 bytes.extend_from_slice(&chunk);
                 if bytes.len() > crate::feedback::MAX_ATTACHMENT_BYTES {
-                    return Err(IngestError(
-                        StatusCode::PAYLOAD_TOO_LARGE,
-                        format!("attachment `{file_name}` is larger than 5 MB"),
-                    ));
+                    return Err(IngestError(StatusCode::PAYLOAD_TOO_LARGE, format!("attachment `{file_name}` is larger than 5 MB")));
                 }
             }
-            uploads.push(crate::feedback::Upload {
-                name: file_name,
-                bytes,
-            });
+            uploads.push(crate::feedback::Upload { name: file_name, bytes });
         }
     } else {
-        let body = Bytes::from_request(req, &state)
-            .await
-            .map_err(|e| IngestError(StatusCode::BAD_REQUEST, e.to_string()))?;
+        let body = Bytes::from_request(req, &state).await.map_err(|e| IngestError(StatusCode::BAD_REQUEST, e.to_string()))?;
         item = Some(serde_json::from_value(parse_body(&body)?).map_err(bad_json)?);
     }
-    let item = item.ok_or_else(|| {
-        IngestError(
-            StatusCode::BAD_REQUEST,
-            "missing `feedback` part (a JSON object with at least `message`)".into(),
-        )
-    })?;
+    let item = item.ok_or_else(|| IngestError(StatusCode::BAD_REQUEST, "missing `feedback` part (a JSON object with at least `message`)".into()))?;
     let ctx = build_ctx(&state, &headers, peer, sdk_from_headers(&headers));
-    let v = crate::feedback::ingest(&state, &project, &ctx, item, uploads)
-        .await
-        .map_err(feedback_error)?;
+    let v = crate::feedback::ingest(&state, &project, &ctx, item, uploads).await.map_err(feedback_error)?;
     Ok((StatusCode::ACCEPTED, Json(v)).into_response())
 }
 
@@ -512,23 +363,12 @@ async fn accept(
     if items.len() > MAX_ITEMS_PER_REQUEST {
         return Err(IngestError(
             StatusCode::PAYLOAD_TOO_LARGE,
-            format!(
-                "too many items ({}), the limit is {MAX_ITEMS_PER_REQUEST} per request",
-                items.len()
-            ),
+            format!("too many items ({}), the limit is {MAX_ITEMS_PER_REQUEST} per request", items.len()),
         ));
     }
     let (accepted, rejected) = accept_items(state, project, ctx, items, forced_type).await?;
-    let status = if accepted == 0 && !rejected.is_empty() {
-        StatusCode::BAD_REQUEST
-    } else {
-        StatusCode::ACCEPTED
-    };
-    Ok((
-        status,
-        Json(json!({"accepted": accepted, "rejected": rejected})),
-    )
-        .into_response())
+    let status = if accepted == 0 && !rejected.is_empty() { StatusCode::BAD_REQUEST } else { StatusCode::ACCEPTED };
+    Ok((status, Json(json!({"accepted": accepted, "rejected": rejected}))).into_response())
 }
 
 async fn accept_items(
@@ -561,10 +401,7 @@ async fn accept_items(
     // Refuse the whole batch up front when the queue is nearly full, so SDKs can retry it
     // without creating duplicates of items that were already enqueued.
     if state.work_tx.capacity() < items.len() {
-        return Err(IngestError(
-            StatusCode::TOO_MANY_REQUESTS,
-            "ingest queue is full, retry with backoff".into(),
-        ));
+        return Err(IngestError(StatusCode::TOO_MANY_REQUESTS, "ingest queue is full, retry with backoff".into()));
     }
     // Error and feedback items write metadata (issues, releases, feedback rows). Reserve a
     // slot for each before accepting anything, so read-only mode refuses the whole batch
@@ -576,34 +413,22 @@ async fn accept_items(
             matches!(t, Some("error" | "feedback"))
         })
         .count() as i64;
-    let mut slots =
-        crate::readonly::Pending::try_acquire(meta_items).ok_or_else(read_only_error)?;
+    let mut slots = crate::readonly::Pending::try_acquire(meta_items).ok_or_else(read_only_error)?;
     let mut accepted = 0usize;
     let mut rejected = Vec::new();
     let salt = current_salt(state).await;
     for (index, mut raw) in items.into_iter().enumerate() {
         if let (Some(t), Value::Object(o)) = (forced_type, &mut raw) {
-            o.entry("type")
-                .or_insert_with(|| Value::String(t.to_string()));
+            o.entry("type").or_insert_with(|| Value::String(t.to_string()));
         }
         if raw.get("type").and_then(|t| t.as_str()) == Some("feedback") {
             match serde_json::from_value::<crate::feedback::FeedbackItem>(raw) {
-                Ok(item) => {
-                    match crate::feedback::ingest(state, project, ctx, item, vec![]).await {
-                        Ok(_) => accepted += 1,
-                        Err(r @ crate::feedback::Reject::Unavailable(_)) => {
-                            return Err(feedback_error(r))
-                        }
-                        Err(r) => rejected.push(Rejected {
-                            index,
-                            error: r.message().to_string(),
-                        }),
-                    }
-                }
-                Err(e) => rejected.push(Rejected {
-                    index,
-                    error: format!("invalid feedback item: {e}"),
-                }),
+                Ok(item) => match crate::feedback::ingest(state, project, ctx, item, vec![]).await {
+                    Ok(_) => accepted += 1,
+                    Err(r @ crate::feedback::Reject::Unavailable(_)) => return Err(feedback_error(r)),
+                    Err(r) => rejected.push(Rejected { index, error: r.message().to_string() }),
+                },
+                Err(e) => rejected.push(Rejected { index, error: format!("invalid feedback item: {e}") }),
             }
             continue;
         }
@@ -620,14 +445,8 @@ async fn accept_items(
         let is_error = matches!(item, Item::Error(_));
         let work = match item {
             Item::Error(e) => {
-                if e.exceptions.is_empty()
-                    && e.exception.is_none()
-                    && e.message.as_deref().unwrap_or("").is_empty()
-                {
-                    rejected.push(Rejected {
-                        index,
-                        error: "error items need `exceptions`, `exception` or `message`".into(),
-                    });
+                if e.exceptions.is_empty() && e.exception.is_none() && e.message.as_deref().unwrap_or("").is_empty() {
+                    rejected.push(Rejected { index, error: "error items need `exceptions`, `exception` or `message`".into() });
                     continue;
                 }
                 Work::Error {
@@ -641,20 +460,14 @@ async fn accept_items(
             }
             Item::Session(s) => {
                 if s.session_id.is_empty() {
-                    rejected.push(Rejected {
-                        index,
-                        error: "session items need a non-empty `session_id`".into(),
-                    });
+                    rejected.push(Rejected { index, error: "session items need a non-empty `session_id`".into() });
                     continue;
                 }
                 Work::Session(session_row(project, &s, &salt, ctx))
             }
             Item::Event(e) => {
                 if e.name.trim().is_empty() {
-                    rejected.push(Rejected {
-                        index,
-                        error: "event items need a non-empty `name`".into(),
-                    });
+                    rejected.push(Rejected { index, error: "event items need a non-empty `name`".into() });
                     continue;
                 }
                 match event_row(project, &e, &salt, ctx) {
@@ -674,19 +487,10 @@ async fn accept_items(
                 }
             },
         };
-        if let Err(tokio::sync::mpsc::error::TrySendError::Full(work)) =
-            state.work_tx.try_send(work)
-        {
+        if let Err(tokio::sync::mpsc::error::TrySendError::Full(work)) = state.work_tx.try_send(work) {
             // Lost a race for the last slots: wait briefly rather than failing half a batch.
-            if tokio::time::timeout(std::time::Duration::from_secs(5), state.work_tx.send(work))
-                .await
-                .map(|r| r.is_err())
-                .unwrap_or(true)
-            {
-                return Err(IngestError(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "ingest queue is full, retry with backoff".into(),
-                ));
+            if tokio::time::timeout(std::time::Duration::from_secs(5), state.work_tx.send(work)).await.map(|r| r.is_err()).unwrap_or(true) {
+                return Err(IngestError(StatusCode::SERVICE_UNAVAILABLE, "ingest queue is full, retry with backoff".into()));
             }
         }
         if is_error {
@@ -704,23 +508,11 @@ async fn accept_items(
 
 fn otlp_reply(signal: crate::otel::Signal, proto: bool, rejected: i64, message: &str) -> Response {
     let (body, ct) = crate::otel::response(signal, proto, rejected, message);
-    (
-        StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, ct)],
-        body,
-    )
-        .into_response()
+    (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, ct)], body).into_response()
 }
 
-fn otlp_decode(
-    signal: crate::otel::Signal,
-    headers: &HeaderMap,
-    body: &Bytes,
-) -> Result<(Value, bool), IngestError> {
-    let ct = headers
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+fn otlp_decode(signal: crate::otel::Signal, headers: &HeaderMap, body: &Bytes) -> Result<(Value, bool), IngestError> {
+    let ct = headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
     crate::otel::decode(signal, ct, body).map_err(|e| {
         if e.starts_with("unsupported content type") {
             IngestError(StatusCode::UNSUPPORTED_MEDIA_TYPE, e)
@@ -731,47 +523,19 @@ fn otlp_decode(
 }
 
 fn otlp_ctx(state: &AppState, headers: &HeaderMap, peer: SocketAddr) -> RequestCtx {
-    let ua = headers
-        .get("user-agent")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("otlp");
-    let (name, version) = ua
-        .split(' ')
-        .next()
-        .unwrap_or("otlp")
-        .split_once('/')
-        .unwrap_or((ua, ""));
-    build_ctx(
-        state,
-        headers,
-        peer,
-        SdkInfo {
-            name: truncate(name, 64),
-            version: truncate(version, 32),
-        },
-    )
+    let ua = headers.get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("otlp");
+    let (name, version) = ua.split(' ').next().unwrap_or("otlp").split_once('/').unwrap_or((ua, ""));
+    build_ctx(state, headers, peer, SdkInfo { name: truncate(name, 64), version: truncate(version, 32) })
 }
 
 /// Enqueue converted items in chunks (OTLP batches can be larger than our per-request limit).
-async fn accept_chunks(
-    state: &AppState,
-    project: &ProjectInfo,
-    ctx: &RequestCtx,
-    items: Vec<Value>,
-) -> Result<(usize, Vec<String>), IngestError> {
+async fn accept_chunks(state: &AppState, project: &ProjectInfo, ctx: &RequestCtx, items: Vec<Value>) -> Result<(usize, Vec<String>), IngestError> {
     let mut accepted = 0;
     let mut errors = Vec::new();
     let mut items = items;
     while !items.is_empty() {
         let rest = items.split_off(items.len().min(MAX_ITEMS_PER_REQUEST));
-        let (a, r) = accept_items(
-            state,
-            project,
-            ctx,
-            std::mem::replace(&mut items, rest),
-            None,
-        )
-        .await?;
+        let (a, r) = accept_items(state, project, ctx, std::mem::replace(&mut items, rest), None).await?;
         accepted += a;
         errors.extend(r.into_iter().map(|r| r.error));
     }
@@ -791,12 +555,7 @@ async fn otlp_traces(
     let items = crate::otel::trace_items(&req);
     let ctx = otlp_ctx(&state, &headers, peer);
     let (_, errors) = accept_chunks(&state, &project, &ctx, items).await?;
-    Ok(otlp_reply(
-        Signal::Traces,
-        proto,
-        errors.len() as i64,
-        errors.first().map(String::as_str).unwrap_or(""),
-    ))
+    Ok(otlp_reply(Signal::Traces, proto, errors.len() as i64, errors.first().map(String::as_str).unwrap_or("")))
 }
 
 async fn otlp_logs(
@@ -812,47 +571,21 @@ async fn otlp_logs(
     let (rows, error_items) = crate::otel::log_rows(&project, &req, now_ms());
     if let Err(e) = state.ch.insert("logs", &rows).await {
         tracing::warn!("insert logs: {e:#}");
-        return Err(IngestError(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "could not store logs, retry later".into(),
-        ));
+        return Err(IngestError(StatusCode::SERVICE_UNAVAILABLE, "could not store logs, retry later".into()));
     }
     let ctx = otlp_ctx(&state, &headers, peer);
     let (_, errors) = accept_chunks(&state, &project, &ctx, error_items).await?;
-    Ok(otlp_reply(
-        Signal::Logs,
-        proto,
-        0,
-        errors.first().map(String::as_str).unwrap_or(""),
-    ))
+    Ok(otlp_reply(Signal::Logs, proto, 0, errors.first().map(String::as_str).unwrap_or("")))
 }
 
 /// Metrics are not stored; accept them so a Collector or SDK with all signals enabled does not retry.
-async fn otlp_metrics(
-    State(state): State<AppState>,
-    Query(q): Query<KeyQuery>,
-    headers: HeaderMap,
-) -> Result<Response, IngestError> {
+async fn otlp_metrics(State(state): State<AppState>, Query(q): Query<KeyQuery>, headers: HeaderMap) -> Result<Response, IngestError> {
     authenticate(&state, &headers, &q).await?;
-    let proto = !headers
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .contains("json");
+    let proto = !headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").contains("json");
     Ok(if proto {
-        (
-            StatusCode::OK,
-            [(axum::http::header::CONTENT_TYPE, "application/x-protobuf")],
-            Vec::<u8>::new(),
-        )
-            .into_response()
+        (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "application/x-protobuf")], Vec::<u8>::new()).into_response()
     } else {
-        (
-            StatusCode::OK,
-            [(axum::http::header::CONTENT_TYPE, "application/json")],
-            "{}",
-        )
-            .into_response()
+        (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "application/json")], "{}").into_response()
     })
 }
 
@@ -868,11 +601,7 @@ pub async fn current_salt(state: &AppState) -> String {
         // Read-only maintenance: use today's salt if it exists, but never create one. The
         // stand-in keeps the old day, so the real salt is loaded once writes are back.
         use crate::db::RowExt;
-        if let Ok(Some(r)) = sqlx::query("SELECT salt FROM daily_salts WHERE day = $1")
-            .bind(&today)
-            .fetch_optional(&state.db)
-            .await
-        {
+        if let Ok(Some(r)) = sqlx::query("SELECT salt FROM daily_salts WHERE day = $1").bind(&today).fetch_optional(&state.db).await {
             let salt = r.s("salt");
             *state.salt.write().await = (today, salt.clone());
             return salt;
@@ -926,22 +655,10 @@ fn parse_ua(ua: &str) -> Ua {
     let parser = woothee::parser::Parser::new();
     match parser.parse(ua) {
         Some(r) => Ua {
-            browser: if r.name == "UNKNOWN" {
-                String::new()
-            } else {
-                r.name.to_string()
-            },
+            browser: if r.name == "UNKNOWN" { String::new() } else { r.name.to_string() },
             browser_version: r.version.split('.').next().unwrap_or("").to_string(),
-            os_name: if r.os == "UNKNOWN" {
-                String::new()
-            } else {
-                r.os.to_string()
-            },
-            os_version: if r.os_version == "UNKNOWN" {
-                String::new()
-            } else {
-                r.os_version.to_string()
-            },
+            os_name: if r.os == "UNKNOWN" { String::new() } else { r.os.to_string() },
+            os_version: if r.os_version == "UNKNOWN" { String::new() } else { r.os_version.to_string() },
             device_type: match r.category {
                 "pc" => "desktop",
                 "smartphone" | "mobilephone" => "mobile",
@@ -964,11 +681,7 @@ fn parse_ua(ua: &str) -> Ua {
 
 fn session_row(project: &ProjectInfo, s: &SessionItem, salt: &str, ctx: &RequestCtx) -> SessionRow {
     let now = now_ms();
-    let ts = s
-        .timestamp
-        .as_ref()
-        .and_then(parse_timestamp)
-        .unwrap_or(now);
+    let ts = s.timestamp.as_ref().and_then(parse_timestamp).unwrap_or(now);
     let started = s.started.as_ref().and_then(parse_timestamp).unwrap_or(ts);
     SessionRow {
         session_id: truncate(&s.session_id, 128),
@@ -981,10 +694,7 @@ fn session_row(project: &ProjectInfo, s: &SessionItem, salt: &str, ctx: &Request
         user_id: s.user_id.clone().unwrap_or_default(),
         release: s.release.clone().unwrap_or_default(),
         environment: s.environment.clone().unwrap_or_else(|| "production".into()),
-        platform: s
-            .platform
-            .clone()
-            .unwrap_or_else(|| project.platform.clone()),
+        platform: s.platform.clone().unwrap_or_else(|| project.platform.clone()),
         status: match s.status.as_deref().unwrap_or("ok") {
             "exited" => "exited",
             "crashed" => "crashed",
@@ -995,53 +705,33 @@ fn session_row(project: &ProjectInfo, s: &SessionItem, salt: &str, ctx: &Request
         .to_string(),
         started: ch_time(started),
         timestamp: ch_time(ts.max(started)),
-        duration_ms: s
-            .duration_ms
-            .unwrap_or_else(|| (ts - started).max(0) as u64),
+        duration_ms: s.duration_ms.unwrap_or_else(|| (ts - started).max(0) as u64),
         error_count: s.errors.unwrap_or(0),
         flags: crate::models::flag_map(&s.flags),
         retention_days: project.retention_days as u16,
     }
 }
 
-fn event_row(
-    project: &ProjectInfo,
-    e: &EventItem,
-    salt: &str,
-    ctx: &RequestCtx,
-) -> Option<EventRow> {
+fn event_row(project: &ProjectInfo, e: &EventItem, salt: &str, ctx: &RequestCtx) -> Option<EventRow> {
     let ua = parse_ua(&ctx.user_agent);
     let is_web = e.url.is_some();
     if ua.bot && is_web {
         return None;
     }
-    let ts = e
-        .timestamp
-        .as_ref()
-        .and_then(parse_timestamp)
-        .unwrap_or_else(now_ms);
+    let ts = e.timestamp.as_ref().and_then(parse_timestamp).unwrap_or_else(now_ms);
     let (hostname, path, query) = match e.url.as_deref().and_then(|u| url::Url::parse(u).ok()) {
         Some(u) => (
             u.host_str().unwrap_or("").to_string(),
             u.path().to_string(),
-            u.query_pairs()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect::<BTreeMap<_, _>>(),
+            u.query_pairs().map(|(k, v)| (k.to_string(), v.to_string())).collect::<BTreeMap<_, _>>(),
         ),
-        None => (
-            String::new(),
-            e.screen.clone().unwrap_or_default(),
-            BTreeMap::new(),
-        ),
+        None => (String::new(), e.screen.clone().unwrap_or_default(), BTreeMap::new()),
     };
     let mut referrer_host = e
         .referrer
         .as_deref()
         .and_then(|r| url::Url::parse(r).ok())
-        .and_then(|u| {
-            u.host_str()
-                .map(|h| h.trim_start_matches("www.").to_string())
-        })
+        .and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").to_string()))
         .unwrap_or_default();
     if !hostname.is_empty() && referrer_host == hostname.trim_start_matches("www.") {
         referrer_host.clear(); // internal navigation, not a referral
@@ -1060,16 +750,10 @@ fn event_row(
         .map(|(k, v)| (truncate(k, 128), truncate(&value_to_string(v), 1024)))
         .collect();
     if let Some(screen) = &e.screen {
-        props
-            .entry("screen".into())
-            .or_insert_with(|| screen.clone());
+        props.entry("screen".into()).or_insert_with(|| screen.clone());
     }
     Some(EventRow {
-        event_id: e
-            .event_id
-            .clone()
-            .filter(|i| uuid::Uuid::parse_str(i).is_ok())
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        event_id: e.event_id.clone().filter(|i| uuid::Uuid::parse_str(i).is_ok()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         project_id: project.id.clone(),
         timestamp: ch_time(ts),
         r#type: ty.into(),
@@ -1085,11 +769,7 @@ fn event_row(
         utm_term: q("utm_term"),
         utm_content: q("utm_content"),
         country: ctx.country.clone(),
-        device_type: if ua.device_type.is_empty() && device.model.is_some() {
-            "mobile".into()
-        } else {
-            ua.device_type
-        },
+        device_type: if ua.device_type.is_empty() && device.model.is_some() { "mobile".into() } else { ua.device_type },
         browser: ua.browser,
         browser_version: ua.browser_version,
         os_name: device.os_name.clone().unwrap_or(ua.os_name),
@@ -1098,10 +778,7 @@ fn event_row(
         app_version: device.app_version.clone().unwrap_or_default(),
         release: e.release.clone().unwrap_or_default(),
         environment: e.environment.clone().unwrap_or_else(|| "production".into()),
-        platform: e
-            .platform
-            .clone()
-            .unwrap_or_else(|| project.platform.clone()),
+        platform: e.platform.clone().unwrap_or_else(|| project.platform.clone()),
         visitor_id: visitor_id(salt, &project.id, ctx, e.anon_id.as_deref()),
         user_id: e.user_id.clone().unwrap_or_default(),
         session_id: e.session_id.clone().unwrap_or_default(),
@@ -1137,56 +814,22 @@ mod client_ip_tests {
     fn forwarding_headers_need_a_trusted_peer() {
         let d = DEFAULT_TRUSTED_PROXIES;
         // A public caller can't choose its own address.
-        assert_eq!(
-            ip(&[("x-forwarded-for", "1.2.3.4")], "203.0.113.9", d).to_string(),
-            "203.0.113.9"
-        );
-        assert_eq!(
-            ip(&[("x-real-ip", "1.2.3.4")], "203.0.113.9", d).to_string(),
-            "203.0.113.9"
-        );
+        assert_eq!(ip(&[("x-forwarded-for", "1.2.3.4")], "203.0.113.9", d).to_string(), "203.0.113.9");
+        assert_eq!(ip(&[("x-real-ip", "1.2.3.4")], "203.0.113.9", d).to_string(), "203.0.113.9");
         // A proxy on the private network is believed; the rightmost untrusted hop wins.
-        assert_eq!(
-            ip(
-                &[("x-forwarded-for", "6.6.6.6, 1.2.3.4, 10.0.0.2")],
-                "10.0.0.1",
-                d
-            )
-            .to_string(),
-            "1.2.3.4"
-        );
-        assert_eq!(
-            ip(&[("x-forwarded-for", "1.2.3.4")], "127.0.0.1", d).to_string(),
-            "1.2.3.4"
-        );
-        assert_eq!(
-            ip(&[("x-real-ip", "1.2.3.4")], "fdaa::1", d).to_string(),
-            "1.2.3.4"
-        );
+        assert_eq!(ip(&[("x-forwarded-for", "6.6.6.6, 1.2.3.4, 10.0.0.2")], "10.0.0.1", d).to_string(), "1.2.3.4");
+        assert_eq!(ip(&[("x-forwarded-for", "1.2.3.4")], "127.0.0.1", d).to_string(), "1.2.3.4");
+        assert_eq!(ip(&[("x-real-ip", "1.2.3.4")], "fdaa::1", d).to_string(), "1.2.3.4");
         // A backend added by address may forward its users' addresses.
-        assert_eq!(
-            ip(
-                &[("x-forwarded-for", "1.2.3.4")],
-                "203.0.113.9",
-                "203.0.113.0/24"
-            )
-            .to_string(),
-            "1.2.3.4"
-        );
+        assert_eq!(ip(&[("x-forwarded-for", "1.2.3.4")], "203.0.113.9", "203.0.113.0/24").to_string(), "1.2.3.4");
         // none trusts nobody, even loopback.
-        assert_eq!(
-            ip(&[("x-forwarded-for", "1.2.3.4")], "127.0.0.1", "none").to_string(),
-            "127.0.0.1"
-        );
+        assert_eq!(ip(&[("x-forwarded-for", "1.2.3.4")], "127.0.0.1", "none").to_string(), "127.0.0.1");
         assert_eq!(ip(&[], "10.0.0.1", d).to_string(), "10.0.0.1");
     }
 
     #[test]
     fn cidr_parsing() {
-        assert_eq!(
-            parse_trusted_proxies("10.0.0.0/8, 2001:db8::/32, 1.2.3.4, bogus, 1.2.3.4/33").len(),
-            3
-        );
+        assert_eq!(parse_trusted_proxies("10.0.0.0/8, 2001:db8::/32, 1.2.3.4, bogus, 1.2.3.4/33").len(), 3);
         let c = crate::config::Cidr::parse("192.168.0.0/16").unwrap();
         assert!(c.contains("192.168.4.5".parse().unwrap()));
         assert!(c.contains("::ffff:192.168.4.5".parse().unwrap()));

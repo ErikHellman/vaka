@@ -27,11 +27,7 @@ pub fn normalize_code(input: &str) -> String {
 
 /// Constant-time comparison of two hex digests.
 fn hashes_equal(a: &str, b: &str) -> bool {
-    a.len() == b.len()
-        && a.bytes()
-            .zip(b.bytes())
-            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-            == 0
+    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Active (not disabled) user id for an email address.
@@ -57,9 +53,7 @@ pub enum RequestOutcome {
 /// Create a fresh code for `email` and send it. Unknown or disabled addresses get `Sent`
 /// without any email, so the response does not reveal which accounts exist.
 pub async fn request_code(state: &AppState, email: &str) -> RequestOutcome {
-    let Some(user_id) = user_id_for(state, email).await else {
-        return RequestOutcome::Sent;
-    };
+    let Some(user_id) = user_id_for(state, email).await else { return RequestOutcome::Sent };
     let now = now_ms();
     let recent = sqlx::query("SELECT created_at FROM login_codes WHERE user_id = $1")
         .bind(&user_id)
@@ -72,10 +66,7 @@ pub async fn request_code(state: &AppState, email: &str) -> RequestOutcome {
         return RequestOutcome::TooSoon;
     }
     let code = generate_code();
-    let _ = sqlx::query("DELETE FROM login_codes WHERE user_id = $1")
-        .bind(&user_id)
-        .execute(&state.db)
-        .await;
+    let _ = sqlx::query("DELETE FROM login_codes WHERE user_id = $1").bind(&user_id).execute(&state.db).await;
     if sqlx::query("INSERT INTO login_codes (user_id, code_hash, created_at, expires_at, attempts) VALUES ($1, $2, $3, $4, 0)")
         .bind(&user_id)
         .bind(code_hash(&user_id, &code))
@@ -91,20 +82,10 @@ pub async fn request_code(state: &AppState, email: &str) -> RequestOutcome {
         "Your Vaka sign-in code is {code}\n\nIt expires in 10 minutes. Log in at {}/ui/login\n\nIf you didn't try to sign in, you can ignore this email.\n",
         state.config.public_url
     );
-    if crate::admin::send_email(
-        state,
-        email.trim(),
-        &format!("Vaka sign-in code: {code}"),
-        &text,
-    )
-    .await
-    {
+    if crate::admin::send_email(state, email.trim(), &format!("Vaka sign-in code: {code}"), &text).await {
         RequestOutcome::Sent
     } else {
-        let _ = sqlx::query("DELETE FROM login_codes WHERE user_id = $1")
-            .bind(&user_id)
-            .execute(&state.db)
-            .await;
+        let _ = sqlx::query("DELETE FROM login_codes WHERE user_id = $1").bind(&user_id).execute(&state.db).await;
         RequestOutcome::SendFailed
     }
 }
@@ -116,26 +97,23 @@ pub async fn verify_code(state: &AppState, email: &str, code: &str) -> Option<St
         return None;
     }
     let user_id = user_id_for(state, email).await?;
-    let row =
-        sqlx::query("SELECT code_hash, expires_at, attempts FROM login_codes WHERE user_id = $1")
-            .bind(&user_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()?;
+    let row = sqlx::query("SELECT code_hash, expires_at, attempts FROM login_codes WHERE user_id = $1")
+        .bind(&user_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()?;
     if row.i("expires_at") < now_ms() || row.i("attempts") >= MAX_ATTEMPTS {
         return None;
     }
     // Count the attempt before comparing so parallel guesses can't exceed the limit.
-    let counted = sqlx::query(
-        "UPDATE login_codes SET attempts = attempts + 1 WHERE user_id = $1 AND attempts < $2",
-    )
-    .bind(&user_id)
-    .bind(MAX_ATTEMPTS)
-    .execute(&state.db)
-    .await
-    .map(|r| r.rows_affected() == 1)
-    .unwrap_or(false);
+    let counted = sqlx::query("UPDATE login_codes SET attempts = attempts + 1 WHERE user_id = $1 AND attempts < $2")
+        .bind(&user_id)
+        .bind(MAX_ATTEMPTS)
+        .execute(&state.db)
+        .await
+        .map(|r| r.rows_affected() == 1)
+        .unwrap_or(false);
     if !counted || !hashes_equal(&row.s("code_hash"), &code_hash(&user_id, &code)) {
         return None;
     }
@@ -171,13 +149,7 @@ mod tests {
     #[test]
     fn hash_is_bound_to_user() {
         assert_ne!(code_hash("a", "123456"), code_hash("b", "123456"));
-        assert!(hashes_equal(
-            &code_hash("a", "123456"),
-            &code_hash("a", "123456")
-        ));
-        assert!(!hashes_equal(
-            &code_hash("a", "123456"),
-            &code_hash("a", "123457")
-        ));
+        assert!(hashes_equal(&code_hash("a", "123456"), &code_hash("a", "123456")));
+        assert!(!hashes_equal(&code_hash("a", "123456"), &code_hash("a", "123457")));
     }
 }

@@ -30,48 +30,24 @@ pub struct SmsConfig {
 
 impl SmsConfig {
     pub fn from_env() -> Self {
-        let var = |k: &str| {
-            std::env::var(k)
-                .ok()
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-        };
-        let provider = var("VAKA_SMS_PROVIDER")
-            .map(|p| p.to_lowercase().replace(['-', '_', ' '], ""))
-            .unwrap_or_else(|| "46elks".into());
+        let var = |k: &str| std::env::var(k).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        let provider = var("VAKA_SMS_PROVIDER").map(|p| p.to_lowercase().replace(['-', '_', ' '], "")).unwrap_or_else(|| "46elks".into());
         let provider = match provider.as_str() {
             "elks" | "46elks" => "46elks".to_string(),
             other => other.to_string(),
         };
         let (user, secret, default_url) = match provider.as_str() {
-            "twilio" => (
-                var("VAKA_TWILIO_ACCOUNT_SID"),
-                var("VAKA_TWILIO_AUTH_TOKEN"),
-                "https://api.twilio.com".to_string(),
-            ),
+            "twilio" => (var("VAKA_TWILIO_ACCOUNT_SID"), var("VAKA_TWILIO_AUTH_TOKEN"), "https://api.twilio.com".to_string()),
             "sinch" => {
                 let region = var("VAKA_SINCH_REGION").unwrap_or_else(|| "us".into());
-                (
-                    var("VAKA_SINCH_SERVICE_PLAN_ID"),
-                    var("VAKA_SINCH_API_TOKEN"),
-                    format!("https://{region}.sms.api.sinch.com"),
-                )
+                (var("VAKA_SINCH_SERVICE_PLAN_ID"), var("VAKA_SINCH_API_TOKEN"), format!("https://{region}.sms.api.sinch.com"))
             }
-            _ => (
-                var("VAKA_46ELKS_USERNAME"),
-                var("VAKA_46ELKS_PASSWORD"),
-                "https://api.46elks.com".to_string(),
-            ),
+            _ => (var("VAKA_46ELKS_USERNAME"), var("VAKA_46ELKS_PASSWORD"), "https://api.46elks.com".to_string()),
         };
         SmsConfig {
             from: var("VAKA_SMS_FROM").unwrap_or_else(|| "Vaka".into()),
-            api_url: var("VAKA_SMS_API_URL")
-                .unwrap_or(default_url)
-                .trim_end_matches('/')
-                .to_string(),
-            max_per_day: var("VAKA_SMS_MAX_PER_DAY")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(100),
+            api_url: var("VAKA_SMS_API_URL").unwrap_or(default_url).trim_end_matches('/').to_string(),
+            max_per_day: var("VAKA_SMS_MAX_PER_DAY").and_then(|v| v.parse().ok()).unwrap_or(100),
             provider,
             user,
             secret,
@@ -84,18 +60,10 @@ impl SmsConfig {
             "46elks" => ("VAKA_46ELKS_USERNAME", "VAKA_46ELKS_PASSWORD"),
             "twilio" => ("VAKA_TWILIO_ACCOUNT_SID", "VAKA_TWILIO_AUTH_TOKEN"),
             "sinch" => ("VAKA_SINCH_SERVICE_PLAN_ID", "VAKA_SINCH_API_TOKEN"),
-            other => {
-                return Some(format!(
-                    "SMS alerts need VAKA_SMS_PROVIDER to be one of {} (got {other})",
-                    PROVIDERS.join(", ")
-                ))
-            }
+            other => return Some(format!("SMS alerts need VAKA_SMS_PROVIDER to be one of {} (got {other})", PROVIDERS.join(", "))),
         };
         if self.user.is_none() || self.secret.is_none() {
-            return Some(format!(
-                "SMS alerts need {u} and {s} (VAKA_SMS_PROVIDER={})",
-                self.provider
-            ));
+            return Some(format!("SMS alerts need {u} and {s} (VAKA_SMS_PROVIDER={})", self.provider));
         }
         None
     }
@@ -106,15 +74,7 @@ pub const NO_RETRY: &str = "[sms: not retried]";
 
 /// Parse and validate a comma-separated list of E.164 numbers (`+46701234567`).
 pub fn parse_numbers(target: &str) -> Result<Vec<String>, String> {
-    let nums: Vec<String> = target
-        .split(',')
-        .map(|s| {
-            s.chars()
-                .filter(|c| !matches!(c, ' ' | '-' | '(' | ')'))
-                .collect::<String>()
-        })
-        .filter(|s| !s.is_empty())
-        .collect();
+    let nums: Vec<String> = target.split(',').map(|s| s.chars().filter(|c| !matches!(c, ' ' | '-' | '(' | ')')).collect::<String>()).filter(|s| !s.is_empty()).collect();
     if nums.is_empty() {
         return Err("sms target must be one or more comma-separated phone numbers in E.164 format, like +46701234567".into());
     }
@@ -123,13 +83,8 @@ pub fn parse_numbers(target: &str) -> Result<Vec<String>, String> {
     }
     for n in &nums {
         let digits = n.strip_prefix('+').unwrap_or("");
-        if !(8..=15).contains(&digits.len())
-            || !digits.bytes().all(|b| b.is_ascii_digit())
-            || digits.starts_with('0')
-        {
-            return Err(format!(
-                "{n} is not an E.164 phone number (use +<country code><number>, like +46701234567)"
-            ));
+        if !(8..=15).contains(&digits.len()) || !digits.bytes().all(|b| b.is_ascii_digit()) || digits.starts_with('0') {
+            return Err(format!("{n} is not an E.164 phone number (use +<country code><number>, like +46701234567)"));
         }
     }
     Ok(nums)
@@ -224,67 +179,29 @@ fn s(v: &Value) -> &str {
 pub fn message(trigger: &str, payload: &Value) -> String {
     let project = s(&payload["project"]["name"]);
     let url = s(&payload["url"]);
-    let tail = if url.is_empty() {
-        String::new()
-    } else {
-        format!(" {url}")
-    };
+    let tail = if url.is_empty() { String::new() } else { format!(" {url}") };
     match trigger {
-        "release_created" => fit(
-            &format!(
-                "Vaka: new release {} in ",
-                s(&payload["release"]["version"])
-            ),
-            project,
-            "",
-        ),
+        "release_created" => fit(&format!("Vaka: new release {} in ", s(&payload["release"]["version"])), project, ""),
         "perf_regression" => fit("Vaka: ", &crate::alerts::perf_text(payload), &tail),
-        "monitor_down" | "monitor_up" | "tls_expiring" => fit(
-            "Vaka: ",
-            &crate::alerts::monitor_text(trigger, payload),
-            &tail,
-        ),
+        "monitor_down" | "monitor_up" | "tls_expiring" => fit("Vaka: ", &crate::alerts::monitor_text(trigger, payload), &tail),
         "new_feedback" => {
             let fb = &payload["feedback"];
-            fit(
-                &format!("Vaka feedback {} [{project}]: ", s(&fb["short_id"])),
-                s(&fb["message"]),
-                &tail,
-            )
+            fit(&format!("Vaka feedback {} [{project}]: ", s(&fb["short_id"])), s(&fb["message"]), &tail)
         }
         "digest" => {
             let projects = payload["projects"].as_array().cloned().unwrap_or_default();
-            let n = |v: &Value| {
-                v.as_i64()
-                    .or_else(|| v.as_f64().map(|f| f as i64))
-                    .or_else(|| v.as_str().and_then(|x| x.parse().ok()))
-                    .unwrap_or(0)
-            };
+            let n = |v: &Value| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)).or_else(|| v.as_str().and_then(|x| x.parse().ok())).unwrap_or(0);
             let errors: i64 = projects.iter().map(|p| n(&p["errors"])).sum();
             let new_issues: i64 = projects.iter().map(|p| n(&p["new_issue_count"])).sum();
-            let anomalies: usize = projects
-                .iter()
-                .map(|p| p["anomalies"].as_array().map(|a| a.len()).unwrap_or(0))
-                .sum();
+            let anomalies: usize = projects.iter().map(|p| p["anomalies"].as_array().map(|a| a.len()).unwrap_or(0)).sum();
             let title = payload["title"].as_str().unwrap_or("Vaka daily digest");
             let body = if projects.is_empty() {
                 format!("no activity in {}.", s(&payload["period"]["label"]))
             } else {
-                let worst = projects
-                    .iter()
-                    .max_by_key(|p| n(&p["errors"]))
-                    .map(|p| s(&p["project"]["name"]).to_string())
-                    .unwrap_or_default();
-                let mut b = format!(
-                    "{errors} errors, {new_issues} new issues in {} project{}",
-                    projects.len(),
-                    if projects.len() == 1 { "" } else { "s" }
-                );
+                let worst = projects.iter().max_by_key(|p| n(&p["errors"])).map(|p| s(&p["project"]["name"]).to_string()).unwrap_or_default();
+                let mut b = format!("{errors} errors, {new_issues} new issues in {} project{}", projects.len(), if projects.len() == 1 { "" } else { "s" });
                 if anomalies > 0 {
-                    b.push_str(&format!(
-                        ", {anomalies} anomal{}",
-                        if anomalies == 1 { "y" } else { "ies" }
-                    ));
+                    b.push_str(&format!(", {anomalies} anomal{}", if anomalies == 1 { "y" } else { "ies" }));
                 }
                 if errors > 0 && projects.len() > 1 {
                     b.push_str(&format!("; most in {worst}"));
@@ -307,20 +224,9 @@ pub fn message(trigger: &str, payload: &Value) -> String {
                 _ => "Alert",
             };
             let short = s(&issue["short_id"]);
-            let id = if short.is_empty() {
-                String::new()
-            } else {
-                format!("{short} ")
-            };
-            let extra = payload["details"]["last_hour"]
-                .as_i64()
-                .map(|h| format!(" ({h}/h)"))
-                .unwrap_or_default();
-            fit(
-                &format!("Vaka {what} [{project}]{extra}: {id}"),
-                s(&issue["title"]),
-                &tail,
-            )
+            let id = if short.is_empty() { String::new() } else { format!("{short} ") };
+            let extra = payload["details"]["last_hour"].as_i64().map(|h| format!(" ({h}/h)")).unwrap_or_default();
+            fit(&format!("Vaka {what} [{project}]{extra}: {id}"), s(&issue["title"]), &tail)
         }
     }
 }
@@ -342,22 +248,14 @@ async fn sent_last_day(state: &AppState) -> anyhow::Result<i64> {
 }
 
 /// Send an alert as SMS to every number in `target`.
-pub async fn send(
-    state: &AppState,
-    target: &str,
-    trigger: &str,
-    payload: &Value,
-) -> anyhow::Result<String> {
+pub async fn send(state: &AppState, target: &str, trigger: &str, payload: &Value) -> anyhow::Result<String> {
     let cfg = &state.config.sms;
     if let Some(why) = cfg.missing() {
         anyhow::bail!("{why} {NO_RETRY}");
     }
     let numbers = parse_numbers(target).map_err(|e| anyhow::anyhow!("{e} {NO_RETRY}"))?;
     if cfg.max_per_day > 0 && sent_last_day(state).await? >= cfg.max_per_day {
-        anyhow::bail!(
-            "daily SMS cap reached (VAKA_SMS_MAX_PER_DAY={}) {NO_RETRY}",
-            cfg.max_per_day
-        );
+        anyhow::bail!("daily SMS cap reached (VAKA_SMS_MAX_PER_DAY={}) {NO_RETRY}", cfg.max_per_day);
     }
     let text = message(trigger, payload);
     let mut ids = Vec::new();
@@ -365,21 +263,11 @@ pub async fn send(
         "sinch" => ids.push(sinch(state, cfg, &numbers, &text).await?),
         _ => {
             for to in &numbers {
-                ids.push(if cfg.provider == "twilio" {
-                    twilio(state, cfg, to, &text).await?
-                } else {
-                    elks(state, cfg, to, &text).await?
-                });
+                ids.push(if cfg.provider == "twilio" { twilio(state, cfg, to, &text).await? } else { elks(state, cfg, to, &text).await? });
             }
         }
     }
-    Ok(format!(
-        "{} SMS to {} number{} ({})",
-        cfg.provider,
-        numbers.len(),
-        if numbers.len() == 1 { "" } else { "s" },
-        ids.join(", ")
-    ))
+    Ok(format!("{} SMS to {} number{} ({})", cfg.provider, numbers.len(), if numbers.len() == 1 { "" } else { "s" }, ids.join(", ")))
 }
 
 async fn check(provider: &str, resp: reqwest::Response, id_key: &str) -> anyhow::Result<String> {
@@ -388,15 +276,7 @@ async fn check(provider: &str, resp: reqwest::Response, id_key: &str) -> anyhow:
     if !status.is_success() {
         // 4xx other than 429 means a bad number, sender or credentials: retrying will not help.
         let no_retry = status.is_client_error() && status.as_u16() != 429;
-        anyhow::bail!(
-            "{provider} returned {status}: {}{}",
-            crate::util::truncate(&body, 200),
-            if no_retry {
-                format!(" {NO_RETRY}")
-            } else {
-                String::new()
-            }
-        );
+        anyhow::bail!("{provider} returned {status}: {}{}", crate::util::truncate(&body, 200), if no_retry { format!(" {NO_RETRY}") } else { String::new() });
     }
     let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
     Ok(v[id_key].as_str().unwrap_or("sent").to_string())
@@ -420,10 +300,7 @@ async fn twilio(state: &AppState, cfg: &SmsConfig, to: &str, text: &str) -> anyh
     let sid = cfg.user.as_deref().unwrap_or("");
     let resp = state
         .http
-        .post(format!(
-            "{}/2010-04-01/Accounts/{sid}/Messages.json",
-            cfg.api_url
-        ))
+        .post(format!("{}/2010-04-01/Accounts/{sid}/Messages.json", cfg.api_url))
         .basic_auth(sid, cfg.secret.as_deref())
         .form(&[("From", cfg.from.as_str()), ("To", to), ("Body", text)])
         .timeout(Duration::from_secs(15))
@@ -433,12 +310,7 @@ async fn twilio(state: &AppState, cfg: &SmsConfig, to: &str, text: &str) -> anyh
 }
 
 /// Sinch: `POST /xms/v1/{service_plan_id}/batches` with a Bearer token; one batch for all numbers.
-async fn sinch(
-    state: &AppState,
-    cfg: &SmsConfig,
-    to: &[String],
-    text: &str,
-) -> anyhow::Result<String> {
+async fn sinch(state: &AppState, cfg: &SmsConfig, to: &[String], text: &str) -> anyhow::Result<String> {
     let plan = cfg.user.as_deref().unwrap_or("");
     let resp = state
         .http
@@ -458,10 +330,7 @@ mod tests {
 
     #[test]
     fn numbers() {
-        assert_eq!(
-            parse_numbers("+46 70-123 45 67, +14155550100").unwrap(),
-            vec!["+46701234567", "+14155550100"]
-        );
+        assert_eq!(parse_numbers("+46 70-123 45 67, +14155550100").unwrap(), vec!["+46701234567", "+14155550100"]);
         assert!(parse_numbers("0701234567").is_err());
         assert!(parse_numbers("").is_err());
         assert!(parse_numbers("+46abc12345").is_err());
@@ -470,36 +339,18 @@ mod tests {
     #[test]
     fn single_segment() {
         let long = "TypeError: Cannot read properties of undefined (reading 'map') at renderList in components/List.tsx while rendering the checkout page for a logged in user";
-        let m = message(
-            "new_issue",
-            &json!({"project": {"name": "Web"}, "url": "https://vaka.example.com/ui/projects/web/issues/abc123", "issue": {"short_id": "WEB-3", "title": long}}),
-        );
-        assert!(
-            m.starts_with("Vaka New issue [Web]: WEB-3 TypeError"),
-            "{m}"
-        );
-        assert!(
-            m.ends_with("... https://vaka.example.com/ui/projects/web/issues/abc123"),
-            "{m}"
-        );
+        let m = message("new_issue", &json!({"project": {"name": "Web"}, "url": "https://vaka.example.com/ui/projects/web/issues/abc123", "issue": {"short_id": "WEB-3", "title": long}}));
+        assert!(m.starts_with("Vaka New issue [Web]: WEB-3 TypeError"), "{m}");
+        assert!(m.ends_with("... https://vaka.example.com/ui/projects/web/issues/abc123"), "{m}");
         assert_eq!(seg_len(&m).1, 160);
         assert!(seg_len(&m).0 <= 160, "{}", seg_len(&m).0);
 
         // Smart quotes and ellipses are mapped so the message stays GSM-7.
-        let m = message(
-            "test",
-            &json!({"project": {"name": "Vaka test"}, "url": "https://v", "issue": {"title": "it’s “quoted” …"}}),
-        );
-        assert_eq!(
-            m,
-            "Vaka Test alert [Vaka test]: it's \"quoted\" ... https://v"
-        );
+        let m = message("test", &json!({"project": {"name": "Vaka test"}, "url": "https://v", "issue": {"title": "it’s “quoted” …"}}));
+        assert_eq!(m, "Vaka Test alert [Vaka test]: it's \"quoted\" ... https://v");
 
         // Emoji forces UCS-2: 70 characters.
-        let m = message(
-            "new_feedback",
-            &json!({"project": {"name": "App"}, "url": "https://v/f", "feedback": {"short_id": "APP-F1", "message": "🙂 ".repeat(60)}}),
-        );
+        let m = message("new_feedback", &json!({"project": {"name": "App"}, "url": "https://v/f", "feedback": {"short_id": "APP-F1", "message": "🙂 ".repeat(60)}}));
         assert!(seg_len(&m).1 == 70 && seg_len(&m).0 <= 70, "{m}");
         assert!(m.ends_with(" https://v/f"), "{m}");
     }
@@ -510,14 +361,8 @@ mod tests {
             {"project": {"name": "Web"}, "errors": 12, "new_issue_count": 2, "anomalies": [{}]},
             {"project": {"name": "API"}, "errors": "30", "new_issue_count": 1, "anomalies": []}
         ]});
-        assert_eq!(
-            message("digest", &p),
-            "Vaka daily digest: 42 errors, 3 new issues in 2 projects, 1 anomaly; most in API"
-        );
+        assert_eq!(message("digest", &p), "Vaka daily digest: 42 errors, 3 new issues in 2 projects, 1 anomaly; most in API");
         let quiet = json!({"title": "Vaka weekly digest", "projects": [], "period": {"label": "the last 7 days"}});
-        assert_eq!(
-            message("digest", &quiet),
-            "Vaka weekly digest: no activity in the last 7 days."
-        );
+        assert_eq!(message("digest", &quiet), "Vaka weekly digest: no activity in the last 7 days.");
     }
 }

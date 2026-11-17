@@ -21,12 +21,7 @@ const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 pub fn router() -> Router<AppState> {
     Router::new().route(
         "/mcp",
-        post(handle).get(|| async {
-            (
-                StatusCode::METHOD_NOT_ALLOWED,
-                "Vaka's MCP endpoint is stateless: POST JSON-RPC messages here.",
-            )
-        }),
+        post(handle).get(|| async { (StatusCode::METHOD_NOT_ALLOWED, "Vaka's MCP endpoint is stateless: POST JSON-RPC messages here.") }),
     )
 }
 
@@ -82,21 +77,14 @@ fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
 
-async fn handle(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
-) -> Response {
+async fn handle(State(state): State<AppState>, headers: HeaderMap, Json(body): Json<Value>) -> Response {
     let token = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|s| s.trim().to_string());
     let principal = match token {
-        Some(t) => crate::auth::principal_from_token(&state, &t)
-            .await
-            .ok()
-            .flatten(),
+        Some(t) => crate::auth::principal_from_token(&state, &t).await.ok().flatten(),
         None => None,
     };
     let Some(principal) = principal else {
@@ -124,11 +112,7 @@ async fn handle(
                     out.push(r);
                 }
             }
-            if out.is_empty() {
-                StatusCode::ACCEPTED.into_response()
-            } else {
-                Json(Value::Array(out)).into_response()
-            }
+            if out.is_empty() { StatusCode::ACCEPTED.into_response() } else { Json(Value::Array(out)).into_response() }
         }
         m => match dispatch(&state, &principal, m).await {
             Some(r) => Json(r).into_response(),
@@ -145,15 +129,8 @@ async fn dispatch(state: &AppState, p: &Principal, msg: Value) -> Option<Value> 
     let id = id?;
     Some(match method {
         "initialize" => {
-            let requested = params
-                .get("protocolVersion")
-                .and_then(|v| v.as_str())
-                .unwrap_or(PROTOCOL_VERSIONS[0]);
-            let version = if PROTOCOL_VERSIONS.contains(&requested) {
-                requested
-            } else {
-                PROTOCOL_VERSIONS[0]
-            };
+            let requested = params.get("protocolVersion").and_then(|v| v.as_str()).unwrap_or(PROTOCOL_VERSIONS[0]);
+            let version = if PROTOCOL_VERSIONS.contains(&requested) { requested } else { PROTOCOL_VERSIONS[0] };
             rpc_result(
                 &id,
                 json!({
@@ -167,17 +144,9 @@ async fn dispatch(state: &AppState, p: &Principal, msg: Value) -> Option<Value> 
         "ping" => rpc_result(&id, json!({})),
         "tools/list" => rpc_result(&id, json!({"tools": tools()})),
         "tools/call" => {
-            let name = params
-                .get("name")
-                .and_then(|n| n.as_str())
-                .unwrap_or("")
-                .to_string();
+            let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            let screenshots = name == "get_feedback"
-                && args
-                    .get("include_screenshots")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
+            let screenshots = name == "get_feedback" && args.get("include_screenshots").and_then(|v| v.as_bool()).unwrap_or(true);
             match call_tool(state, p, &name, args).await {
                 Ok(v) => {
                     let body = serde_json::to_string_pretty(&v).unwrap_or_default();
@@ -190,18 +159,10 @@ async fn dispatch(state: &AppState, p: &Principal, msg: Value) -> Option<Value> 
                     if screenshots {
                         content.extend(feedback_images(state, p, &v).await);
                     }
-                    rpc_result(
-                        &id,
-                        json!({"content": content, "structuredContent": v, "isError": false}),
-                    )
+                    rpc_result(&id, json!({"content": content, "structuredContent": v, "isError": false}))
                 }
-                Err(ToolError::Unknown) => {
-                    rpc_error(&id, -32602, &format!("unknown tool `{name}`"))
-                }
-                Err(ToolError::Failed(msg)) => rpc_result(
-                    &id,
-                    json!({"content": [{"type": "text", "text": msg}], "isError": true}),
-                ),
+                Err(ToolError::Unknown) => rpc_error(&id, -32602, &format!("unknown tool `{name}`")),
+                Err(ToolError::Failed(msg)) => rpc_result(&id, json!({"content": [{"type": "text", "text": msg}], "isError": true})),
             }
         }
         "resources/list" => rpc_result(&id, json!({"resources": []})),
@@ -215,10 +176,7 @@ async fn dispatch(state: &AppState, p: &Principal, msg: Value) -> Option<Value> 
         "resources/read" => {
             let uri = params.get("uri").and_then(|u| u.as_str()).unwrap_or("");
             match read_resource(state, p, uri).await {
-                Ok(v) => rpc_result(
-                    &id,
-                    json!({"contents": [{"uri": uri, "mimeType": "application/json", "text": serde_json::to_string_pretty(&v).unwrap_or_default()}]}),
-                ),
+                Ok(v) => rpc_result(&id, json!({"contents": [{"uri": uri, "mimeType": "application/json", "text": serde_json::to_string_pretty(&v).unwrap_or_default()}]})),
                 Err(e) => rpc_error(&id, -32002, &e),
             }
         }
@@ -242,15 +200,11 @@ async fn feedback_images(state: &AppState, p: &Principal, fb: &Value) -> Vec<Val
 }
 
 async fn read_resource(state: &AppState, p: &Principal, uri: &str) -> Result<Value, String> {
-    let rest = uri
-        .strip_prefix("vaka://")
-        .ok_or("unsupported URI scheme")?;
+    let rest = uri.strip_prefix("vaka://").ok_or("unsupported URI scheme")?;
     let parts: Vec<&str> = rest.split('/').collect();
     let r = match parts.as_slice() {
         ["issues", id] => query::get_issue(state, p, id).await,
-        ["projects", proj, "releases", rel] => {
-            query::release_health(state, p, proj, Some(rel), Some("90d")).await
-        }
+        ["projects", proj, "releases", rel] => query::release_health(state, p, proj, Some(rel), Some("90d")).await,
         _ => return Err(format!("unknown resource {uri}")),
     };
     r.map_err(|e| e.1)
@@ -280,17 +234,11 @@ fn req(args: &Value, k: &str) -> Result<String, ToolError> {
 }
 
 fn i(args: &Value, k: &str) -> Option<i64> {
-    args.get(k).and_then(|v| {
-        v.as_i64()
-            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-    })
+    args.get(k).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
 }
 
 fn f(args: &Value, k: &str) -> Option<f64> {
-    args.get(k).and_then(|v| {
-        v.as_f64()
-            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-    })
+    args.get(k).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
 }
 
 fn perf_args(a: &Value) -> Result<crate::perf::PerfParams, ToolError> {
@@ -308,38 +256,22 @@ fn perf_args(a: &Value) -> Result<crate::perf::PerfParams, ToolError> {
 }
 
 fn flag_in(a: &Value) -> Result<crate::flags::FlagIn, ToolError> {
-    let mut f: crate::flags::FlagIn = serde_json::from_value(a.clone())
-        .map_err(|e| ToolError::Failed(format!("invalid flag: {e}")))?;
+    let mut f: crate::flags::FlagIn = serde_json::from_value(a.clone()).map_err(|e| ToolError::Failed(format!("invalid flag: {e}")))?;
     f.key = s(a, "key");
     Ok(f)
 }
 
 fn engagement_args(a: &Value) -> Result<crate::cohorts::EngagementParams, ToolError> {
-    Ok(crate::cohorts::EngagementParams {
-        base: analytics_args(a)?,
-        event: s(a, "event"),
-        identity: s(a, "identity"),
-        period: s(a, "period"),
-    })
+    Ok(crate::cohorts::EngagementParams { base: analytics_args(a)?, event: s(a, "event"), identity: s(a, "identity"), period: s(a, "period") })
 }
 
 fn analytics_args(args: &Value) -> Result<AnalyticsParams, ToolError> {
     let filters = args
         .get("filters")
         .and_then(|f| f.as_object())
-        .map(|o| {
-            o.iter()
-                .map(|(k, v)| (k.clone(), crate::models::value_to_string(v)))
-                .collect()
-        })
+        .map(|o| o.iter().map(|(k, v)| (k.clone(), crate::models::value_to_string(v))).collect())
         .unwrap_or_default();
-    Ok(AnalyticsParams {
-        project: req(args, "project")?,
-        since: s(args, "since"),
-        until: s(args, "until"),
-        filters,
-        r#type: s(args, "type"),
-    })
+    Ok(AnalyticsParams { project: req(args, "project")?, since: s(args, "since"), until: s(args, "until"), filters, r#type: s(args, "type") })
 }
 
 /// A funnel/retention step: `"signup"`, `"pageview|path:/pricing"`, or `{"event": ..., "filters": {...}}`.
@@ -347,28 +279,18 @@ fn step_value(v: &Value) -> Result<crate::product::Step, ToolError> {
     match v {
         Value::String(s) => Ok(crate::product::Step::parse(s)?),
         Value::Object(o) => {
-            let event = o
-                .get("event")
-                .and_then(|e| e.as_str())
-                .unwrap_or("")
-                .to_string();
+            let event = o.get("event").and_then(|e| e.as_str()).unwrap_or("").to_string();
             if event.is_empty() {
                 return Err(ToolError::Failed("each step needs an `event`".into()));
             }
             let filters = o
                 .get("filters")
                 .and_then(|f| f.as_object())
-                .map(|f| {
-                    f.iter()
-                        .map(|(k, v)| (k.clone(), crate::models::value_to_string(v)))
-                        .collect()
-                })
+                .map(|f| f.iter().map(|(k, v)| (k.clone(), crate::models::value_to_string(v))).collect())
                 .unwrap_or_default();
             Ok(crate::product::Step { event, filters })
         }
-        _ => Err(ToolError::Failed(
-            "a step is a string like \"signup\" or an object {\"event\", \"filters\"}".into(),
-        )),
+        _ => Err(ToolError::Failed("a step is a string like \"signup\" or an object {\"event\", \"filters\"}".into())),
     }
 }
 
@@ -380,47 +302,18 @@ fn opt_step_arg(a: &Value, k: &str) -> Result<Option<crate::product::Step>, Tool
     }
 }
 
-async fn call_tool(
-    state: &AppState,
-    p: &Principal,
-    name: &str,
-    a: Value,
-) -> Result<Value, ToolError> {
+async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Result<Value, ToolError> {
     Ok(match name {
         "list_projects" => query::list_projects(state, p).await?,
         "create_project" => {
-            crate::api::create_project_inner(
-                state,
-                p,
-                crate::api::CreateProject {
-                    name: req(&a, "name")?,
-                    platform: req(&a, "platform")?,
-                    slug: s(&a, "slug"),
-                },
-            )
-            .await?
+            crate::api::create_project_inner(state, p, crate::api::CreateProject { name: req(&a, "name")?, platform: req(&a, "platform")?, slug: s(&a, "slug") }).await?
         }
         "get_install_instructions" => {
             let proj = query::project_for(state, p, &req(&a, "project")?).await?;
             let platform = s(&a, "platform").unwrap_or_else(|| proj.platform.clone());
-            let key = crate::projects::ingest_keys(state, &proj.id)
-                .await
-                .map_err(ApiError::from)?
-                .into_iter()
-                .next()
-                .unwrap_or_default();
-            let md = crate::docs::install_markdown(
-                &platform,
-                &state.config.public_url,
-                &key,
-                &proj.slug,
-            )
-            .ok_or_else(|| {
-                ToolError::Failed(format!(
-                    "no instructions for `{platform}`; available: {}",
-                    crate::docs::INSTALL_PLATFORMS.join(", ")
-                ))
-            })?;
+            let key = crate::projects::ingest_keys(state, &proj.id).await.map_err(ApiError::from)?.into_iter().next().unwrap_or_default();
+            let md = crate::docs::install_markdown(&platform, &state.config.public_url, &key, &proj.slug)
+                .ok_or_else(|| ToolError::Failed(format!("no instructions for `{platform}`; available: {}", crate::docs::INSTALL_PLATFORMS.join(", "))))?;
             json!({"project": proj.slug, "platform": platform, "endpoint": state.config.public_url, "ingest_key": key, "instructions_markdown": md})
         }
         "list_issues" => {
@@ -441,12 +334,8 @@ async fn call_tool(
             .await?
         }
         "get_issue" => query::get_issue(state, p, &req(&a, "issue")?).await?,
-        "list_issue_events" => {
-            query::list_issue_events(state, p, &req(&a, "issue")?, i(&a, "limit")).await?
-        }
-        "get_event" => {
-            query::get_event(state, p, &req(&a, "project")?, &req(&a, "event_id")?).await?
-        }
+        "list_issue_events" => query::list_issue_events(state, p, &req(&a, "issue")?, i(&a, "limit")).await?,
+        "get_event" => query::get_event(state, p, &req(&a, "project")?, &req(&a, "event_id")?).await?,
         "search_events" => {
             query::search_events(
                 state,
@@ -466,36 +355,10 @@ async fn call_tool(
             )
             .await?
         }
-        "release_health" => {
-            query::release_health(
-                state,
-                p,
-                &req(&a, "project")?,
-                s(&a, "release").as_deref(),
-                s(&a, "since").as_deref(),
-            )
-            .await?
-        }
-        "compare_releases" => {
-            query::compare_releases(
-                state,
-                p,
-                &req(&a, "project")?,
-                &req(&a, "base")?,
-                &req(&a, "target")?,
-            )
-            .await?
-        }
+        "release_health" => query::release_health(state, p, &req(&a, "project")?, s(&a, "release").as_deref(), s(&a, "since").as_deref()).await?,
+        "compare_releases" => query::compare_releases(state, p, &req(&a, "project")?, &req(&a, "base")?, &req(&a, "target")?).await?,
         "analytics_summary" => query::analytics_summary(state, p, analytics_args(&a)?).await?,
-        "analytics_timeseries" => {
-            query::analytics_timeseries(
-                state,
-                p,
-                analytics_args(&a)?,
-                crate::timeseries::SeriesOpts::from_json(&a),
-            )
-            .await?
-        }
+        "analytics_timeseries" => query::analytics_timeseries(state, p, analytics_args(&a)?, crate::timeseries::SeriesOpts::from_json(&a)).await?,
         "errors_timeseries" => {
             let args = crate::timeseries::ErrorSeriesParams {
                 project: req(&a, "project")?,
@@ -506,79 +369,29 @@ async fn call_tool(
                 environment: s(&a, "environment"),
                 issue: s(&a, "issue"),
                 exception_type: s(&a, "exception_type"),
-                handled: a
-                    .get("handled")
-                    .and_then(|v| v.as_bool())
-                    .map(|b| b.to_string()),
+                handled: a.get("handled").and_then(|v| v.as_bool()).map(|b| b.to_string()),
             };
-            crate::timeseries::errors_timeseries(
-                state,
-                p,
-                args,
-                crate::timeseries::SeriesOpts::from_json(&a),
-            )
-            .await?
+            crate::timeseries::errors_timeseries(state, p, args, crate::timeseries::SeriesOpts::from_json(&a)).await?
         }
-        "performance_timeseries" => {
-            crate::timeseries::performance_timeseries(
-                state,
-                p,
-                perf_args(&a)?,
-                crate::timeseries::SeriesOpts::from_json(&a),
-            )
-            .await?
-        }
+        "performance_timeseries" => crate::timeseries::performance_timeseries(state, p, perf_args(&a)?, crate::timeseries::SeriesOpts::from_json(&a)).await?,
         "sessions_timeseries" => {
-            let args = crate::timeseries::SessionSeriesParams {
-                project: req(&a, "project")?,
-                since: s(&a, "since"),
-                until: s(&a, "until"),
-                release: s(&a, "release"),
-                environment: s(&a, "environment"),
-            };
-            crate::timeseries::sessions_timeseries(
-                state,
-                p,
-                args,
-                crate::timeseries::SeriesOpts::from_json(&a),
-            )
-            .await?
+            let args = crate::timeseries::SessionSeriesParams { project: req(&a, "project")?, since: s(&a, "since"), until: s(&a, "until"), release: s(&a, "release"), environment: s(&a, "environment") };
+            crate::timeseries::sessions_timeseries(state, p, args, crate::timeseries::SeriesOpts::from_json(&a)).await?
         }
-        "analytics_breakdown" => {
-            query::analytics_breakdown(
-                state,
-                p,
-                analytics_args(&a)?,
-                &req(&a, "dimension")?,
-                i(&a, "limit"),
-            )
-            .await?
-        }
-        "top_pages" => {
-            query::analytics_breakdown(state, p, analytics_args(&a)?, "path", i(&a, "limit"))
-                .await?
-        }
+        "analytics_breakdown" => query::analytics_breakdown(state, p, analytics_args(&a)?, &req(&a, "dimension")?, i(&a, "limit")).await?,
+        "top_pages" => query::analytics_breakdown(state, p, analytics_args(&a)?, "path", i(&a, "limit")).await?,
         "analytics_funnel" => {
             let steps = a
                 .get("steps")
                 .and_then(|v| v.as_array())
-                .ok_or_else(|| {
-                    ToolError::Failed("`steps` must be an array of 2 to 10 steps".into())
-                })?
+                .ok_or_else(|| ToolError::Failed("`steps` must be an array of 2 to 10 steps".into()))?
                 .iter()
                 .map(step_value)
                 .collect::<Result<Vec<_>, _>>()?;
             crate::product::funnel(
                 state,
                 p,
-                crate::product::FunnelParams {
-                    base: analytics_args(&a)?,
-                    steps,
-                    window: s(&a, "window"),
-                    identity: s(&a, "identity"),
-                    breakdown: s(&a, "breakdown"),
-                    limit: i(&a, "limit"),
-                },
+                crate::product::FunnelParams { base: analytics_args(&a)?, steps, window: s(&a, "window"), identity: s(&a, "identity"), breakdown: s(&a, "breakdown"), limit: i(&a, "limit") },
             )
             .await?
         }
@@ -601,35 +414,15 @@ async fn call_tool(
             crate::product::paths(
                 state,
                 p,
-                crate::product::PathParams {
-                    base: analytics_args(&a)?,
-                    from: s(&a, "from"),
-                    direction: s(&a, "direction"),
-                    depth: i(&a, "depth"),
-                    identity: s(&a, "identity"),
-                    limit: i(&a, "limit"),
-                },
+                crate::product::PathParams { base: analytics_args(&a)?, from: s(&a, "from"), direction: s(&a, "direction"), depth: i(&a, "depth"), identity: s(&a, "identity"), limit: i(&a, "limit") },
             )
             .await?
         }
-        "list_event_names" => {
-            crate::product::event_catalog(state, p, analytics_args(&a)?, i(&a, "limit")).await?
-        }
+        "list_event_names" => crate::product::event_catalog(state, p, analytics_args(&a)?, i(&a, "limit")).await?,
         "release_adoption" => {
-            crate::insights::release_adoption(
-                state,
-                p,
-                &req(&a, "project")?,
-                s(&a, "since").as_deref(),
-                s(&a, "interval").as_deref(),
-                s(&a, "environment").as_deref(),
-                i(&a, "limit"),
-            )
-            .await?
+            crate::insights::release_adoption(state, p, &req(&a, "project")?, s(&a, "since").as_deref(), s(&a, "interval").as_deref(), s(&a, "environment").as_deref(), i(&a, "limit")).await?
         }
-        "realtime_visitors" => {
-            crate::insights::realtime(state, p, &req(&a, "project")?, i(&a, "minutes")).await?
-        }
+        "realtime_visitors" => crate::insights::realtime(state, p, &req(&a, "project")?, i(&a, "minutes")).await?,
         "analytics_revenue" => {
             crate::product::revenue(
                 state,
@@ -647,57 +440,23 @@ async fn call_tool(
         }
         "list_goals" => crate::product::list_goals(state, p, analytics_args(&a)?).await?,
         "create_goal" => {
-            crate::product::create_goal(
-                state,
-                p,
-                &req(&a, "project")?,
-                crate::product::GoalIn {
-                    name: req(&a, "name")?,
-                    step: req(&a, "step")?,
-                    value_prop: s(&a, "value_prop"),
-                },
-            )
-            .await?
+            crate::product::create_goal(state, p, &req(&a, "project")?, crate::product::GoalIn { name: req(&a, "name")?, step: req(&a, "step")?, value_prop: s(&a, "value_prop") }).await?
         }
         "list_flags" => crate::flags::list_flags(state, p, &req(&a, "project")?).await?,
-        "get_flag" => {
-            crate::flags::get_flag(state, p, &req(&a, "project")?, &req(&a, "key")?).await?
-        }
-        "create_flag" => {
-            crate::flags::create_flag(state, p, &req(&a, "project")?, flag_in(&a)?).await?
-        }
+        "get_flag" => crate::flags::get_flag(state, p, &req(&a, "project")?, &req(&a, "key")?).await?,
+        "create_flag" => crate::flags::create_flag(state, p, &req(&a, "project")?, flag_in(&a)?).await?,
         "update_flag" => {
             let mut f = flag_in(&a)?;
             f.key = None;
             crate::flags::update_flag(state, p, &req(&a, "project")?, &req(&a, "key")?, f).await?
         }
-        "delete_flag" => {
-            crate::flags::delete_flag(state, p, &req(&a, "project")?, &req(&a, "key")?).await?
-        }
-        "flag_health" => {
-            crate::flags::flag_health(
-                state,
-                p,
-                &req(&a, "project")?,
-                &req(&a, "key")?,
-                s(&a, "since").as_deref(),
-                s(&a, "release").as_deref(),
-            )
-            .await?
-        }
+        "delete_flag" => crate::flags::delete_flag(state, p, &req(&a, "project")?, &req(&a, "key")?).await?,
+        "flag_health" => crate::flags::flag_health(state, p, &req(&a, "project")?, &req(&a, "key")?, s(&a, "since").as_deref(), s(&a, "release").as_deref()).await?,
         "create_experiment" => {
-            let e = crate::flags::ExperimentIn {
-                name: req(&a, "name")?,
-                flag: req(&a, "flag")?,
-                goal: req(&a, "goal")?,
-                control: s(&a, "control"),
-                description: s(&a, "description"),
-            };
+            let e = crate::flags::ExperimentIn { name: req(&a, "name")?, flag: req(&a, "flag")?, goal: req(&a, "goal")?, control: s(&a, "control"), description: s(&a, "description") };
             crate::flags::create_experiment(state, p, &req(&a, "project")?, e).await?
         }
-        "list_experiments" => {
-            crate::flags::list_experiments(state, p, &req(&a, "project")?).await?
-        }
+        "list_experiments" => crate::flags::list_experiments(state, p, &req(&a, "project")?).await?,
         "experiment_results" => {
             let r = crate::flags::ResultsParams {
                 project: req(&a, "project")?,
@@ -711,232 +470,57 @@ async fn call_tool(
             crate::flags::experiment_results(state, p, r).await?
         }
         "create_cohort" => {
-            let def: crate::cohorts::CohortIn = serde_json::from_value(a.clone())
-                .map_err(|e| ToolError::Failed(format!("invalid cohort: {e}")))?;
+            let def: crate::cohorts::CohortIn = serde_json::from_value(a.clone()).map_err(|e| ToolError::Failed(format!("invalid cohort: {e}")))?;
             crate::cohorts::create_cohort(state, p, &req(&a, "project")?, def).await?
         }
-        "list_cohorts" => {
-            crate::cohorts::list_cohorts(
-                state,
-                p,
-                &req(&a, "project")?,
-                a.get("sizes").and_then(|v| v.as_bool()).unwrap_or(true),
-            )
-            .await?
-        }
-        "get_cohort" => {
-            crate::cohorts::get_cohort(
-                state,
-                p,
-                &req(&a, "project")?,
-                &req(&a, "cohort")?,
-                i(&a, "limit"),
-            )
-            .await?
-        }
-        "delete_cohort" => {
-            crate::cohorts::delete_cohort(state, p, &req(&a, "project")?, &req(&a, "cohort")?)
-                .await?
-        }
-        "analytics_stickiness" => {
-            crate::cohorts::stickiness(state, p, engagement_args(&a)?).await?
-        }
+        "list_cohorts" => crate::cohorts::list_cohorts(state, p, &req(&a, "project")?, a.get("sizes").and_then(|v| v.as_bool()).unwrap_or(true)).await?,
+        "get_cohort" => crate::cohorts::get_cohort(state, p, &req(&a, "project")?, &req(&a, "cohort")?, i(&a, "limit")).await?,
+        "delete_cohort" => crate::cohorts::delete_cohort(state, p, &req(&a, "project")?, &req(&a, "cohort")?).await?,
+        "analytics_stickiness" => crate::cohorts::stickiness(state, p, engagement_args(&a)?).await?,
         "analytics_lifecycle" => crate::cohorts::lifecycle(state, p, engagement_args(&a)?).await?,
-        "delete_goal" => {
-            crate::product::delete_goal(state, p, &req(&a, "project")?, &req(&a, "goal")?).await?
-        }
+        "delete_goal" => crate::product::delete_goal(state, p, &req(&a, "project")?, &req(&a, "goal")?).await?,
         "list_identified_users" => {
-            crate::product::list_users(
-                state,
-                p,
-                crate::product::UserListParams {
-                    project: req(&a, "project")?,
-                    since: s(&a, "since"),
-                    query: s(&a, "query"),
-                    limit: i(&a, "limit"),
-                },
-            )
-            .await?
+            crate::product::list_users(state, p, crate::product::UserListParams { project: req(&a, "project")?, since: s(&a, "since"), query: s(&a, "query"), limit: i(&a, "limit") }).await?
         }
-        "get_user_timeline" => {
-            crate::product::user_timeline(
-                state,
-                p,
-                &req(&a, "project")?,
-                &req(&a, "user_id")?,
-                s(&a, "since").as_deref(),
-                i(&a, "limit"),
-            )
-            .await?
-        }
-        "explain_spike" => {
-            query::explain_spike(
-                state,
-                p,
-                &req(&a, "project")?,
-                s(&a, "window").as_deref(),
-                s(&a, "baseline").as_deref(),
-            )
-            .await?
-        }
+        "get_user_timeline" => crate::product::user_timeline(state, p, &req(&a, "project")?, &req(&a, "user_id")?, s(&a, "since").as_deref(), i(&a, "limit")).await?,
+        "explain_spike" => query::explain_spike(state, p, &req(&a, "project")?, s(&a, "window").as_deref(), s(&a, "baseline").as_deref()).await?,
         "resolve_issue" => {
-            query::update_issue(
-                state,
-                p,
-                &req(&a, "issue")?,
-                IssueUpdate {
-                    status: Some("resolved".into()),
-                    resolved_in_release: s(&a, "resolved_in_release"),
-                    ..Default::default()
-                },
-            )
-            .await?
+            query::update_issue(state, p, &req(&a, "issue")?, IssueUpdate { status: Some("resolved".into()), resolved_in_release: s(&a, "resolved_in_release"), ..Default::default() }).await?
         }
         "ignore_issue" => {
-            query::update_issue(
-                state,
-                p,
-                &req(&a, "issue")?,
-                IssueUpdate {
-                    status: Some("ignored".into()),
-                    ignore_for: s(&a, "ignore_for"),
-                    ..Default::default()
-                },
-            )
-            .await?
+            query::update_issue(state, p, &req(&a, "issue")?, IssueUpdate { status: Some("ignored".into()), ignore_for: s(&a, "ignore_for"), ..Default::default() }).await?
         }
-        "reopen_issue" => {
-            query::update_issue(
-                state,
-                p,
-                &req(&a, "issue")?,
-                IssueUpdate {
-                    status: Some("open".into()),
-                    ..Default::default()
-                },
-            )
-            .await?
-        }
+        "reopen_issue" => query::update_issue(state, p, &req(&a, "issue")?, IssueUpdate { status: Some("open".into()), ..Default::default() }).await?,
         "assign_issue" => {
-            query::update_issue(
-                state,
-                p,
-                &req(&a, "issue")?,
-                IssueUpdate {
-                    assignee: Some(s(&a, "assignee").unwrap_or_default()),
-                    ..Default::default()
-                },
-            )
-            .await?
+            query::update_issue(state, p, &req(&a, "issue")?, IssueUpdate { assignee: Some(s(&a, "assignee").unwrap_or_default()), ..Default::default() }).await?
         }
-        "comment_issue" => {
-            query::comment_issue(state, p, &req(&a, "issue")?, &req(&a, "body")?).await?
-        }
+        "comment_issue" => query::comment_issue(state, p, &req(&a, "issue")?, &req(&a, "body")?).await?,
         "performance_summary" => crate::perf::summary(state, p, perf_args(&a)?).await?,
-        "slow_endpoints" => {
-            crate::perf::slow_endpoints(state, p, perf_args(&a)?, i(&a, "min_count")).await?
-        }
+        "slow_endpoints" => crate::perf::slow_endpoints(state, p, perf_args(&a)?, i(&a, "min_count")).await?,
         "app_startup" => crate::perf::app_startup(state, p, perf_args(&a)?).await?,
-        "web_vitals" => {
-            crate::perf::web_vitals(
-                state,
-                p,
-                perf_args(&a)?,
-                a.get("by_page").and_then(|v| v.as_bool()),
-            )
-            .await?
-        }
-        "list_slow_traces" => {
-            crate::perf::slow_traces(state, p, perf_args(&a)?, f(&a, "min_ms")).await?
-        }
-        "get_trace" => {
-            crate::perf::get_trace(state, p, &req(&a, "project")?, &req(&a, "trace_id")?).await?
-        }
+        "web_vitals" => crate::perf::web_vitals(state, p, perf_args(&a)?, a.get("by_page").and_then(|v| v.as_bool())).await?,
+        "list_slow_traces" => crate::perf::slow_traces(state, p, perf_args(&a)?, f(&a, "min_ms")).await?,
+        "get_trace" => crate::perf::get_trace(state, p, &req(&a, "project")?, &req(&a, "trace_id")?).await?,
         "span_breakdown" => crate::perf::span_breakdown(state, p, perf_args(&a)?).await?,
         "compare_release_performance" => {
-            crate::perf::compare_releases(
-                state,
-                p,
-                &req(&a, "project")?,
-                &req(&a, "base")?,
-                &req(&a, "target")?,
-                i(&a, "min_count"),
-                f(&a, "threshold"),
-            )
-            .await?
+            crate::perf::compare_releases(state, p, &req(&a, "project")?, &req(&a, "base")?, &req(&a, "target")?, i(&a, "min_count"), f(&a, "threshold")).await?
         }
-        "get_session_timeline" => {
-            crate::timeline::session_timeline(
-                state,
-                p,
-                &req(&a, "project")?,
-                &req(&a, "session_id")?,
-                i(&a, "limit"),
-            )
-            .await?
-        }
-        "issue_precursors" => {
-            crate::timeline::precursors(
-                state,
-                p,
-                &req(&a, "issue")?,
-                i(&a, "minutes"),
-                i(&a, "limit"),
-            )
-            .await?
-        }
+        "get_session_timeline" => crate::timeline::session_timeline(state, p, &req(&a, "project")?, &req(&a, "session_id")?, i(&a, "limit")).await?,
+        "issue_precursors" => crate::timeline::precursors(state, p, &req(&a, "issue")?, i(&a, "minutes"), i(&a, "limit")).await?,
         "get_fix_context" => crate::fixctx::fix_context(state, p, &req(&a, "issue")?).await?,
         "link_issue" => {
-            crate::fixctx::add_link(
-                state,
-                p,
-                &req(&a, "issue")?,
-                crate::fixctx::LinkIn {
-                    url: req(&a, "url")?,
-                    kind: s(&a, "kind"),
-                    title: s(&a, "title"),
-                },
-            )
-            .await?
+            crate::fixctx::add_link(state, p, &req(&a, "issue")?, crate::fixctx::LinkIn { url: req(&a, "url")?, kind: s(&a, "kind"), title: s(&a, "title") }).await?
         }
-        "get_code_mappings" => {
-            crate::fixctx::get_code_mappings(state, p, &req(&a, "project")?).await?
-        }
+        "get_code_mappings" => crate::fixctx::get_code_mappings(state, p, &req(&a, "project")?).await?,
         "set_code_mappings" => {
             let mappings: Vec<crate::fixctx::CodeMapping> = serde_json::from_value(a.get("mappings").cloned().unwrap_or(json!([])))
                 .map_err(|e| ToolError::Failed(format!("`mappings` must be an array of {{stack_root, source_root, repository, default_branch}}: {e}")))?;
             crate::fixctx::set_code_mappings(state, p, &req(&a, "project")?, mappings).await?
         }
-        "apply_ownership_rules" => {
-            crate::ownership::apply_ownership(
-                state,
-                p,
-                &req(&a, "project")?,
-                a.get("all").and_then(|v| v.as_bool()).unwrap_or(false),
-            )
-            .await?
-        }
-        "get_ownership_rules" => {
-            crate::ownership::get_ownership(state, p, &req(&a, "project")?).await?
-        }
-        "set_ownership_rules" => {
-            crate::ownership::set_ownership(
-                state,
-                p,
-                &req(&a, "project")?,
-                &s(&a, "rules").unwrap_or_default(),
-            )
-            .await?
-        }
-        "get_release_commits" => {
-            crate::ownership::get_release_commits(
-                state,
-                p,
-                &req(&a, "project")?,
-                &req(&a, "release")?,
-            )
-            .await?
-        }
+        "apply_ownership_rules" => crate::ownership::apply_ownership(state, p, &req(&a, "project")?, a.get("all").and_then(|v| v.as_bool()).unwrap_or(false)).await?,
+        "get_ownership_rules" => crate::ownership::get_ownership(state, p, &req(&a, "project")?).await?,
+        "set_ownership_rules" => crate::ownership::set_ownership(state, p, &req(&a, "project")?, &s(&a, "rules").unwrap_or_default()).await?,
+        "get_release_commits" => crate::ownership::get_release_commits(state, p, &req(&a, "project")?, &req(&a, "release")?).await?,
         "create_alert_rule" => {
             crate::api::create_rule_inner(
                 state,
@@ -959,9 +543,7 @@ async fn call_tool(
         }
         "list_alert_rules" => crate::api::list_rules_inner(state, p).await?,
         "list_monitors" => crate::monitors::list(state, p, &req(&a, "project")?).await?,
-        "get_monitor" => {
-            crate::monitors::get(state, p, &req(&a, "project")?, &req(&a, "monitor")?).await?
-        }
+        "get_monitor" => crate::monitors::get(state, p, &req(&a, "project")?, &req(&a, "monitor")?).await?,
         "create_monitor" | "update_monitor" => {
             let input = crate::monitors::MonitorIn {
                 slug: s(&a, "slug"),
@@ -974,77 +556,47 @@ async fn call_tool(
                 recover_threshold: i(&a, "recover_threshold"),
                 secret_headers: match a.get("secret_headers") {
                     None | Some(Value::Null) => None,
-                    Some(v) => Some(serde_json::from_value(v.clone()).map_err(|_| {
-                        crate::auth::ApiError::bad(
-                            "secret_headers must be an object of name: value strings",
-                        )
-                    })?),
+                    Some(v) => Some(serde_json::from_value(v.clone()).map_err(|_| crate::auth::ApiError::bad("secret_headers must be an object of name: value strings"))?),
                 },
                 paused_until: match a.get("paused_until") {
                     None => None,
                     Some(Value::Null) => Some(None),
-                    Some(v) => Some(Some(
-                        v.as_str()
-                            .map(String::from)
-                            .unwrap_or_else(|| v.to_string()),
-                    )),
+                    Some(v) => Some(Some(v.as_str().map(String::from).unwrap_or_else(|| v.to_string()))),
                 },
             };
             if name == "create_monitor" {
                 crate::monitors::create(state, p, &req(&a, "project")?, input).await?
             } else {
-                crate::monitors::update(state, p, &req(&a, "project")?, &req(&a, "monitor")?, input)
-                    .await?
+                crate::monitors::update(state, p, &req(&a, "project")?, &req(&a, "monitor")?, input).await?
             }
         }
-        "run_monitor_check" => {
-            crate::monitors::run_now(state, p, &req(&a, "project")?, &req(&a, "monitor")?).await?
-        }
-        "delete_monitor" => {
-            crate::monitors::delete(state, p, &req(&a, "project")?, &req(&a, "monitor")?).await?
-        }
+        "run_monitor_check" => crate::monitors::run_now(state, p, &req(&a, "project")?, &req(&a, "monitor")?).await?,
+        "delete_monitor" => crate::monitors::delete(state, p, &req(&a, "project")?, &req(&a, "monitor")?).await?,
         "list_incidents" => {
-            let q = crate::monitors::IncidentQuery {
-                monitor: s(&a, "monitor"),
-                status: s(&a, "status"),
-                since: s(&a, "since"),
-                limit: i(&a, "limit"),
-            };
+            let q = crate::monitors::IncidentQuery { monitor: s(&a, "monitor"), status: s(&a, "status"), since: s(&a, "since"), limit: i(&a, "limit") };
             crate::monitors::list_incidents(state, p, &req(&a, "project")?, q).await?
         }
         "get_incident" => crate::monitors::get_incident(state, p, &req(&a, "incident")?).await?,
-        "search_logs" => {
-            crate::otel::search_logs(
-                state,
-                p,
-                crate::otel::LogParams {
-                    project: req(&a, "project")?,
-                    since: s(&a, "since"),
-                    until: s(&a, "until"),
-                    q: s(&a, "query"),
-                    severity: s(&a, "severity"),
-                    trace_id: s(&a, "trace_id"),
-                    service: s(&a, "service"),
-                    release: s(&a, "release"),
-                    environment: s(&a, "environment"),
-                    limit: i(&a, "limit"),
-                },
-            )
-            .await?
-        }
-        "detect_anomalies" => {
-            crate::anomalies::detect(state, p, &req(&a, "project")?, s(&a, "window").as_deref())
-                .await?
-        }
+        "search_logs" => crate::otel::search_logs(
+            state,
+            p,
+            crate::otel::LogParams {
+                project: req(&a, "project")?,
+                since: s(&a, "since"),
+                until: s(&a, "until"),
+                q: s(&a, "query"),
+                severity: s(&a, "severity"),
+                trace_id: s(&a, "trace_id"),
+                service: s(&a, "service"),
+                release: s(&a, "release"),
+                environment: s(&a, "environment"),
+                limit: i(&a, "limit"),
+            },
+        )
+        .await?,
+        "detect_anomalies" => crate::anomalies::detect(state, p, &req(&a, "project")?, s(&a, "window").as_deref()).await?,
         "preview_digest" => {
-            crate::api::digest_preview_inner(
-                state,
-                p,
-                &req(&a, "project")?,
-                s(&a, "frequency").as_deref(),
-                a.get("narrative").and_then(|v| v.as_bool()).unwrap_or(true),
-            )
-            .await?
+            crate::api::digest_preview_inner(state, p, &req(&a, "project")?, s(&a, "frequency").as_deref(), a.get("narrative").and_then(|v| v.as_bool()).unwrap_or(true)).await?
         }
         "update_alert_rule" => {
             crate::api::update_rule_inner(
@@ -1065,52 +617,31 @@ async fn call_tool(
             )
             .await?
         }
-        "delete_alert_rule" => {
-            crate::api::delete_rule_inner(state, p, &req(&a, "rule_id")?).await?
-        }
+        "delete_alert_rule" => crate::api::delete_rule_inner(state, p, &req(&a, "rule_id")?).await?,
         "test_alert_rule" => crate::api::test_rule_inner(state, p, &req(&a, "rule_id")?).await?,
         "list_alert_deliveries" => {
-            crate::api::deliveries_inner(
-                state,
-                p,
-                &req(&a, "rule_id")?,
-                a.get("include_payload")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false),
-                i(&a, "limit"),
-            )
-            .await?
+            crate::api::deliveries_inner(state, p, &req(&a, "rule_id")?, a.get("include_payload").and_then(|v| v.as_bool()).unwrap_or(false), i(&a, "limit")).await?
         }
-        "redeliver_alert" => {
-            crate::api::redeliver_inner(state, p, &req(&a, "rule_id")?, &req(&a, "delivery_id")?)
-                .await?
-        }
+        "redeliver_alert" => crate::api::redeliver_inner(state, p, &req(&a, "rule_id")?, &req(&a, "delivery_id")?).await?,
         "delete_user_data" => {
             let proj = query::project_for(state, p, &req(&a, "project")?).await?;
             if !p.can_write(&proj.id) {
                 return Err(ApiError::forbidden().into());
             }
-            json!(
-                crate::maintenance::erase_user(state, &proj.id, &req(&a, "user_id")?, &p.label())
-                    .await
-                    .map_err(ApiError::from)?
-            )
+            json!(crate::maintenance::erase_user(state, &proj.id, &req(&a, "user_id")?, &p.label()).await.map_err(ApiError::from)?)
         }
         "list_feedback" => {
-            let mut q: crate::feedback::ListParams = serde_json::from_value(a.clone())
-                .map_err(|e| ToolError::Failed(format!("invalid arguments: {e}")))?;
+            let mut q: crate::feedback::ListParams = serde_json::from_value(a.clone()).map_err(|e| ToolError::Failed(format!("invalid arguments: {e}")))?;
             q.project = req(&a, "project")?;
             crate::feedback::list(state, p, q).await?
         }
         "get_feedback" => crate::feedback::get(state, p, &req(&a, "feedback")?).await?,
         "update_feedback" => {
-            let u: crate::feedback::Update = serde_json::from_value(a.clone())
-                .map_err(|e| ToolError::Failed(format!("invalid arguments: {e}")))?;
+            let u: crate::feedback::Update = serde_json::from_value(a.clone()).map_err(|e| ToolError::Failed(format!("invalid arguments: {e}")))?;
             crate::feedback::update(state, p, &req(&a, "feedback")?, u).await?
         }
         "feedback_summary" => {
-            let mut q: crate::feedback::SummaryParams = serde_json::from_value(a.clone())
-                .map_err(|e| ToolError::Failed(format!("invalid arguments: {e}")))?;
+            let mut q: crate::feedback::SummaryParams = serde_json::from_value(a.clone()).map_err(|e| ToolError::Failed(format!("invalid arguments: {e}")))?;
             q.project = req(&a, "project")?;
             crate::feedback::summary(state, p, q).await?
         }
@@ -1124,42 +655,14 @@ fn prop(ty: &str, desc: &str) -> Value {
 
 fn flag_props(create: bool) -> Vec<(&'static str, Value)> {
     vec![
-        (
-            "project",
-            prop("string", "Project slug or id (see list_projects)"),
-        ),
-        (
-            "key",
-            prop(
-                "string",
-                if create {
-                    "Flag key, e.g. new_checkout"
-                } else {
-                    "Flag key"
-                },
-            ),
-        ),
+        ("project", prop("string", "Project slug or id (see list_projects)")),
+        ("key", prop("string", if create { "Flag key, e.g. new_checkout" } else { "Flag key" })),
         ("description", prop("string", "What the flag controls")),
         ("enabled", prop("boolean", "Master switch (default true)")),
-        (
-            "rollout",
-            prop(
-                "integer",
-                "Percent of people who get the flag (0 to 100, default 100)",
-            ),
-        ),
-        (
-            "variants",
-            json!({"type": "array", "description": "Optional variants [{key, weight}], e.g. [{\"key\": \"control\", \"weight\": 1}, {\"key\": \"new\", \"weight\": 1}]", "items": {"type": "object", "properties": {"key": {"type": "string"}, "weight": {"type": "integer"}}, "required": ["key"]}}),
-        ),
-        (
-            "rules",
-            json!({"type": "array", "description": "Targeting rules, first match wins: {user_ids?: [..], properties?: {plan: \"pro\"}, variant?: forced variant, rollout?: percent}", "items": {"type": "object"}}),
-        ),
-        (
-            "environments",
-            json!({"type": "object", "additionalProperties": {"type": "boolean"}, "description": "Per-environment switch, e.g. {\"staging\": true, \"production\": false}"}),
-        ),
+        ("rollout", prop("integer", "Percent of people who get the flag (0 to 100, default 100)")),
+        ("variants", json!({"type": "array", "description": "Optional variants [{key, weight}], e.g. [{\"key\": \"control\", \"weight\": 1}, {\"key\": \"new\", \"weight\": 1}]", "items": {"type": "object", "properties": {"key": {"type": "string"}, "weight": {"type": "integer"}}, "required": ["key"]}})),
+        ("rules", json!({"type": "array", "description": "Targeting rules, first match wins: {user_ids?: [..], properties?: {plan: \"pro\"}, variant?: forced variant, rollout?: percent}", "items": {"type": "object"}})),
+        ("environments", json!({"type": "object", "additionalProperties": {"type": "boolean"}, "description": "Per-environment switch, e.g. {\"staging\": true, \"production\": false}"})),
     ]
 }
 
@@ -1168,50 +671,24 @@ fn interval_prop() -> Value {
 }
 
 fn fill_prop() -> Value {
-    prop(
-        "boolean",
-        "Return every bucket in the window, with zeros where nothing happened",
-    )
+    prop("boolean", "Return every bucket in the window, with zeros where nothing happened")
 }
 
 fn perf_props(extra: &[(&'static str, Value)]) -> Vec<(&'static str, Value)> {
     let mut v = vec![
-        (
-            "project",
-            prop("string", "Project slug or id (see list_projects)"),
-        ),
-        (
-            "since",
-            prop(
-                "string",
-                "Start: ISO time or relative like 24h, 7d (default 24h)",
-            ),
-        ),
+        ("project", prop("string", "Project slug or id (see list_projects)")),
+        ("since", prop("string", "Start: ISO time or relative like 24h, 7d (default 24h)")),
         ("until", prop("string", "End (default now)")),
         ("environment", prop("string", "Environment")),
         ("release", prop("string", "Release")),
-        (
-            "transaction",
-            prop(
-                "string",
-                "Transaction name (page path, screen, `GET /api/users/:id`)",
-            ),
-        ),
+        ("transaction", prop("string", "Transaction name (page path, screen, `GET /api/users/:id`)")),
         ("limit", prop("integer", "Max rows")),
     ];
     v.extend(extra.iter().cloned());
     v
 }
 
-fn tool(
-    name: &str,
-    title: &str,
-    desc: &str,
-    props: Vec<(&str, Value)>,
-    required: &[&str],
-    read_only: bool,
-    destructive: bool,
-) -> Value {
+fn tool(name: &str, title: &str, desc: &str, props: Vec<(&str, Value)>, required: &[&str], read_only: bool, destructive: bool) -> Value {
     let mut m = Map::new();
     for (k, v) in props {
         m.insert(k.to_string(), v);
@@ -1228,12 +705,7 @@ fn tool(
 pub fn tools() -> Vec<Value> {
     let project = || prop("string", "Project slug or id (see list_projects)");
     let issue = || prop("string", "Issue id or short id such as WEB-12");
-    let since = || {
-        prop(
-            "string",
-            "Start of the window: relative (30m, 24h, 7d) or RFC 3339",
-        )
-    };
+    let since = || prop("string", "Start of the window: relative (30m, 24h, 7d) or RFC 3339");
     let until = || prop("string", "End of the window (default now)");
     let filters = || {
         json!({"type": "object", "additionalProperties": {"type": "string"},

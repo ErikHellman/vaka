@@ -26,55 +26,26 @@ pub fn router() -> Router<AppState> {
         .route("/ui/invite/{token}", get(invite_page).post(accept_invite))
         .route("/ui/account", get(account_page).post(change_password))
         .route("/ui/projects", post(create_project))
-        .route(
-            "/ui/projects/{slug}",
-            get(project_page).post(update_project),
-        )
+        .route("/ui/projects/{slug}", get(project_page).post(update_project))
         .route("/ui/projects/{slug}/keys", post(project_keys))
-        .route(
-            "/ui/projects/{slug}/issues/{id}",
-            get(issue_page).post(issue_action),
-        )
+        .route("/ui/projects/{slug}/issues/{id}", get(issue_page).post(issue_action))
         .route("/ui/projects/{slug}/feedback", get(feedback_page))
         .route("/ui/projects/{slug}/monitors", get(monitors_page))
-        .route(
-            "/ui/projects/{slug}/monitors/{monitor}",
-            get(monitor_page).post(monitor_action),
-        )
-        .route(
-            "/ui/projects/{slug}/feedback/{id}",
-            get(feedback_detail).post(feedback_action),
-        )
+        .route("/ui/projects/{slug}/monitors/{monitor}", get(monitor_page).post(monitor_action))
+        .route("/ui/projects/{slug}/feedback/{id}", get(feedback_detail).post(feedback_action))
         .route("/ui/tokens", get(tokens_page).post(tokens_action))
         .route("/ui/users", get(users_page).post(users_action))
         .route("/ui/alerts", get(alerts_page).post(alerts_action))
-        .route(
-            "/favicon.svg",
-            get(|| icon("image/svg+xml", include_bytes!("../assets/favicon.svg"))),
-        )
-        .route(
-            "/favicon.ico",
-            get(|| icon("image/x-icon", include_bytes!("../assets/favicon.ico"))),
-        )
-        .route(
-            "/apple-touch-icon.png",
-            get(|| {
-                icon(
-                    "image/png",
-                    include_bytes!("../assets/apple-touch-icon.png"),
-                )
-            }),
-        )
+        .route("/favicon.svg", get(|| icon("image/svg+xml", include_bytes!("../assets/favicon.svg"))))
+        .route("/favicon.ico", get(|| icon("image/x-icon", include_bytes!("../assets/favicon.ico"))))
+        .route("/apple-touch-icon.png", get(|| icon("image/png", include_bytes!("../assets/apple-touch-icon.png"))))
 }
 
 /// Admin UI icon: the Vaka eye on a dark tile with an amber badge, so it is
 /// told apart from the public docs site (vaka.hellsoft.se) in a tab bar.
 async fn icon(content_type: &'static str, body: &'static [u8]) -> Response {
     (
-        [
-            (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, "public, max-age=86400"),
-        ],
+        [(header::CONTENT_TYPE, content_type), (header::CACHE_CONTROL, "public, max-age=86400")],
         body,
     )
         .into_response()
@@ -157,10 +128,7 @@ async fn ui_user(state: &AppState, headers: &HeaderMap) -> Option<Principal> {
         .filter_map(|kv| kv.trim().split_once('='))
         .find(|(k, _)| *k == auth::SESSION_COOKIE)
         .map(|(_, v)| v.to_string())?;
-    auth::principal_from_session(state, &cookie)
-        .await
-        .ok()
-        .flatten()
+    auth::principal_from_session(state, &cookie).await.ok().flatten()
 }
 
 fn same_origin(state: &AppState, headers: &HeaderMap) -> bool {
@@ -178,11 +146,7 @@ macro_rules! require_user {
 
 fn back(to: &str, msg: &str) -> Response {
     let sep = if to.contains('?') { '&' } else { '?' };
-    Redirect::to(&format!(
-        "{to}{sep}flash={}",
-        url::form_urlencoded::byte_serialize(msg.as_bytes()).collect::<String>()
-    ))
-    .into_response()
+    Redirect::to(&format!("{to}{sep}flash={}", url::form_urlencoded::byte_serialize(msg.as_bytes()).collect::<String>())).into_response()
 }
 
 fn flash_of(q: &HashMap<String, String>) -> Option<String> {
@@ -192,41 +156,32 @@ fn flash_of(q: &HashMap<String, String>) -> Option<String> {
 type Q = axum::extract::Query<HashMap<String, String>>;
 
 async fn login_page(State(s): State<AppState>, axum::extract::Query(q): Q) -> Response {
-    let no_users = sqlx::query("SELECT COUNT(*) AS n FROM users")
-        .fetch_one(&s.db)
-        .await
-        .map(|r| r.i("n") == 0)
-        .unwrap_or(false);
+    let no_users = sqlx::query("SELECT COUNT(*) AS n FROM users").fetch_one(&s.db).await.map(|r| r.i("n") == 0).unwrap_or(false);
     let (email_login, password_login) = (s.config.email_login(), s.config.password_login_enabled());
-    page(
-        "Log in",
-        None,
-        flash_of(&q).as_deref(),
-        html! {
-            div.card style="max-width:380px;margin:60px auto" {
-                h1 { "Log in to Vaka" }
-                @if no_users {
-                    p.flash.err { "No users yet. Set VAKA_ADMIN_EMAIL and VAKA_ADMIN_PASSWORD and restart Vaka to create the first owner." }
-                }
-                @if email_login {
-                    form method="post" action="/ui/login/code" {
-                        p { input type="email" name="email" placeholder="Email" required autofocus autocomplete="email" style="width:100%"; }
-                        button type="submit" { "Email me a sign-in code" }
-                    }
-                }
-                @if email_login && password_login {
-                    p.muted style="margin:20px 0 8px" { "Or use your password" }
-                }
-                @if password_login {
-                    form method="post" action="/ui/login" {
-                        p { input type="email" name="email" placeholder="Email" required autofocus[!email_login] autocomplete="username" style="width:100%"; }
-                        p { input type="password" name="password" placeholder="Password" required autocomplete="current-password" style="width:100%"; }
-                        @if email_login { button.ghost type="submit" { "Log in with password" } } @else { button type="submit" { "Log in" } }
-                    }
+    page("Log in", None, flash_of(&q).as_deref(), html! {
+        div.card style="max-width:380px;margin:60px auto" {
+            h1 { "Log in to Vaka" }
+            @if no_users {
+                p.flash.err { "No users yet. Set VAKA_ADMIN_EMAIL and VAKA_ADMIN_PASSWORD and restart Vaka to create the first owner." }
+            }
+            @if email_login {
+                form method="post" action="/ui/login/code" {
+                    p { input type="email" name="email" placeholder="Email" required autofocus autocomplete="email" style="width:100%"; }
+                    button type="submit" { "Email me a sign-in code" }
                 }
             }
-        },
-    )
+            @if email_login && password_login {
+                p.muted style="margin:20px 0 8px" { "Or use your password" }
+            }
+            @if password_login {
+                form method="post" action="/ui/login" {
+                    p { input type="email" name="email" placeholder="Email" required autofocus[!email_login] autocomplete="username" style="width:100%"; }
+                    p { input type="password" name="password" placeholder="Password" required autocomplete="current-password" style="width:100%"; }
+                    @if email_login { button.ghost type="submit" { "Log in with password" } } @else { button type="submit" { "Log in" } }
+                }
+            }
+        }
+    })
 }
 
 #[derive(Deserialize)]
@@ -307,14 +262,7 @@ async fn start_session(s: &AppState, user_id: &str) -> Response {
     let Ok(token) = auth::create_session(s, user_id).await else {
         return back("/ui/login", "error:Could not create session");
     };
-    (
-        [(
-            header::SET_COOKIE,
-            auth::session_cookie(s, &token, 30 * 86400),
-        )],
-        Redirect::to("/ui"),
-    )
-        .into_response()
+    ([(header::SET_COOKIE, auth::session_cookie(s, &token, 30 * 86400))], Redirect::to("/ui")).into_response()
 }
 
 #[derive(Deserialize)]
@@ -365,33 +313,26 @@ async fn request_code(
 }
 
 async fn code_page(State(s): State<AppState>, axum::extract::Query(q): Q) -> Response {
-    let Some(email) = q.get("email").filter(|e| !e.trim().is_empty()) else {
-        return Redirect::to("/ui/login").into_response();
-    };
+    let Some(email) = q.get("email").filter(|e| !e.trim().is_empty()) else { return Redirect::to("/ui/login").into_response() };
     if !s.config.email_login() {
         return Redirect::to("/ui/login").into_response();
     }
-    page(
-        "Enter code",
-        None,
-        flash_of(&q).as_deref(),
-        html! {
-            div.card style="max-width:380px;margin:60px auto" {
-                h1 { "Check your email" }
-                p.muted { "Enter the code sent to " strong { (email) } "." }
-                form method="post" action="/ui/login/verify" {
-                    input type="hidden" name="email" value=(email);
-                    p { input name="code" placeholder="123456" required autofocus inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 -]{6,9}" maxlength="9" style="width:100%;font-size:20px;letter-spacing:4px"; }
-                    button type="submit" { "Log in" }
-                }
-                form method="post" action="/ui/login/code" style="margin-top:12px" {
-                    input type="hidden" name="email" value=(email);
-                    button.ghost type="submit" { "Send a new code" }
-                    " " a href="/ui/login" { "Back" }
-                }
+    page("Enter code", None, flash_of(&q).as_deref(), html! {
+        div.card style="max-width:380px;margin:60px auto" {
+            h1 { "Check your email" }
+            p.muted { "Enter the code sent to " strong { (email) } "." }
+            form method="post" action="/ui/login/verify" {
+                input type="hidden" name="email" value=(email);
+                p { input name="code" placeholder="123456" required autofocus inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 -]{6,9}" maxlength="9" style="width:100%;font-size:20px;letter-spacing:4px"; }
+                button type="submit" { "Log in" }
             }
-        },
-    )
+            form method="post" action="/ui/login/code" style="margin-top:12px" {
+                input type="hidden" name="email" value=(email);
+                button.ghost type="submit" { "Send a new code" }
+                " " a href="/ui/login" { "Back" }
+            }
+        }
+    })
 }
 
 #[derive(Deserialize)]
@@ -461,63 +402,52 @@ async fn logout(State(s): State<AppState>, headers: HeaderMap) -> Response {
         .into_response()
 }
 
-async fn dashboard(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Query(q): Q,
-) -> Response {
+async fn dashboard(State(s): State<AppState>, headers: HeaderMap, axum::extract::Query(q): Q) -> Response {
     let user = require_user!(s, headers);
     let projects = crate::projects::list(&s).await.unwrap_or_default();
     let mut counts = HashMap::new();
     for p in &projects {
-        let n = sqlx::query(
-            "SELECT COUNT(*) AS n FROM issues WHERE project_id = $1 AND status = 'open'",
-        )
-        .bind(&p.id)
-        .fetch_one(&s.db)
-        .await
-        .map(|r| r.i("n"))
-        .unwrap_or(0);
+        let n = sqlx::query("SELECT COUNT(*) AS n FROM issues WHERE project_id = $1 AND status = 'open'")
+            .bind(&p.id)
+            .fetch_one(&s.db)
+            .await
+            .map(|r| r.i("n"))
+            .unwrap_or(0);
         counts.insert(p.id.clone(), n);
     }
-    page(
-        "Projects",
-        Some(&user),
-        flash_of(&q).as_deref(),
-        html! {
-            h1 { "Projects" }
-            @if projects.is_empty() {
-                p.muted { "No projects yet. Create one below, or let a coding agent do it over MCP with the create_project tool." }
-            } @else {
-                div.card { table {
-                    tr { th { "Name" } th { "Slug" } th { "Platform" } th { "Open issues" } th { "Retention" } }
-                    @for p in &projects {
-                        tr {
-                            td { a href=(format!("/ui/projects/{}", p.slug)) { (p.name) } }
-                            td { code { (p.slug) } }
-                            td { (p.platform) }
-                            td { (counts.get(&p.id).copied().unwrap_or(0)) }
-                            td { (p.retention_days) " days" }
-                        }
+    page("Projects", Some(&user), flash_of(&q).as_deref(), html! {
+        h1 { "Projects" }
+        @if projects.is_empty() {
+            p.muted { "No projects yet. Create one below, or let a coding agent do it over MCP with the create_project tool." }
+        } @else {
+            div.card { table {
+                tr { th { "Name" } th { "Slug" } th { "Platform" } th { "Open issues" } th { "Retention" } }
+                @for p in &projects {
+                    tr {
+                        td { a href=(format!("/ui/projects/{}", p.slug)) { (p.name) } }
+                        td { code { (p.slug) } }
+                        td { (p.platform) }
+                        td { (counts.get(&p.id).copied().unwrap_or(0)) }
+                        td { (p.retention_days) " days" }
                     }
-                } }
-            }
-            @if user.is_admin() {
-                h2 { "New project" }
-                div.card { form.row method="post" action="/ui/projects" {
-                    input name="name" placeholder="Name" required;
-                    select name="platform" { @for pl in crate::api::PLATFORMS { option value=(pl) { (pl) } } }
-                    button type="submit" { "Create project" }
-                } }
-            }
-            h2 { "Connect an agent" }
-            div.card {
-                p { "Agents use the MCP endpoint with an API token:" }
-                pre { (format!("{{\n  \"mcpServers\": {{\n    \"vaka\": {{\n      \"type\": \"http\",\n      \"url\": \"{}/mcp\",\n      \"headers\": {{ \"Authorization\": \"Bearer <api token>\" }}\n    }}\n  }}\n}}", s.config.public_url)) }
-                p.muted { "REST API: " code { (s.config.public_url) "/api/v1" } " · OpenAPI: " a href="/api/v1/openapi.json" { "/api/v1/openapi.json" } " · Agent docs: " a href="/llms.txt" { "/llms.txt" } }
-            }
-        },
-    )
+                }
+            } }
+        }
+        @if user.is_admin() {
+            h2 { "New project" }
+            div.card { form.row method="post" action="/ui/projects" {
+                input name="name" placeholder="Name" required;
+                select name="platform" { @for pl in crate::api::PLATFORMS { option value=(pl) { (pl) } } }
+                button type="submit" { "Create project" }
+            } }
+        }
+        h2 { "Connect an agent" }
+        div.card {
+            p { "Agents use the MCP endpoint with an API token:" }
+            pre { (format!("{{\n  \"mcpServers\": {{\n    \"vaka\": {{\n      \"type\": \"http\",\n      \"url\": \"{}/mcp\",\n      \"headers\": {{ \"Authorization\": \"Bearer <api token>\" }}\n    }}\n  }}\n}}", s.config.public_url)) }
+            p.muted { "REST API: " code { (s.config.public_url) "/api/v1" } " · OpenAPI: " a href="/api/v1/openapi.json" { "/api/v1/openapi.json" } " · Agent docs: " a href="/llms.txt" { "/llms.txt" } }
+        }
+    })
 }
 
 #[derive(Deserialize)]
@@ -526,110 +456,65 @@ struct NewProject {
     platform: String,
 }
 
-async fn create_project(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Form(f): Form<NewProject>,
-) -> Response {
+async fn create_project(State(s): State<AppState>, headers: HeaderMap, Form(f): Form<NewProject>) -> Response {
     let user = require_user!(s, headers);
     if !same_origin(&s, &headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    match crate::api::create_project_inner(
-        &s,
-        &user,
-        crate::api::CreateProject {
-            name: f.name,
-            platform: f.platform,
-            slug: None,
-        },
-    )
-    .await
-    {
-        Ok(v) => back(
-            &format!("/ui/projects/{}", v["slug"].as_str().unwrap_or("")),
-            "Project created. Install the SDK with the instructions below.",
-        ),
+    match crate::api::create_project_inner(&s, &user, crate::api::CreateProject { name: f.name, platform: f.platform, slug: None }).await {
+        Ok(v) => back(&format!("/ui/projects/{}", v["slug"].as_str().unwrap_or("")), "Project created. Install the SDK with the instructions below."),
         Err(e) => back("/ui", &format!("error:{}", e.1)),
     }
 }
 
-async fn project_page(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Path(slug): Path<String>,
-    axum::extract::Query(q): Q,
-) -> Response {
+async fn project_page(State(s): State<AppState>, headers: HeaderMap, Path(slug): Path<String>, axum::extract::Query(q): Q) -> Response {
     let user = require_user!(s, headers);
-    let Ok(Some(p)) = crate::projects::find(&s, &slug).await else {
-        return back("/ui", "error:Project not found");
-    };
-    let keys = crate::projects::ingest_keys(&s, &p.id)
+    let Ok(Some(p)) = crate::projects::find(&s, &slug).await else { return back("/ui", "error:Project not found") };
+    let keys = crate::projects::ingest_keys(&s, &p.id).await.unwrap_or_default();
+    let issues = query::list_issues(&s, &user, query::IssueListParams { project: p.id.clone(), since: Some("7d".into()), limit: Some(20), ..Default::default() })
         .await
+        .map(|v| v["issues"].as_array().cloned().unwrap_or_default())
         .unwrap_or_default();
-    let issues = query::list_issues(
-        &s,
-        &user,
-        query::IssueListParams {
-            project: p.id.clone(),
-            since: Some("7d".into()),
-            limit: Some(20),
-            ..Default::default()
-        },
-    )
-    .await
-    .map(|v| v["issues"].as_array().cloned().unwrap_or_default())
-    .unwrap_or_default();
-    let install = crate::docs::install_markdown(
-        &p.platform,
-        &s.config.public_url,
-        keys.first().map(|s| s.as_str()).unwrap_or(""),
-        &p.slug,
-    );
-    page(
-        &p.name,
-        Some(&user),
-        flash_of(&q).as_deref(),
-        html! {
-            h1 { (p.name) " " span.badge { (p.platform) } }
-            p { a href=(format!("/ui/projects/{}/feedback", p.slug)) { "User feedback →" } " · " a href=(format!("/ui/projects/{}/monitors", p.slug)) { "Monitors →" } }
-            h2 { "Open issues (last 7 days)" }
-            div.card {
-                @if issues.is_empty() { p.muted { "No open issues. " } }
-                @else { table {
-                    tr { th { "Issue" } th { "Events (7d)" } th { "Last seen" } th { "Release" } }
-                    @for i in &issues {
-                        tr {
-                            td { a href=(format!("/ui/projects/{}/issues/{}", p.slug, i["id"].as_str().unwrap_or(""))) { code { (i["short_id"].as_str().unwrap_or("")) } " " (i["title"].as_str().unwrap_or("")) } br; span.muted { (i["culprit"].as_str().unwrap_or("")) } }
-                            td { (i["events_in_window"]) }
-                            td.muted { (i["last_seen"].as_str().unwrap_or("")) }
-                            td { (i["last_release"].as_str().unwrap_or("")) }
-                        }
+    let install = crate::docs::install_markdown(&p.platform, &s.config.public_url, keys.first().map(|s| s.as_str()).unwrap_or(""), &p.slug);
+    page(&p.name, Some(&user), flash_of(&q).as_deref(), html! {
+        h1 { (p.name) " " span.badge { (p.platform) } }
+        p { a href=(format!("/ui/projects/{}/feedback", p.slug)) { "User feedback →" } " · " a href=(format!("/ui/projects/{}/monitors", p.slug)) { "Monitors →" } }
+        h2 { "Open issues (last 7 days)" }
+        div.card {
+            @if issues.is_empty() { p.muted { "No open issues. " } }
+            @else { table {
+                tr { th { "Issue" } th { "Events (7d)" } th { "Last seen" } th { "Release" } }
+                @for i in &issues {
+                    tr {
+                        td { a href=(format!("/ui/projects/{}/issues/{}", p.slug, i["id"].as_str().unwrap_or(""))) { code { (i["short_id"].as_str().unwrap_or("")) } " " (i["title"].as_str().unwrap_or("")) } br; span.muted { (i["culprit"].as_str().unwrap_or("")) } }
+                        td { (i["events_in_window"]) }
+                        td.muted { (i["last_seen"].as_str().unwrap_or("")) }
+                        td { (i["last_release"].as_str().unwrap_or("")) }
                     }
-                } }
-            }
-            h2 { "Ingest keys" }
-            div.card {
-                p.muted { "Ingest keys are write-only and safe to ship inside apps." }
-                table { @for k in &keys { tr { td { code { (k) } } td { @if user.is_admin() { form.inline method="post" action=(format!("/ui/projects/{}/keys", p.slug)) { input type="hidden" name="revoke" value=(k); button.danger type="submit" { "Revoke" } } } } } } }
-                @if user.is_admin() { form method="post" action=(format!("/ui/projects/{}/keys", p.slug)) { button.ghost type="submit" { "Create another key" } } }
-            }
-            @if user.is_admin() {
-                h2 { "Settings" }
-                div.card { form method="post" action=(format!("/ui/projects/{}", p.slug)) {
-                    p { label { "Name " input name="name" value=(p.name); } }
-                    p { label { "Retention (days) " input type="number" min="1" max="3650" name="retention_days" value=(p.retention_days); } }
-                    p { label { input type="checkbox" name="scrub_enabled" value="1" checked[p.scrub_enabled]; " Scrub secrets and PII from error payloads" } }
-                    p { label { "Extra fields to scrub (comma-separated) " input name="scrub_fields" value=(p.scrub_fields) style="width:300px"; } }
-                    button type="submit" { "Save" }
-                } }
-            }
-            @if let Some(md) = install {
-                h2 { "Install" }
-                div.card { pre { (md) } }
-            }
-        },
-    )
+                }
+            } }
+        }
+        h2 { "Ingest keys" }
+        div.card {
+            p.muted { "Ingest keys are write-only and safe to ship inside apps." }
+            table { @for k in &keys { tr { td { code { (k) } } td { @if user.is_admin() { form.inline method="post" action=(format!("/ui/projects/{}/keys", p.slug)) { input type="hidden" name="revoke" value=(k); button.danger type="submit" { "Revoke" } } } } } } }
+            @if user.is_admin() { form method="post" action=(format!("/ui/projects/{}/keys", p.slug)) { button.ghost type="submit" { "Create another key" } } }
+        }
+        @if user.is_admin() {
+            h2 { "Settings" }
+            div.card { form method="post" action=(format!("/ui/projects/{}", p.slug)) {
+                p { label { "Name " input name="name" value=(p.name); } }
+                p { label { "Retention (days) " input type="number" min="1" max="3650" name="retention_days" value=(p.retention_days); } }
+                p { label { input type="checkbox" name="scrub_enabled" value="1" checked[p.scrub_enabled]; " Scrub secrets and PII from error payloads" } }
+                p { label { "Extra fields to scrub (comma-separated) " input name="scrub_fields" value=(p.scrub_fields) style="width:300px"; } }
+                button type="submit" { "Save" }
+            } }
+        }
+        @if let Some(md) = install {
+            h2 { "Install" }
+            div.card { pre { (md) } }
+        }
+    })
 }
 
 #[derive(Deserialize)]
@@ -640,24 +525,14 @@ struct ProjectForm {
     scrub_fields: String,
 }
 
-async fn update_project(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Path(slug): Path<String>,
-    Form(f): Form<ProjectForm>,
-) -> Response {
+async fn update_project(State(s): State<AppState>, headers: HeaderMap, Path(slug): Path<String>, Form(f): Form<ProjectForm>) -> Response {
     let user = require_user!(s, headers);
     if !user.is_admin() || !same_origin(&s, &headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let Ok(Some(p)) = crate::projects::find(&s, &slug).await else {
-        return back("/ui", "error:Project not found");
-    };
+    let Ok(Some(p)) = crate::projects::find(&s, &slug).await else { return back("/ui", "error:Project not found") };
     if !(1..=3650).contains(&f.retention_days) {
-        return back(
-            &format!("/ui/projects/{slug}"),
-            "error:Retention must be between 1 and 3650 days",
-        );
+        return back(&format!("/ui/projects/{slug}"), "error:Retention must be between 1 and 3650 days");
     }
     let _ = sqlx::query("UPDATE projects SET name = $1, retention_days = $2, scrub_enabled = $3, scrub_fields = $4 WHERE id = $5")
         .bind(f.name.trim())
@@ -677,29 +552,15 @@ struct KeyForm {
     revoke: Option<String>,
 }
 
-async fn project_keys(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Path(slug): Path<String>,
-    Form(f): Form<KeyForm>,
-) -> Response {
+async fn project_keys(State(s): State<AppState>, headers: HeaderMap, Path(slug): Path<String>, Form(f): Form<KeyForm>) -> Response {
     let user = require_user!(s, headers);
     if !user.is_admin() || !same_origin(&s, &headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let Ok(Some(p)) = crate::projects::find(&s, &slug).await else {
-        return back("/ui", "error:Project not found");
-    };
+    let Ok(Some(p)) = crate::projects::find(&s, &slug).await else { return back("/ui", "error:Project not found") };
     match f.revoke {
         Some(k) => {
-            let _ = sqlx::query(
-                "UPDATE ingest_keys SET revoked_at = $1 WHERE key = $2 AND project_id = $3",
-            )
-            .bind(now_ms())
-            .bind(&k)
-            .bind(&p.id)
-            .execute(&s.db)
-            .await;
+            let _ = sqlx::query("UPDATE ingest_keys SET revoked_at = $1 WHERE key = $2 AND project_id = $3").bind(now_ms()).bind(&k).bind(&p.id).execute(&s.db).await;
             crate::projects::invalidate_cache(&s).await;
             back(&format!("/ui/projects/{slug}"), "Key revoked")
         }
@@ -723,54 +584,44 @@ fn render_frames(frames: &serde_json::Value) -> Markup {
     }
 }
 
-async fn issue_page(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Path((slug, id)): Path<(String, String)>,
-    axum::extract::Query(q): Q,
-) -> Response {
+async fn issue_page(State(s): State<AppState>, headers: HeaderMap, Path((slug, id)): Path<(String, String)>, axum::extract::Query(q): Q) -> Response {
     let user = require_user!(s, headers);
     let issue = match query::get_issue(&s, &user, &id).await {
         Ok(i) => i,
         Err(e) => return back(&format!("/ui/projects/{slug}"), &format!("error:{}", e.1)),
     };
     let ev = &issue["latest_event"];
-    page(
-        issue["title"].as_str().unwrap_or("Issue"),
-        Some(&user),
-        flash_of(&q).as_deref(),
-        html! {
-            p { a href=(format!("/ui/projects/{slug}")) { "← " (slug) } }
-            h1 { code { (issue["short_id"].as_str().unwrap_or("")) } " " (issue["title"].as_str().unwrap_or("")) }
-            p.muted { (issue["culprit"].as_str().unwrap_or("")) }
-            div.row {
-                span.badge { (issue["status"].as_str().unwrap_or("")) }
-                span { "Seen " (issue["times_seen"]) " times · first " (issue["first_seen"].as_str().unwrap_or("")) " (" (issue["first_release"].as_str().unwrap_or("-")) ") · last " (issue["last_seen"].as_str().unwrap_or("")) " (" (issue["last_release"].as_str().unwrap_or("-")) ")" }
+    page(issue["title"].as_str().unwrap_or("Issue"), Some(&user), flash_of(&q).as_deref(), html! {
+        p { a href=(format!("/ui/projects/{slug}")) { "← " (slug) } }
+        h1 { code { (issue["short_id"].as_str().unwrap_or("")) } " " (issue["title"].as_str().unwrap_or("")) }
+        p.muted { (issue["culprit"].as_str().unwrap_or("")) }
+        div.row {
+            span.badge { (issue["status"].as_str().unwrap_or("")) }
+            span { "Seen " (issue["times_seen"]) " times · first " (issue["first_seen"].as_str().unwrap_or("")) " (" (issue["first_release"].as_str().unwrap_or("-")) ") · last " (issue["last_seen"].as_str().unwrap_or("")) " (" (issue["last_release"].as_str().unwrap_or("-")) ")" }
+        }
+        @if user.can_write(issue["project_id"].as_str().unwrap_or("")) {
+            div.row style="margin-top:12px" {
+                form.inline method="post" { input type="hidden" name="status" value="resolved"; button type="submit" { "Resolve" } }
+                form.inline method="post" { input type="hidden" name="status" value="ignored"; button.ghost type="submit" { "Ignore" } }
+                form.inline method="post" { input type="hidden" name="status" value="open"; button.ghost type="submit" { "Reopen" } }
             }
-            @if user.can_write(issue["project_id"].as_str().unwrap_or("")) {
-                div.row style="margin-top:12px" {
-                    form.inline method="post" { input type="hidden" name="status" value="resolved"; button type="submit" { "Resolve" } }
-                    form.inline method="post" { input type="hidden" name="status" value="ignored"; button.ghost type="submit" { "Ignore" } }
-                    form.inline method="post" { input type="hidden" name="status" value="open"; button.ghost type="submit" { "Reopen" } }
+        }
+        @if !ev.is_null() {
+            h2 { "Latest event" }
+            div.card {
+                p.muted { (ev["timestamp"].as_str().unwrap_or("")) " · " (ev["release"].as_str().unwrap_or("")) " · " (ev["environment"].as_str().unwrap_or("")) " · " (ev["device"]["os_name"].as_str().unwrap_or("")) " " (ev["device"]["os_version"].as_str().unwrap_or("")) }
+                @for exc in ev["exceptions"].as_array().cloned().unwrap_or_default() {
+                    p { strong { (exc["type"].as_str().unwrap_or("")) } ": " (exc["value"].as_str().unwrap_or("")) }
+                    (render_frames(&exc["stacktrace"]))
                 }
+                @if ev["exceptions"].as_array().map(|a| a.is_empty()).unwrap_or(true) { pre { (ev["message"].as_str().unwrap_or("")) } }
             }
-            @if !ev.is_null() {
-                h2 { "Latest event" }
-                div.card {
-                    p.muted { (ev["timestamp"].as_str().unwrap_or("")) " · " (ev["release"].as_str().unwrap_or("")) " · " (ev["environment"].as_str().unwrap_or("")) " · " (ev["device"]["os_name"].as_str().unwrap_or("")) " " (ev["device"]["os_version"].as_str().unwrap_or("")) }
-                    @for exc in ev["exceptions"].as_array().cloned().unwrap_or_default() {
-                        p { strong { (exc["type"].as_str().unwrap_or("")) } ": " (exc["value"].as_str().unwrap_or("")) }
-                        (render_frames(&exc["stacktrace"]))
-                    }
-                    @if ev["exceptions"].as_array().map(|a| a.is_empty()).unwrap_or(true) { pre { (ev["message"].as_str().unwrap_or("")) } }
-                }
-                h2 { "Breadcrumbs" }
-                div.card { pre { (serde_json::to_string_pretty(&ev["breadcrumbs"]).unwrap_or_default()) } }
-            }
-            h2 { "Releases" }
-            div.card { table { @for r in issue["by_release"].as_array().cloned().unwrap_or_default() { tr { td { (r["value"].as_str().unwrap_or("")) } td { (r["events"]) } } } } }
-        },
-    )
+            h2 { "Breadcrumbs" }
+            div.card { pre { (serde_json::to_string_pretty(&ev["breadcrumbs"]).unwrap_or_default()) } }
+        }
+        h2 { "Releases" }
+        div.card { table { @for r in issue["by_release"].as_array().cloned().unwrap_or_default() { tr { td { (r["value"].as_str().unwrap_or("")) } td { (r["events"]) } } } } }
+    })
 }
 
 fn sentiment_badge(s: &serde_json::Value) -> Markup {
@@ -780,21 +631,10 @@ fn sentiment_badge(s: &serde_json::Value) -> Markup {
     }
 }
 
-async fn feedback_page(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Path(slug): Path<String>,
-    axum::extract::Query(q): Q,
-) -> Response {
+async fn feedback_page(State(s): State<AppState>, headers: HeaderMap, Path(slug): Path<String>, axum::extract::Query(q): Q) -> Response {
     let user = require_user!(s, headers);
-    let Ok(Some(p)) = crate::projects::find(&s, &slug).await else {
-        return back("/ui", "error:Project not found");
-    };
-    let status = q
-        .get("status")
-        .cloned()
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "open".into());
+    let Ok(Some(p)) = crate::projects::find(&s, &slug).await else { return back("/ui", "error:Project not found") };
+    let status = q.get("status").cloned().filter(|v| !v.is_empty()).unwrap_or_else(|| "open".into());
     let sentiment = q.get("sentiment").cloned().filter(|v| !v.is_empty());
     let offset: i64 = q.get("offset").and_then(|o| o.parse().ok()).unwrap_or(0);
     let params = crate::feedback::ListParams {
@@ -807,59 +647,51 @@ async fn feedback_page(
         ..Default::default()
     };
     let (items, next) = match crate::feedback::list(&s, &user, params).await {
-        Ok(v) => (
-            v["feedback"].as_array().cloned().unwrap_or_default(),
-            v["next_offset"].as_i64(),
-        ),
+        Ok(v) => (v["feedback"].as_array().cloned().unwrap_or_default(), v["next_offset"].as_i64()),
         Err(e) => return back(&format!("/ui/projects/{slug}"), &format!("error:{}", e.1)),
     };
-    page(
-        &format!("Feedback · {}", p.name),
-        Some(&user),
-        flash_of(&q).as_deref(),
-        html! {
-            p { a href=(format!("/ui/projects/{slug}")) { "← " (p.name) } }
-            h1 { "User feedback" }
-            form.row method="get" {
-                select name="status" {
-                    @for st in ["open", "all", "new", "triaged", "resolved", "ignored"] { option value=(st) selected[st == status] { (st) } }
-                }
-                select name="sentiment" {
-                    option value="" { "any sentiment" }
-                    @for st in ["negative", "mixed", "neutral", "positive", "untagged"] { option value=(st) selected[sentiment.as_deref() == Some(st)] { (st) } }
-                }
-                button.ghost type="submit" { "Filter" }
+    page(&format!("Feedback · {}", p.name), Some(&user), flash_of(&q).as_deref(), html! {
+        p { a href=(format!("/ui/projects/{slug}")) { "← " (p.name) } }
+        h1 { "User feedback" }
+        form.row method="get" {
+            select name="status" {
+                @for st in ["open", "all", "new", "triaged", "resolved", "ignored"] { option value=(st) selected[st == status] { (st) } }
             }
-            div.card {
-                @if items.is_empty() { p.muted { "No feedback matches. Feedback arrives from the SDK widgets, crash prompts or captureFeedback()." } }
-                @else { table {
-                    tr { th { "" } th { "Feedback" } th { "Sentiment" } th { "Status" } th { "Release" } th { "Received" } }
-                    @for f in &items {
-                        @let id = f["id"].as_str().unwrap_or("");
-                        @let link = format!("/ui/projects/{slug}/feedback/{id}");
-                        tr {
-                            td { @if f["attachments"].as_array().map(|a| !a.is_empty()).unwrap_or(false) { a href=(link) { img.thumb loading="lazy" alt="screenshot" src=(format!("/api/v1/feedback/{id}/attachments/0")); } } }
-                            td {
-                                a href=(link) { code { (f["short_id"].as_str().unwrap_or("")) } } " " (crate::util::truncate(f["message"].as_str().unwrap_or(""), 160))
-                                @let topics: Vec<String> = f["topics"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(String::from)).collect();
-                                @if !topics.is_empty() || f["issue_short_id"].is_string() {
-                                    br; span.muted { (topics.join(", ")) @if let Some(i) = f["issue_short_id"].as_str() { " · about " (i) } }
-                                }
+            select name="sentiment" {
+                option value="" { "any sentiment" }
+                @for st in ["negative", "mixed", "neutral", "positive", "untagged"] { option value=(st) selected[sentiment.as_deref() == Some(st)] { (st) } }
+            }
+            button.ghost type="submit" { "Filter" }
+        }
+        div.card {
+            @if items.is_empty() { p.muted { "No feedback matches. Feedback arrives from the SDK widgets, crash prompts or captureFeedback()." } }
+            @else { table {
+                tr { th { "" } th { "Feedback" } th { "Sentiment" } th { "Status" } th { "Release" } th { "Received" } }
+                @for f in &items {
+                    @let id = f["id"].as_str().unwrap_or("");
+                    @let link = format!("/ui/projects/{slug}/feedback/{id}");
+                    tr {
+                        td { @if f["attachments"].as_array().map(|a| !a.is_empty()).unwrap_or(false) { a href=(link) { img.thumb loading="lazy" alt="screenshot" src=(format!("/api/v1/feedback/{id}/attachments/0")); } } }
+                        td {
+                            a href=(link) { code { (f["short_id"].as_str().unwrap_or("")) } } " " (crate::util::truncate(f["message"].as_str().unwrap_or(""), 160))
+                            @let topics: Vec<String> = f["topics"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(String::from)).collect();
+                            @if !topics.is_empty() || f["issue_short_id"].is_string() {
+                                br; span.muted { (topics.join(", ")) @if let Some(i) = f["issue_short_id"].as_str() { " · about " (i) } }
                             }
-                            td { (sentiment_badge(&f["sentiment"])) }
-                            td { span.badge { (f["status"].as_str().unwrap_or("")) } }
-                            td { (f["release"].as_str().unwrap_or("")) }
-                            td.muted { (f["created_at"].as_str().unwrap_or("")) }
                         }
+                        td { (sentiment_badge(&f["sentiment"])) }
+                        td { span.badge { (f["status"].as_str().unwrap_or("")) } }
+                        td { (f["release"].as_str().unwrap_or("")) }
+                        td.muted { (f["created_at"].as_str().unwrap_or("")) }
                     }
-                } }
-            }
-            @if let Some(n) = next {
-                p { a href=(format!("/ui/projects/{slug}/feedback?status={status}&sentiment={}&offset={n}", sentiment.clone().unwrap_or_default())) { "Older →" } }
-            }
-            p.muted { "Agents read and triage feedback with the MCP tools list_feedback, get_feedback, update_feedback and feedback_summary." }
-        },
-    )
+                }
+            } }
+        }
+        @if let Some(n) = next {
+            p { a href=(format!("/ui/projects/{slug}/feedback?status={status}&sentiment={}&offset={n}", sentiment.clone().unwrap_or_default())) { "Older →" } }
+        }
+        p.muted { "Agents read and triage feedback with the MCP tools list_feedback, get_feedback, update_feedback and feedback_summary." }
+    })
 }
 
 fn state_badge(state: &str) -> Markup {
@@ -867,149 +699,117 @@ fn state_badge(state: &str) -> Markup {
 }
 
 fn pct(v: &serde_json::Value) -> String {
-    v.as_f64()
-        .map(|f| format!("{f}%"))
-        .unwrap_or_else(|| "–".into())
+    v.as_f64().map(|f| format!("{f}%")).unwrap_or_else(|| "–".into())
 }
 
-async fn monitors_page(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Path(slug): Path<String>,
-    axum::extract::Query(q): Q,
-) -> Response {
+async fn monitors_page(State(s): State<AppState>, headers: HeaderMap, Path(slug): Path<String>, axum::extract::Query(q): Q) -> Response {
     let user = require_user!(s, headers);
     let v = match crate::monitors::list(&s, &user, &slug).await {
         Ok(v) => v,
         Err(e) => return back("/ui", &format!("error:{}", e.1)),
     };
     let monitors = v["monitors"].as_array().cloned().unwrap_or_default();
-    page(
-        &format!("Monitors · {slug}"),
-        Some(&user),
-        flash_of(&q).as_deref(),
-        html! {
-            p { a href=(format!("/ui/projects/{slug}")) { "← " (slug) } }
-            h1 { "Monitors" }
-            div.card {
-                @if monitors.is_empty() { p.muted { "No monitors yet. Create one with the API or MCP (create_monitor), or send a check-in with a schedule. See " a href="/docs/monitoring.md" { "monitoring" } "." } }
-                @else { table {
-                    tr { th { "Monitor" } th { "State" } th { "Schedule" } th { "Last check" } th { "Uptime 24h" } th { "30d" } }
-                    @for m in &monitors {
-                        @let ms = m["slug"].as_str().unwrap_or("");
-                        tr {
-                            td { a href=(format!("/ui/projects/{slug}/monitors/{ms}")) { (m["name"].as_str().unwrap_or(ms)) } br; span.muted { code { (ms) } " " (m["environment"].as_str().unwrap_or("")) } }
-                            td { (state_badge(m["state"].as_str().unwrap_or(""))) @if m["flapping"] == true { " " span.badge { "flapping" } } }
-                            td { (m["schedule"].as_str().unwrap_or("")) }
-                            td.muted { (m["last_result"].as_str().unwrap_or("")) " " (m["last_check_at"].as_str().unwrap_or("never")) }
-                            td { (pct(&m["stats"]["uptime_24h"])) }
-                            td { (pct(&m["stats"]["uptime_30d"])) }
-                        }
+    page(&format!("Monitors · {slug}"), Some(&user), flash_of(&q).as_deref(), html! {
+        p { a href=(format!("/ui/projects/{slug}")) { "← " (slug) } }
+        h1 { "Monitors" }
+        div.card {
+            @if monitors.is_empty() { p.muted { "No monitors yet. Create one with the API or MCP (create_monitor), or send a check-in with a schedule. See " a href="/docs/monitoring.md" { "monitoring" } "." } }
+            @else { table {
+                tr { th { "Monitor" } th { "State" } th { "Schedule" } th { "Last check" } th { "Uptime 24h" } th { "30d" } }
+                @for m in &monitors {
+                    @let ms = m["slug"].as_str().unwrap_or("");
+                    tr {
+                        td { a href=(format!("/ui/projects/{slug}/monitors/{ms}")) { (m["name"].as_str().unwrap_or(ms)) } br; span.muted { code { (ms) } " " (m["environment"].as_str().unwrap_or("")) } }
+                        td { (state_badge(m["state"].as_str().unwrap_or(""))) @if m["flapping"] == true { " " span.badge { "flapping" } } }
+                        td { (m["schedule"].as_str().unwrap_or("")) }
+                        td.muted { (m["last_result"].as_str().unwrap_or("")) " " (m["last_check_at"].as_str().unwrap_or("never")) }
+                        td { (pct(&m["stats"]["uptime_24h"])) }
+                        td { (pct(&m["stats"]["uptime_30d"])) }
                     }
-                } }
-            }
-            p.muted { "Agents manage monitors with the MCP tools list_monitors, create_monitor and update_monitor, and ask get_incident why something went down." }
-        },
-    )
+                }
+            } }
+        }
+        p.muted { "Agents manage monitors with the MCP tools list_monitors, create_monitor and update_monitor, and ask get_incident why something went down." }
+    })
 }
 
-async fn monitor_page(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Path((slug, monitor)): Path<(String, String)>,
-    axum::extract::Query(q): Q,
-) -> Response {
+async fn monitor_page(State(s): State<AppState>, headers: HeaderMap, Path((slug, monitor)): Path<(String, String)>, axum::extract::Query(q): Q) -> Response {
     let user = require_user!(s, headers);
     let v = match crate::monitors::get(&s, &user, &slug, &monitor).await {
         Ok(v) => v,
-        Err(e) => {
-            return back(
-                &format!("/ui/projects/{slug}/monitors"),
-                &format!("error:{}", e.1),
-            )
-        }
+        Err(e) => return back(&format!("/ui/projects/{slug}/monitors"), &format!("error:{}", e.1)),
     };
     let m = &v["monitor"];
     let checks = v["recent_checks"].as_array().cloned().unwrap_or_default();
     let incidents = v["incidents"].as_array().cloned().unwrap_or_default();
     let state = m["state"].as_str().unwrap_or("");
-    let can_write = crate::projects::find(&s, &slug)
-        .await
-        .ok()
-        .flatten()
-        .map(|p| user.can_write(&p.id))
-        .unwrap_or(false);
-    page(
-        &format!("Monitor {}", m["name"].as_str().unwrap_or("")),
-        Some(&user),
-        flash_of(&q).as_deref(),
-        html! {
-            p { a href=(format!("/ui/projects/{slug}/monitors")) { "← Monitors" } }
-            h1 { (m["name"].as_str().unwrap_or("")) " " (state_badge(state)) @if m["flapping"] == true { " " span.badge { "flapping" } } }
-            div.card {
-                @if m["kind"] == "heartbeat" {
-                    p { "Schedule: " (m["schedule"].as_str().unwrap_or("")) " · next expected " (m["next_expected_at"].as_str().unwrap_or("–")) " · deadline " (m["deadline"].as_str().unwrap_or("–")) }
-                } @else {
-                    p { (m["kind"].as_str().unwrap_or("").to_uppercase()) " check of " code { (m["target"].as_str().unwrap_or("")) } ", " (m["schedule"].as_str().unwrap_or("")) " · next " (m["next_check_at"].as_str().unwrap_or("–")) }
-                    @if let Some(d) = m["tls_days_left"].as_i64() {
-                        p class=(if d < 14 { "err" } else { "muted" }) { "TLS certificate expires " (m["tls_expires_at"].as_str().unwrap_or("")) " (" (d) " days)" }
-                    }
-                }
-                @if let Some(e) = m["last_error"].as_str().filter(|e| !e.is_empty()) { p.err { (e) } }
-                p { "Uptime: " (pct(&m["stats"]["uptime_24h"])) " (24h) · " (pct(&m["stats"]["uptime_7d"])) " (7d) · " (pct(&m["stats"]["uptime_30d"])) " (30d)" }
-                p { "Last checks: " span.strip {
-                    @for c in checks.iter().take(60).rev() {
-                        @let r = c["result"].as_str().unwrap_or("");
-                        i class=(if r == "ok" { "ok" } else if matches!(r, "fail" | "timeout" | "missed" | "error") { "bad" } else { "" }) title=(format!("{r} {}", c["timestamp"].as_str().unwrap_or(""))) {}
-                    }
-                } }
-                @if let Some(url) = m["check_in_url"].as_str() {
-                    p.muted { "Check in from the job (ingest key):" }
-                    pre { "curl -fsS \"" (url.trim_end_matches("/check-ins")) "/ok?key=$VAKA_KEY\"" }
-                }
-                @if can_write {
-                    form.row method="post" {
-                        @if m["kind"] != "heartbeat" && state != "paused" { button type="submit" name="action" value="run" { "Check now" } }
-                        @if state == "paused" { button type="submit" name="action" value="resume" { "Resume" } }
-                        @else { button.ghost type="submit" name="action" value="pause" { "Pause for 2 hours" } }
-                    }
+    let can_write = crate::projects::find(&s, &slug).await.ok().flatten().map(|p| user.can_write(&p.id)).unwrap_or(false);
+    page(&format!("Monitor {}", m["name"].as_str().unwrap_or("")), Some(&user), flash_of(&q).as_deref(), html! {
+        p { a href=(format!("/ui/projects/{slug}/monitors")) { "← Monitors" } }
+        h1 { (m["name"].as_str().unwrap_or("")) " " (state_badge(state)) @if m["flapping"] == true { " " span.badge { "flapping" } } }
+        div.card {
+            @if m["kind"] == "heartbeat" {
+                p { "Schedule: " (m["schedule"].as_str().unwrap_or("")) " · next expected " (m["next_expected_at"].as_str().unwrap_or("–")) " · deadline " (m["deadline"].as_str().unwrap_or("–")) }
+            } @else {
+                p { (m["kind"].as_str().unwrap_or("").to_uppercase()) " check of " code { (m["target"].as_str().unwrap_or("")) } ", " (m["schedule"].as_str().unwrap_or("")) " · next " (m["next_check_at"].as_str().unwrap_or("–")) }
+                @if let Some(d) = m["tls_days_left"].as_i64() {
+                    p class=(if d < 14 { "err" } else { "muted" }) { "TLS certificate expires " (m["tls_expires_at"].as_str().unwrap_or("")) " (" (d) " days)" }
                 }
             }
-            h2 { "Incidents" }
-            div.card {
-                @if incidents.is_empty() { p.muted { "No incidents." } }
-                @else { table {
-                    tr { th { "Started" } th { "Duration" } th { "First error" } th { "Context" } }
-                    @for i in &incidents {
-                        tr {
-                            td { (i["started_at"].as_str().unwrap_or("")) @if i["open"] == true { " " span.badge.st-down { "open" } } }
-                            td { (crate::alerts::human_duration(i["duration_ms"].as_i64().unwrap_or(0))) }
-                            td { (i["first_error"].as_str().unwrap_or("")) }
-                            td {
-                                @for h in i["context"]["hints"].as_array().into_iter().flatten() { (h.as_str().unwrap_or("")) br; }
-                                @for iss in i["context"]["issues"].as_array().into_iter().flatten().take(3) {
-                                    a href=(format!("/ui/projects/{slug}/issues/{}", iss["id"].as_str().unwrap_or(""))) { (iss["short_id"].as_str().unwrap_or("")) } " "
-                                }
+            @if let Some(e) = m["last_error"].as_str().filter(|e| !e.is_empty()) { p.err { (e) } }
+            p { "Uptime: " (pct(&m["stats"]["uptime_24h"])) " (24h) · " (pct(&m["stats"]["uptime_7d"])) " (7d) · " (pct(&m["stats"]["uptime_30d"])) " (30d)" }
+            p { "Last checks: " span.strip {
+                @for c in checks.iter().take(60).rev() {
+                    @let r = c["result"].as_str().unwrap_or("");
+                    i class=(if r == "ok" { "ok" } else if matches!(r, "fail" | "timeout" | "missed" | "error") { "bad" } else { "" }) title=(format!("{r} {}", c["timestamp"].as_str().unwrap_or(""))) {}
+                }
+            } }
+            @if let Some(url) = m["check_in_url"].as_str() {
+                p.muted { "Check in from the job (ingest key):" }
+                pre { "curl -fsS \"" (url.trim_end_matches("/check-ins")) "/ok?key=$VAKA_KEY\"" }
+            }
+            @if can_write {
+                form.row method="post" {
+                    @if m["kind"] != "heartbeat" && state != "paused" { button type="submit" name="action" value="run" { "Check now" } }
+                    @if state == "paused" { button type="submit" name="action" value="resume" { "Resume" } }
+                    @else { button.ghost type="submit" name="action" value="pause" { "Pause for 2 hours" } }
+                }
+            }
+        }
+        h2 { "Incidents" }
+        div.card {
+            @if incidents.is_empty() { p.muted { "No incidents." } }
+            @else { table {
+                tr { th { "Started" } th { "Duration" } th { "First error" } th { "Context" } }
+                @for i in &incidents {
+                    tr {
+                        td { (i["started_at"].as_str().unwrap_or("")) @if i["open"] == true { " " span.badge.st-down { "open" } } }
+                        td { (crate::alerts::human_duration(i["duration_ms"].as_i64().unwrap_or(0))) }
+                        td { (i["first_error"].as_str().unwrap_or("")) }
+                        td {
+                            @for h in i["context"]["hints"].as_array().into_iter().flatten() { (h.as_str().unwrap_or("")) br; }
+                            @for iss in i["context"]["issues"].as_array().into_iter().flatten().take(3) {
+                                a href=(format!("/ui/projects/{slug}/issues/{}", iss["id"].as_str().unwrap_or(""))) { (iss["short_id"].as_str().unwrap_or("")) } " "
                             }
                         }
                     }
-                } }
-            }
-            h2 { "Recent checks" }
-            div.card { table {
-                tr { th { "Time" } th { "Result" } th { "Duration" } th { "Release" } th { "Message" } }
-                @for c in checks.iter().take(20) {
-                    tr {
-                        td.muted { (c["timestamp"].as_str().unwrap_or("")) }
-                        td { (c["result"].as_str().unwrap_or("")) @if let Some(st) = c["http_status"].as_i64().filter(|s| *s > 0) { " (" (st) ")" } }
-                        td { (c["duration_ms"].as_i64().filter(|d| *d > 0).map(|d| format!("{d} ms")).unwrap_or_default()) }
-                        td { (c["release"].as_str().unwrap_or("")) }
-                        td { (c["error"].as_str().unwrap_or("")) }
-                    }
                 }
             } }
-        },
-    )
+        }
+        h2 { "Recent checks" }
+        div.card { table {
+            tr { th { "Time" } th { "Result" } th { "Duration" } th { "Release" } th { "Message" } }
+            @for c in checks.iter().take(20) {
+                tr {
+                    td.muted { (c["timestamp"].as_str().unwrap_or("")) }
+                    td { (c["result"].as_str().unwrap_or("")) @if let Some(st) = c["http_status"].as_i64().filter(|s| *s > 0) { " (" (st) ")" } }
+                    td { (c["duration_ms"].as_i64().filter(|d| *d > 0).map(|d| format!("{d} ms")).unwrap_or_default()) }
+                    td { (c["release"].as_str().unwrap_or("")) }
+                    td { (c["error"].as_str().unwrap_or("")) }
+                }
+            }
+        } }
+    })
 }
 
 #[derive(Deserialize)]
@@ -1017,12 +817,7 @@ struct MonitorForm {
     action: String,
 }
 
-async fn monitor_action(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Path((slug, monitor)): Path<(String, String)>,
-    Form(f): Form<MonitorForm>,
-) -> Response {
+async fn monitor_action(State(s): State<AppState>, headers: HeaderMap, Path((slug, monitor)): Path<(String, String)>, Form(f): Form<MonitorForm>) -> Response {
     let user = require_user!(s, headers);
     if !same_origin(&s, &headers) {
         return StatusCode::FORBIDDEN.into_response();
@@ -1033,18 +828,7 @@ async fn monitor_action(
             Ok(v) => {
                 let c = &v["check"];
                 let err = c["error"].as_str().unwrap_or("");
-                back(
-                    &to,
-                    &format!(
-                        "Check: {}{}",
-                        c["result"].as_str().unwrap_or(""),
-                        if err.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" ({err})")
-                        }
-                    ),
-                )
+                back(&to, &format!("Check: {}{}", c["result"].as_str().unwrap_or(""), if err.is_empty() { String::new() } else { format!(" ({err})") }))
             }
             Err(e) => back(&to, &format!("error:{}", e.1)),
         };
@@ -1054,101 +838,60 @@ async fn monitor_action(
         "resume" => Some(None),
         _ => return back(&to, "error:Unknown action"),
     };
-    match crate::monitors::update(
-        &s,
-        &user,
-        &slug,
-        &monitor,
-        crate::monitors::MonitorIn {
-            paused_until,
-            ..Default::default()
-        },
-    )
-    .await
-    {
-        Ok(_) => back(
-            &to,
-            if f.action == "pause" {
-                "Paused for 2 hours"
-            } else {
-                "Resumed"
-            },
-        ),
+    match crate::monitors::update(&s, &user, &slug, &monitor, crate::monitors::MonitorIn { paused_until, ..Default::default() }).await {
+        Ok(_) => back(&to, if f.action == "pause" { "Paused for 2 hours" } else { "Resumed" }),
         Err(e) => back(&to, &format!("error:{}", e.1)),
     }
 }
 
-async fn feedback_detail(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Path((slug, id)): Path<(String, String)>,
-    axum::extract::Query(q): Q,
-) -> Response {
+async fn feedback_detail(State(s): State<AppState>, headers: HeaderMap, Path((slug, id)): Path<(String, String)>, axum::extract::Query(q): Q) -> Response {
     let user = require_user!(s, headers);
     let f = match crate::feedback::get(&s, &user, &id).await {
         Ok(f) => f,
-        Err(e) => {
-            return back(
-                &format!("/ui/projects/{slug}/feedback"),
-                &format!("error:{}", e.1),
-            )
-        }
+        Err(e) => return back(&format!("/ui/projects/{slug}/feedback"), &format!("error:{}", e.1)),
     };
     let fid = f["id"].as_str().unwrap_or("").to_string();
     let can_write = user.can_write(f["project_id"].as_str().unwrap_or(""));
     let status = f["status"].as_str().unwrap_or("").to_string();
     let device = &f["device"];
-    let device_line: Vec<String> = ["model", "os_name", "os_version", "browser", "app_version"]
-        .iter()
-        .filter_map(|k| {
-            device[*k]
-                .as_str()
-                .filter(|v| !v.is_empty())
-                .map(String::from)
-        })
-        .collect();
-    page(
-        &format!("Feedback {}", f["short_id"].as_str().unwrap_or("")),
-        Some(&user),
-        flash_of(&q).as_deref(),
-        html! {
-            p { a href=(format!("/ui/projects/{slug}/feedback")) { "← Feedback" } }
-            h1 { code { (f["short_id"].as_str().unwrap_or("")) } " " (sentiment_badge(&f["sentiment"])) " " span.badge { (status) } }
-            div.card {
-                p.msg { (f["message"].as_str().unwrap_or("")) }
-                @if let Some(sum) = f["summary"].as_str() { p.muted { "Summary: " (sum) } }
-                @let topics: Vec<String> = f["topics"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(String::from)).collect();
-                @if !topics.is_empty() { p { @for t in &topics { span.badge { (t) } " " } } }
+    let device_line: Vec<String> = ["model", "os_name", "os_version", "browser", "app_version"].iter().filter_map(|k| device[*k].as_str().filter(|v| !v.is_empty()).map(String::from)).collect();
+    page(&format!("Feedback {}", f["short_id"].as_str().unwrap_or("")), Some(&user), flash_of(&q).as_deref(), html! {
+        p { a href=(format!("/ui/projects/{slug}/feedback")) { "← Feedback" } }
+        h1 { code { (f["short_id"].as_str().unwrap_or("")) } " " (sentiment_badge(&f["sentiment"])) " " span.badge { (status) } }
+        div.card {
+            p.msg { (f["message"].as_str().unwrap_or("")) }
+            @if let Some(sum) = f["summary"].as_str() { p.muted { "Summary: " (sum) } }
+            @let topics: Vec<String> = f["topics"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(String::from)).collect();
+            @if !topics.is_empty() { p { @for t in &topics { span.badge { (t) } " " } } }
+        }
+        @if can_write {
+            form.row method="post" {
+                select name="status" { @for st in crate::feedback::STATUSES { option value=(st) selected[*st == status] { (st) } } }
+                button type="submit" { "Update status" }
             }
-            @if can_write {
-                form.row method="post" {
-                    select name="status" { @for st in crate::feedback::STATUSES { option value=(st) selected[*st == status] { (st) } } }
-                    button type="submit" { "Update status" }
-                }
+        }
+        @for a in f["attachments"].as_array().cloned().unwrap_or_default() {
+            a href=(format!("/api/v1/feedback/{fid}/attachments/{}", a["index"])) target="_blank" {
+                img.shot alt="screenshot" src=(format!("/api/v1/feedback/{fid}/attachments/{}", a["index"]));
             }
-            @for a in f["attachments"].as_array().cloned().unwrap_or_default() {
-                a href=(format!("/api/v1/feedback/{fid}/attachments/{}", a["index"])) target="_blank" {
-                    img.shot alt="screenshot" src=(format!("/api/v1/feedback/{fid}/attachments/{}", a["index"]));
-                }
+        }
+        h2 { "Context" }
+        div.card { table {
+            @if let Some(e) = f["contact_email"].as_str() { tr { th { "Contact" } td { (f["contact_name"].as_str().unwrap_or("")) " " a href=(format!("mailto:{e}")) { (e) } } } }
+            @if let Some(i) = f["issue"].as_object() {
+                tr { th { "Issue" } td { a href=(format!("/ui/projects/{slug}/issues/{}", i.get("id").and_then(|v| v.as_str()).unwrap_or(""))) { code { (i.get("short_id").and_then(|v| v.as_str()).unwrap_or("")) } " " (i.get("title").and_then(|v| v.as_str()).unwrap_or("")) } } }
             }
-            h2 { "Context" }
-            div.card { table {
-                @if let Some(e) = f["contact_email"].as_str() { tr { th { "Contact" } td { (f["contact_name"].as_str().unwrap_or("")) " " a href=(format!("mailto:{e}")) { (e) } } } }
-                @if let Some(i) = f["issue"].as_object() {
-                    tr { th { "Issue" } td { a href=(format!("/ui/projects/{slug}/issues/{}", i.get("id").and_then(|v| v.as_str()).unwrap_or(""))) { code { (i.get("short_id").and_then(|v| v.as_str()).unwrap_or("")) } " " (i.get("title").and_then(|v| v.as_str()).unwrap_or("")) } } }
-                }
-                tr { th { "Source" } td { (f["source"].as_str().unwrap_or("")) } }
-                tr { th { "Received" } td { (f["created_at"].as_str().unwrap_or("")) } }
-                tr { th { "Release" } td { (f["release"].as_str().unwrap_or("")) " · " (f["environment"].as_str().unwrap_or("")) } }
-                tr { th { "Where" } td { (f["url"].as_str().unwrap_or("")) } }
-                tr { th { "Device" } td { (device_line.join(" · ")) " " (f["country"].as_str().unwrap_or("")) } }
-                @if let Some(u) = f["user_id"].as_str() { tr { th { "User" } td { code { (u) } } } }
-                @if let Some(sid) = f["session_id"].as_str() { tr { th { "Session" } td { code { (sid) } } } }
-                @if f["flags"].as_object().map(|o| !o.is_empty()).unwrap_or(false) { tr { th { "Flags" } td { code { (f["flags"].to_string()) } } } }
-                @if f["tags"].as_object().map(|o| !o.is_empty()).unwrap_or(false) { tr { th { "Tags" } td { code { (f["tags"].to_string()) } } } }
-            } }
-        },
-    )
+            tr { th { "Source" } td { (f["source"].as_str().unwrap_or("")) } }
+            tr { th { "Received" } td { (f["created_at"].as_str().unwrap_or("")) } }
+            tr { th { "Release" } td { (f["release"].as_str().unwrap_or("")) " · " (f["environment"].as_str().unwrap_or("")) } }
+            tr { th { "Where" } td { (f["url"].as_str().unwrap_or("")) } }
+            tr { th { "Device" } td { (device_line.join(" · ")) " " (f["country"].as_str().unwrap_or("")) } }
+            @if let Some(u) = f["user_id"].as_str() { tr { th { "User" } td { code { (u) } } } }
+            @if let Some(sid) = f["session_id"].as_str() { tr { th { "Session" } td { code { (sid) } } } }
+            @if f["flags"].as_object().map(|o| !o.is_empty()).unwrap_or(false) { tr { th { "Flags" } td { code { (f["flags"].to_string()) } } } }
+            @if f["tags"].as_object().map(|o| !o.is_empty()).unwrap_or(false) { tr { th { "Tags" } td { code { (f["tags"].to_string()) } } } }
+        } }
+    })
 }
 
 #[derive(Deserialize)]
@@ -1156,28 +899,13 @@ struct FeedbackForm {
     status: String,
 }
 
-async fn feedback_action(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Path((slug, id)): Path<(String, String)>,
-    Form(f): Form<FeedbackForm>,
-) -> Response {
+async fn feedback_action(State(s): State<AppState>, headers: HeaderMap, Path((slug, id)): Path<(String, String)>, Form(f): Form<FeedbackForm>) -> Response {
     let user = require_user!(s, headers);
     if !same_origin(&s, &headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
     let to = format!("/ui/projects/{slug}/feedback/{id}");
-    match crate::feedback::update(
-        &s,
-        &user,
-        &id,
-        crate::feedback::Update {
-            status: Some(f.status),
-            ..Default::default()
-        },
-    )
-    .await
-    {
+    match crate::feedback::update(&s, &user, &id, crate::feedback::Update { status: Some(f.status), ..Default::default() }).await {
         Ok(_) => back(&to, "Updated"),
         Err(e) => back(&to, &format!("error:{}", e.1)),
     }
@@ -1188,28 +916,13 @@ struct IssueForm {
     status: String,
 }
 
-async fn issue_action(
-    State(s): State<AppState>,
-    headers: HeaderMap,
-    Path((slug, id)): Path<(String, String)>,
-    Form(f): Form<IssueForm>,
-) -> Response {
+async fn issue_action(State(s): State<AppState>, headers: HeaderMap, Path((slug, id)): Path<(String, String)>, Form(f): Form<IssueForm>) -> Response {
     let user = require_user!(s, headers);
     if !same_origin(&s, &headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
     let to = format!("/ui/projects/{slug}/issues/{id}");
-    match query::update_issue(
-        &s,
-        &user,
-        &id,
-        query::IssueUpdate {
-            status: Some(f.status),
-            ..Default::default()
-        },
-    )
-    .await
-    {
+    match query::update_issue(&s, &user, &id, query::IssueUpdate { status: Some(f.status), ..Default::default() }).await {
         Ok(_) => back(&to, "Updated"),
         Err(e) => back(&to, &format!("error:{}", e.1)),
     }
@@ -1534,13 +1247,7 @@ async fn alerts_page(
     axum::extract::Query(q): Q,
 ) -> Response {
     let user = require_user!(s, headers);
-    let rows = sqlx::query(&format!(
-        "SELECT {} FROM alert_rules ORDER BY created_at",
-        crate::alerts::RULE_COLS
-    ))
-    .fetch_all(&s.db)
-    .await
-    .unwrap_or_default();
+    let rows = sqlx::query(&format!("SELECT {} FROM alert_rules ORDER BY created_at", crate::alerts::RULE_COLS)).fetch_all(&s.db).await.unwrap_or_default();
     let rules: Vec<_> = rows
         .iter()
         .map(crate::alerts::rule_from_row)
@@ -1552,49 +1259,40 @@ async fn alerts_page(
         })
         .collect();
     let projects = crate::projects::list(&s).await.unwrap_or_default();
-    let name_of = |id: &Option<String>| {
-        id.as_ref()
-            .and_then(|i| projects.iter().find(|p| &p.id == i).map(|p| p.name.clone()))
-            .unwrap_or_else(|| "All projects".into())
-    };
-    page(
-        "Alerts",
-        Some(&user),
-        flash_of(&q).as_deref(),
-        html! {
-            h1 { "Alert rules" }
-            p.muted { "Webhooks receive JSON (signed with HMAC-SHA256 in " code { "X-Vaka-Signature" } " when a secret is set). Email is sent through Resend." @if s.config.resend_api_key.is_none() { " Email is not configured: set VAKA_RESEND_API_KEY." }
-                " SMS goes to E.164 numbers (+46701234567) through " (s.config.sms.provider) "." @if let Some(why) = s.config.sms.missing() { " SMS is not configured: " (why.trim_start_matches("SMS alerts need ")) "." } }
-            div.card { table {
-                tr { th { "Name" } th { "Project" } th { "Trigger" } th { "Channel" } th { "Target" } th {} }
-                @for r in &rules {
-                    tr {
-                        td { (r.name) @if !r.enabled { " " span.badge { "disabled" } } }
-                        td { (name_of(&r.project_id)) }
-                        td { (r.trigger) @if r.trigger == "spike" { span.muted { " ≥" (r.threshold) "/h" } } }
-                        td { (r.channel) }
-                        td { code { (r.target) } }
-                        td { @if crate::api::can_write_rule(&user, r) {
-                            form.inline method="post" { input type="hidden" name="id" value=(r.id); button.ghost type="submit" name="action" value="test" { "Test" } }
-                            " "
-                            form.inline method="post" { input type="hidden" name="id" value=(r.id); button.danger type="submit" name="action" value="delete" { "Delete" } }
-                        } }
-                    }
+    let name_of = |id: &Option<String>| id.as_ref().and_then(|i| projects.iter().find(|p| &p.id == i).map(|p| p.name.clone())).unwrap_or_else(|| "All projects".into());
+    page("Alerts", Some(&user), flash_of(&q).as_deref(), html! {
+        h1 { "Alert rules" }
+        p.muted { "Webhooks receive JSON (signed with HMAC-SHA256 in " code { "X-Vaka-Signature" } " when a secret is set). Email is sent through Resend." @if s.config.resend_api_key.is_none() { " Email is not configured: set VAKA_RESEND_API_KEY." }
+            " SMS goes to E.164 numbers (+46701234567) through " (s.config.sms.provider) "." @if let Some(why) = s.config.sms.missing() { " SMS is not configured: " (why.trim_start_matches("SMS alerts need ")) "." } }
+        div.card { table {
+            tr { th { "Name" } th { "Project" } th { "Trigger" } th { "Channel" } th { "Target" } th {} }
+            @for r in &rules {
+                tr {
+                    td { (r.name) @if !r.enabled { " " span.badge { "disabled" } } }
+                    td { (name_of(&r.project_id)) }
+                    td { (r.trigger) @if r.trigger == "spike" { span.muted { " ≥" (r.threshold) "/h" } } }
+                    td { (r.channel) }
+                    td { code { (r.target) } }
+                    td { @if crate::api::can_write_rule(&user, r) {
+                        form.inline method="post" { input type="hidden" name="id" value=(r.id); button.ghost type="submit" name="action" value="test" { "Test" } }
+                        " "
+                        form.inline method="post" { input type="hidden" name="id" value=(r.id); button.danger type="submit" name="action" value="delete" { "Delete" } }
+                    } }
                 }
-            } }
-            h2 { "New rule" }
-            div.card { form.row method="post" {
-                input type="hidden" name="action" value="create";
-                select name="project" { option value="" { "All projects" } @for p in &projects { option value=(p.slug) { (p.name) } } }
-                select name="trigger" { @for t in crate::alerts::TRIGGERS { option value=(t) { (t) } } }
-                select name="channel" { @for c in crate::alerts::CHANNELS { option value=(c) { (c) } } }
-                input name="target" placeholder="https://…, email or +46…" required style="width:240px";
-                input name="secret" placeholder="Webhook secret (optional)";
-                input type="number" name="threshold" placeholder="Spike: events/hour" min="1";
-                button type="submit" { "Create" }
-            } }
-        },
-    )
+            }
+        } }
+        h2 { "New rule" }
+        div.card { form.row method="post" {
+            input type="hidden" name="action" value="create";
+            select name="project" { option value="" { "All projects" } @for p in &projects { option value=(p.slug) { (p.name) } } }
+            select name="trigger" { @for t in crate::alerts::TRIGGERS { option value=(t) { (t) } } }
+            select name="channel" { @for c in crate::alerts::CHANNELS { option value=(c) { (c) } } }
+            input name="target" placeholder="https://…, email or +46…" required style="width:240px";
+            input name="secret" placeholder="Webhook secret (optional)";
+            input type="number" name="threshold" placeholder="Spike: events/hour" min="1";
+            button type="submit" { "Create" }
+        } }
+    })
 }
 
 #[derive(Deserialize)]
@@ -1861,22 +1559,12 @@ async fn change_password(
 
 /// Email an invite link through Resend when configured. Returns whether it was sent.
 pub async fn send_invite_email(s: &AppState, to: &str, link: &str) -> bool {
-    send_email(
-        s,
-        to,
-        "You're invited to Vaka",
-        &format!(
-            "You have been invited to Vaka.\n\nAccept the invite (valid for 7 days):\n{link}\n"
-        ),
-    )
-    .await
+    send_email(s, to, "You're invited to Vaka", &format!("You have been invited to Vaka.\n\nAccept the invite (valid for 7 days):\n{link}\n")).await
 }
 
 /// Send a plain-text email through Resend when configured. Returns whether it was sent.
 pub async fn send_email(s: &AppState, to: &str, subject: &str, text: &str) -> bool {
-    let Some(key) = &s.config.resend_api_key else {
-        return false;
-    };
+    let Some(key) = &s.config.resend_api_key else { return false };
     let res = s
         .http
         .post(format!("{}/emails", s.config.resend_api_url))

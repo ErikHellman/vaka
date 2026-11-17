@@ -164,19 +164,8 @@ pub fn spawn(state: AppState, mut rx: mpsc::Receiver<Work>) {
         let mut tick = tokio::time::interval(Duration::from_millis(1000));
         // Flush in the background (at most 2 inserts in flight) so processing never waits on ClickHouse.
         let inflight = std::sync::Arc::new(tokio::sync::Semaphore::new(2));
-        let spawn_flush = |state: &AppState,
-                           e: &mut Vec<ErrorRow>,
-                           s: &mut Vec<SessionRow>,
-                           v: &mut Vec<EventRow>,
-                           sp: &mut Vec<SpanRow>,
-                           sem: std::sync::Arc<tokio::sync::Semaphore>| {
-            let (state, mut e, mut s, mut v, mut sp) = (
-                state.clone(),
-                std::mem::take(e),
-                std::mem::take(s),
-                std::mem::take(v),
-                std::mem::take(sp),
-            );
+        let spawn_flush = |state: &AppState, e: &mut Vec<ErrorRow>, s: &mut Vec<SessionRow>, v: &mut Vec<EventRow>, sp: &mut Vec<SpanRow>, sem: std::sync::Arc<tokio::sync::Semaphore>| {
+            let (state, mut e, mut s, mut v, mut sp) = (state.clone(), std::mem::take(e), std::mem::take(s), std::mem::take(v), std::mem::take(sp));
             async move {
                 if e.is_empty() && s.is_empty() && v.is_empty() && sp.is_empty() {
                     return;
@@ -217,58 +206,31 @@ pub fn spawn(state: AppState, mut rx: mpsc::Receiver<Work>) {
     });
 }
 
-async fn flush(
-    state: &AppState,
-    errors: &mut Vec<ErrorRow>,
-    sessions: &mut Vec<SessionRow>,
-    events: &mut Vec<EventRow>,
-    spans: &mut Vec<SpanRow>,
-) {
+async fn flush(state: &AppState, errors: &mut Vec<ErrorRow>, sessions: &mut Vec<SessionRow>, events: &mut Vec<EventRow>, spans: &mut Vec<SpanRow>) {
     for attempt in 0..3 {
         let mut ok = true;
         if !errors.is_empty() {
             match state.ch.insert("errors", errors).await {
-                Ok(()) => {
-                    crate::live::publish(state, errors, &[], &[]);
-                    errors.clear()
-                }
-                Err(e) => {
-                    ok = false;
-                    tracing::warn!(attempt, "insert errors: {e:#}")
-                }
+                Ok(()) => { crate::live::publish(state, errors, &[], &[]); errors.clear() }
+                Err(e) => { ok = false; tracing::warn!(attempt, "insert errors: {e:#}") }
             }
         }
         if !sessions.is_empty() {
             match state.ch.insert("sessions", sessions).await {
                 Ok(()) => sessions.clear(),
-                Err(e) => {
-                    ok = false;
-                    tracing::warn!(attempt, "insert sessions: {e:#}")
-                }
+                Err(e) => { ok = false; tracing::warn!(attempt, "insert sessions: {e:#}") }
             }
         }
         if !events.is_empty() {
             match state.ch.insert("events", events).await {
-                Ok(()) => {
-                    crate::live::publish(state, &[], events, &[]);
-                    events.clear()
-                }
-                Err(e) => {
-                    ok = false;
-                    tracing::warn!(attempt, "insert events: {e:#}")
-                }
+                Ok(()) => { crate::live::publish(state, &[], events, &[]); events.clear() }
+                Err(e) => { ok = false; tracing::warn!(attempt, "insert events: {e:#}") }
             }
         }
         if !spans.is_empty() {
             match state.ch.insert("spans", spans).await {
-                Ok(()) => {
-                    crate::live::publish(state, &[], &[], spans);
-                    spans.clear()
-                }
-                Err(e) => {
-                    ok = false;
-                    tracing::warn!(attempt, "insert spans: {e:#}")
-                }
+                Ok(()) => { crate::live::publish(state, &[], &[], spans); spans.clear() }
+                Err(e) => { ok = false; tracing::warn!(attempt, "insert spans: {e:#}") }
             }
         }
         if ok {
@@ -277,27 +239,15 @@ async fn flush(
         tokio::time::sleep(Duration::from_millis(500 * (attempt + 1))).await;
     }
     // Keep memory bounded if ClickHouse stays down.
-    for (name, len) in [
-        ("errors", errors.len()),
-        ("sessions", sessions.len()),
-        ("events", events.len()),
-    ] {
+    for (name, len) in [("errors", errors.len()), ("sessions", sessions.len()), ("events", events.len())] {
         if len > 50_000 {
             tracing::error!("dropping {len} buffered {name} rows: ClickHouse unavailable");
         }
     }
-    if errors.len() > 50_000 {
-        errors.clear()
-    }
-    if sessions.len() > 50_000 {
-        sessions.clear()
-    }
-    if events.len() > 50_000 {
-        events.clear()
-    }
-    if spans.len() > 50_000 {
-        spans.clear()
-    }
+    if errors.len() > 50_000 { errors.clear() }
+    if sessions.len() > 50_000 { sessions.clear() }
+    if events.len() > 50_000 { events.clear() }
+    if spans.len() > 50_000 { spans.clear() }
 }
 
 pub fn exceptions_of(item: &ErrorItem) -> Vec<ExceptionData> {
@@ -319,64 +269,25 @@ async fn process_error(
     sdk: SdkInfo,
     received_at: i64,
 ) -> anyhow::Result<ErrorRow> {
-    let platform = item
-        .platform
-        .clone()
-        .unwrap_or_else(|| project.platform.clone());
+    let platform = item.platform.clone().unwrap_or_else(|| project.platform.clone());
     let release = item.release.clone().unwrap_or_default();
     let mut exceptions = exceptions_of(&item);
     let images = crate::symbolicate::normalize_images(&item.debug_images);
 
-    let symbolicated = crate::symbolicate::symbolicate(
-        state,
-        &project.id,
-        &release,
-        &platform,
-        &mut exceptions,
-        &images,
-    )
-    .await;
+    let symbolicated = crate::symbolicate::symbolicate(state, &project.id, &release, &platform, &mut exceptions, &images).await;
 
     let message = item.message.clone().unwrap_or_default();
-    let fingerprint = crate::grouping::fingerprint(
-        &platform,
-        &exceptions,
-        Some(&message),
-        item.fingerprint.as_deref(),
-    );
+    let fingerprint = crate::grouping::fingerprint(&platform, &exceptions, Some(&message), item.fingerprint.as_deref());
     let title = crate::grouping::title(&exceptions, Some(&message));
     let culprit = crate::grouping::culprit(&exceptions);
-    let level = item.level.clone().unwrap_or_else(|| {
-        if item.fatal.unwrap_or(false) {
-            "fatal".into()
-        } else {
-            "error".into()
-        }
-    });
-    let ts = item
-        .timestamp
-        .as_ref()
-        .and_then(parse_timestamp)
-        .unwrap_or(received_at);
+    let level = item.level.clone().unwrap_or_else(|| if item.fatal.unwrap_or(false) { "fatal".into() } else { "error".into() });
+    let ts = item.timestamp.as_ref().and_then(parse_timestamp).unwrap_or(received_at);
 
-    let (issue_id, change) = upsert_issue(
-        state,
-        project,
-        &fingerprint,
-        &title,
-        &culprit,
-        &level,
-        &platform,
-        &release,
-        ts,
-    )
-    .await?;
+    let (issue_id, change) = upsert_issue(state, project, &fingerprint, &title, &culprit, &level, &platform, &release, ts).await?;
     if change == IssueChange::New {
         let exc = serde_json::to_value(&exceptions).unwrap_or_default();
         let tags = serde_json::to_value(&item.tags).unwrap_or_default();
-        if let Err(e) =
-            crate::ownership::assign_new_issue(state, &project.id, &issue_id, &exc, &tags).await
-        {
+        if let Err(e) = crate::ownership::assign_new_issue(state, &project.id, &issue_id, &exc, &tags).await {
             tracing::warn!("ownership rules failed: {e:#}");
         }
     }
@@ -385,17 +296,7 @@ async fn process_error(
             "environment": item.environment.clone().unwrap_or_else(|| "production".into()), "level": level, "release": release,
             "handled": item.handled.unwrap_or(true), "tags": item.tags,
         });
-        crate::alerts::notify_issue(
-            state,
-            project,
-            &issue_id,
-            if change == IssueChange::New {
-                "new_issue"
-            } else {
-                "regression"
-            },
-            Some(ctx),
-        );
+        crate::alerts::notify_issue(state, project, &issue_id, if change == IssueChange::New { "new_issue" } else { "regression" }, Some(ctx));
     }
     if !release.is_empty() {
         let created = sqlx::query("INSERT INTO releases (project_id, version, created_at) VALUES ($1, $2, $3) ON CONFLICT (project_id, version) DO NOTHING")
@@ -405,15 +306,7 @@ async fn process_error(
         }
     }
 
-    let mut breadcrumbs = serde_json::Value::Array(
-        item.breadcrumbs
-            .iter()
-            .rev()
-            .take(100)
-            .rev()
-            .cloned()
-            .collect(),
-    );
+    let mut breadcrumbs = serde_json::Value::Array(item.breadcrumbs.iter().rev().take(100).rev().cloned().collect());
     let mut contexts = item.contexts.clone().unwrap_or(serde_json::Value::Null);
     let mut tags: serde_json::Value = serde_json::to_value(&item.tags)?;
     let mut exc_value = serde_json::to_value(&exceptions)?;
@@ -421,14 +314,7 @@ async fn process_error(
     let mut url_value = serde_json::Value::String(item.url.clone().unwrap_or_default());
     if project.scrub_enabled {
         let s = Scrubber::new(&project.scrub_fields);
-        for v in [
-            &mut breadcrumbs,
-            &mut contexts,
-            &mut tags,
-            &mut exc_value,
-            &mut msg_value,
-            &mut url_value,
-        ] {
+        for v in [&mut breadcrumbs, &mut contexts, &mut tags, &mut exc_value, &mut msg_value, &mut url_value] {
             s.scrub_value(v);
         }
     }
@@ -437,16 +323,7 @@ async fn process_error(
     let device = item.device.clone().unwrap_or_default();
     let tags: BTreeMap<String, String> = tags
         .as_object()
-        .map(|o| {
-            o.iter()
-                .map(|(k, v)| {
-                    (
-                        truncate(k, 64),
-                        truncate(&crate::models::value_to_string(v), 256),
-                    )
-                })
-                .collect()
-        })
+        .map(|o| o.iter().map(|(k, v)| (truncate(k, 64), truncate(&crate::models::value_to_string(v), 256))).collect())
         .unwrap_or_default();
     let trace_id = item
         .trace_id
@@ -454,22 +331,12 @@ async fn process_error(
         .or_else(|| contexts["trace"]["trace_id"].as_str().map(String::from))
         .map(|t| truncate(&t.to_lowercase(), 64))
         .unwrap_or_default();
-    let browser = if user_agent.is_empty() {
-        String::new()
-    } else {
-        woothee::parser::Parser::new()
-            .parse(&user_agent)
-            .map(|r| r.name.to_string())
-            .filter(|n| n != "UNKNOWN")
-            .unwrap_or_default()
+    let browser = if user_agent.is_empty() { String::new() } else {
+        woothee::parser::Parser::new().parse(&user_agent).map(|r| r.name.to_string()).filter(|n| n != "UNKNOWN").unwrap_or_default()
     };
 
     Ok(ErrorRow {
-        event_id: item
-            .event_id
-            .clone()
-            .filter(|i| uuid::Uuid::parse_str(i).is_ok())
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        event_id: item.event_id.clone().filter(|i| uuid::Uuid::parse_str(i).is_ok()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         project_id: project.id.clone(),
         issue_id,
         fingerprint,
@@ -478,10 +345,7 @@ async fn process_error(
         platform,
         level,
         release,
-        environment: item
-            .environment
-            .clone()
-            .unwrap_or_else(|| "production".into()),
+        environment: item.environment.clone().unwrap_or_else(|| "production".into()),
         exception_type: truncate(&first.ty, 256),
         exception_value: truncate(&first.value, 4096),
         message: truncate(msg_value.as_str().unwrap_or(""), 4096),
@@ -492,23 +356,10 @@ async fn process_error(
         exceptions: serde_json::to_string(&exceptions)?,
         breadcrumbs: serde_json::to_string(&breadcrumbs)?,
         tags,
-        contexts: if contexts.is_null() {
-            String::new()
-        } else {
-            serde_json::to_string(&contexts)?
-        },
+        contexts: if contexts.is_null() { String::new() } else { serde_json::to_string(&contexts)? },
         debug_images: serde_json::to_string(&images)?,
-        user_id: item
-            .user_id
-            .clone()
-            .or_else(|| item.user.as_ref().and_then(|u| u.id.clone()))
-            .unwrap_or_default(),
-        anon_id: item
-            .anon_id
-            .as_deref()
-            .filter(|a| !a.is_empty())
-            .map(|a| crate::ingest::hash_install_id(&project.id, a))
-            .unwrap_or_default(),
+        user_id: item.user_id.clone().or_else(|| item.user.as_ref().and_then(|u| u.id.clone())).unwrap_or_default(),
+        anon_id: item.anon_id.as_deref().filter(|a| !a.is_empty()).map(|a| crate::ingest::hash_install_id(&project.id, a)).unwrap_or_default(),
         session_id: item.session_id.clone().unwrap_or_default(),
         device_model: device.model.unwrap_or_default(),
         os_name: device.os_name.unwrap_or_default(),
@@ -571,13 +422,11 @@ pub async fn upsert_issue(
     match existing {
         None => {
             let id = new_id();
-            let short = sqlx::query(
-                "SELECT COALESCE(MAX(short_id), 0) AS m FROM issues WHERE project_id = $1",
-            )
-            .bind(&project.id)
-            .fetch_one(&state.db)
-            .await?
-            .i("m")
+            let short = sqlx::query("SELECT COALESCE(MAX(short_id), 0) AS m FROM issues WHERE project_id = $1")
+                .bind(&project.id)
+                .fetch_one(&state.db)
+                .await?
+                .i("m")
                 + 1;
             let res = sqlx::query(
                 "INSERT INTO issues (id, short_id, project_id, fingerprint, title, culprit, level, platform, status, first_seen, last_seen, times_seen, first_release, last_release) \
@@ -591,12 +440,8 @@ pub async fn upsert_issue(
                 return Ok((id, IssueChange::New));
             }
             // Lost a race; fall through as a sighting.
-            let row =
-                sqlx::query("SELECT id FROM issues WHERE project_id = $1 AND fingerprint = $2")
-                    .bind(&project.id)
-                    .bind(fingerprint)
-                    .fetch_one(&state.db)
-                    .await?;
+            let row = sqlx::query("SELECT id FROM issues WHERE project_id = $1 AND fingerprint = $2")
+                .bind(&project.id).bind(fingerprint).fetch_one(&state.db).await?;
             Ok((row.s("id"), IssueChange::Seen))
         }
         Some(row) => {
@@ -606,27 +451,14 @@ pub async fn upsert_issue(
             let mut regressed = status == "resolved";
             // An event from a release older than the one with the fix is not a regression.
             if regressed {
-                if let Some(fixed) = row
-                    .os("resolved_in_release")
-                    .filter(|r| !r.is_empty() && r != release)
-                {
-                    if !release.is_empty()
-                        && release_is_older(state, &project.id, release, &fixed).await?
-                    {
+                if let Some(fixed) = row.os("resolved_in_release").filter(|r| !r.is_empty() && r != release) {
+                    if !release.is_empty() && release_is_older(state, &project.id, release, &fixed).await? {
                         regressed = false;
                     }
                 }
             }
-            let unignore = status == "ignored"
-                && row
-                    .oi("ignored_until")
-                    .map(|u| u > 0 && u < now)
-                    .unwrap_or(false);
-            let new_status = if regressed || unignore {
-                "open".to_string()
-            } else {
-                status
-            };
+            let unignore = status == "ignored" && row.oi("ignored_until").map(|u| u > 0 && u < now).unwrap_or(false);
+            let new_status = if regressed || unignore { "open".to_string() } else { status };
             sqlx::query(
                 "UPDATE issues SET last_seen = CASE WHEN last_seen < $1 THEN $1 ELSE last_seen END, times_seen = times_seen + 1, \
                  last_release = CASE WHEN $2 = '' THEN last_release ELSE $2 END, status = $3, \
@@ -637,25 +469,13 @@ pub async fn upsert_issue(
             .bind(title).bind(culprit).bind(&id)
             .execute(&state.db)
             .await?;
-            Ok((
-                id,
-                if regressed {
-                    IssueChange::Regressed
-                } else {
-                    IssueChange::Seen
-                },
-            ))
+            Ok((id, if regressed { IssueChange::Regressed } else { IssueChange::Seen }))
         }
     }
 }
 
 /// Was `release` first seen before `than`? Unknown releases count as newer.
-async fn release_is_older(
-    state: &AppState,
-    project_id: &str,
-    release: &str,
-    than: &str,
-) -> anyhow::Result<bool> {
+async fn release_is_older(state: &AppState, project_id: &str, release: &str, than: &str) -> anyhow::Result<bool> {
     let created = |v: String| {
         let state = state.clone();
         let project_id = project_id.to_string();
@@ -668,13 +488,8 @@ async fn release_is_older(
                 .map(|r| r.map(|r| r.i("created_at")))
         }
     };
-    Ok(
-        match (
-            created(release.to_string()).await?,
-            created(than.to_string()).await?,
-        ) {
-            (Some(a), Some(b)) => a < b,
-            _ => false,
-        },
-    )
+    Ok(match (created(release.to_string()).await?, created(than.to_string()).await?) {
+        (Some(a), Some(b)) => a < b,
+        _ => false,
+    })
 }

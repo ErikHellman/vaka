@@ -30,11 +30,7 @@ pub struct Probe {
 
 impl Probe {
     fn new(result: &str, error: impl Into<String>) -> Probe {
-        Probe {
-            result: result.into(),
-            error: error.into(),
-            ..Default::default()
-        }
+        Probe { result: result.into(), error: error.into(), ..Default::default() }
     }
 }
 
@@ -54,29 +50,15 @@ pub struct HttpCheck {
 /// Parse `expect_status`: a code (200), a class ("2xx") or a list of them. Default 2xx and 3xx.
 pub fn parse_expect(v: Option<&Value>) -> Result<Vec<(u16, bool)>, String> {
     let one = |v: &Value| -> Result<(u16, bool), String> {
-        let bad =
-            || "expect_status must be status codes like 200 or classes like \"2xx\"".to_string();
+        let bad = || "expect_status must be status codes like 200 or classes like \"2xx\"".to_string();
         match v {
-            Value::Number(n) => n
-                .as_u64()
-                .filter(|n| (100..600).contains(n))
-                .map(|n| (n as u16, false))
-                .ok_or_else(bad),
+            Value::Number(n) => n.as_u64().filter(|n| (100..600).contains(n)).map(|n| (n as u16, false)).ok_or_else(bad),
             Value::String(s) => {
                 let s = s.trim().to_ascii_lowercase();
                 if s.len() == 3 && s.ends_with("xx") {
-                    s[..1]
-                        .parse::<u16>()
-                        .ok()
-                        .filter(|d| (1..6).contains(d))
-                        .map(|d| (d, true))
-                        .ok_or_else(bad)
+                    s[..1].parse::<u16>().ok().filter(|d| (1..6).contains(d)).map(|d| (d, true)).ok_or_else(bad)
                 } else {
-                    s.parse::<u16>()
-                        .ok()
-                        .filter(|n| (100..600).contains(n))
-                        .map(|n| (n, false))
-                        .ok_or_else(bad)
+                    s.parse::<u16>().ok().filter(|n| (100..600).contains(n)).map(|n| (n, false)).ok_or_else(bad)
                 }
             }
             _ => Err(bad()),
@@ -91,9 +73,7 @@ pub fn parse_expect(v: Option<&Value>) -> Result<Vec<(u16, bool)>, String> {
 }
 
 fn status_ok(expect: &[(u16, bool)], code: u16) -> bool {
-    expect
-        .iter()
-        .any(|(n, class)| if *class { code / 100 == *n } else { code == *n })
+    expect.iter().any(|(n, class)| if *class { code / 100 == *n } else { code == *n })
 }
 
 /// A new W3C trace id and a `traceparent` header value, so the target's own traces (if it
@@ -133,10 +113,7 @@ fn describe(e: &reqwest::Error) -> String {
         src = s.source();
     }
     // Drop the URL reqwest prefixes; the monitor already names it.
-    msg.replace(
-        &format!(" for url ({})", e.url().map(|u| u.as_str()).unwrap_or("")),
-        "",
-    )
+    msg.replace(&format!(" for url ({})", e.url().map(|u| u.as_str()).unwrap_or("")), "")
 }
 
 fn is_network_error(e: &reqwest::Error) -> bool {
@@ -145,18 +122,11 @@ fn is_network_error(e: &reqwest::Error) -> bool {
 
 pub async fn run_http(check: &HttpCheck) -> Probe {
     let (trace, header) = traceparent();
-    let client = if check.follow_redirects {
-        &CLIENTS.0
-    } else {
-        &CLIENTS.1
-    };
+    let client = if check.follow_redirects { &CLIENTS.0 } else { &CLIENTS.1 };
     if let Err(e) = guard().check_url(&check.url) {
         return Probe::new("fail", e);
     }
-    let mut req = client
-        .request(check.method.clone(), &check.url)
-        .timeout(check.timeout)
-        .header("traceparent", header);
+    let mut req = client.request(check.method.clone(), &check.url).timeout(check.timeout).header("traceparent", header);
     for (k, v) in &check.headers {
         req = req.header(k.as_str(), v.as_str());
     }
@@ -178,30 +148,14 @@ pub async fn run_http(check: &HttpCheck) -> Probe {
         }
         Ok(r) => {
             let code = r.status().as_u16();
-            let not_after = r
-                .extensions()
-                .get::<reqwest::tls::TlsInfo>()
-                .and_then(|t| t.peer_certificate())
-                .and_then(cert_not_after);
-            let mut p = Probe {
-                http_status: code as i64,
-                tls_not_after: not_after,
-                ..Default::default()
-            };
+            let not_after = r.extensions().get::<reqwest::tls::TlsInfo>().and_then(|t| t.peer_certificate()).and_then(cert_not_after);
+            let mut p = Probe { http_status: code as i64, tls_not_after: not_after, ..Default::default() };
             if !status_ok(&check.expect, code) {
                 p.result = "fail".into();
-                p.error = format!(
-                    "HTTP {code}{}",
-                    r.status()
-                        .canonical_reason()
-                        .map(|s| format!(" {s}"))
-                        .unwrap_or_default()
-                );
+                p.error = format!("HTTP {code}{}", r.status().canonical_reason().map(|s| format!(" {s}")).unwrap_or_default());
             } else if let Some(needle) = &check.body_contains {
                 // Read at most 1 MB looking for the text.
-                match read_limited(r, 1 << 20, check.timeout.saturating_sub(started.elapsed()))
-                    .await
-                {
+                match read_limited(r, 1 << 20, check.timeout.saturating_sub(started.elapsed())).await {
                     Ok(body) if body.contains(needle.as_str()) => p.result = "ok".into(),
                     Ok(_) => {
                         p.result = "fail".into();
@@ -223,11 +177,7 @@ pub async fn run_http(check: &HttpCheck) -> Probe {
     p
 }
 
-async fn read_limited(
-    mut r: reqwest::Response,
-    max: usize,
-    timeout: Duration,
-) -> anyhow::Result<String> {
+async fn read_limited(mut r: reqwest::Response, max: usize, timeout: Duration) -> anyhow::Result<String> {
     let mut buf = Vec::new();
     let read = async {
         while let Some(chunk) = r.chunk().await? {
@@ -238,45 +188,26 @@ async fn read_limited(
         }
         anyhow::Ok(())
     };
-    tokio::time::timeout(timeout.max(Duration::from_millis(100)), read)
-        .await
-        .map_err(|_| anyhow::anyhow!("timed out"))??;
+    tokio::time::timeout(timeout.max(Duration::from_millis(100)), read).await.map_err(|_| anyhow::anyhow!("timed out"))??;
     Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
 /// TLS check: connect to `https://host:port/` and read the certificate. Any HTTP answer is
 /// fine; an invalid or expired certificate fails the handshake and the check.
 pub async fn run_tls(host: &str, port: u16, timeout: Duration) -> Probe {
-    let url = if port == 443 {
-        format!("https://{host}/")
-    } else {
-        format!("https://{host}:{port}/")
-    };
+    let url = if port == 443 { format!("https://{host}/") } else { format!("https://{host}:{port}/") };
     let started = Instant::now();
     if let Err(e) = guard().check_url(&url) {
         return Probe::new("fail", e);
     }
     let res = CLIENTS.1.head(&url).timeout(timeout).send().await;
     let mut p = match res {
-        Ok(r) => match r
-            .extensions()
-            .get::<reqwest::tls::TlsInfo>()
-            .and_then(|t| t.peer_certificate())
-            .and_then(cert_not_after)
-        {
-            Some(na) => Probe {
-                result: "ok".into(),
-                tls_not_after: Some(na),
-                http_status: r.status().as_u16() as i64,
-                ..Default::default()
-            },
+        Ok(r) => match r.extensions().get::<reqwest::tls::TlsInfo>().and_then(|t| t.peer_certificate()).and_then(cert_not_after) {
+            Some(na) => Probe { result: "ok".into(), tls_not_after: Some(na), http_status: r.status().as_u16() as i64, ..Default::default() },
             None => Probe::new("fail", "the server sent no readable certificate"),
         },
         Err(e) => {
-            let mut p = Probe::new(
-                if e.is_timeout() { "timeout" } else { "fail" },
-                describe(&e),
-            );
+            let mut p = Probe::new(if e.is_timeout() { "timeout" } else { "fail" }, describe(&e));
             if is_network_error(&e) && !network_up().await {
                 p.result = "inconclusive".into();
             }
@@ -291,19 +222,12 @@ pub async fn run_tls(host: &str, port: u16, timeout: Duration) -> Probe {
 // Canaries
 // ---------------------------------------------------------------------------
 
-const DEFAULT_CANARIES: &[&str] = &[
-    "https://www.google.com/generate_204",
-    "https://cloudflare.com/cdn-cgi/trace",
-];
+const DEFAULT_CANARIES: &[&str] = &["https://www.google.com/generate_204", "https://cloudflare.com/cdn-cgi/trace"];
 
 fn canaries() -> Vec<String> {
     match std::env::var("VAKA_MONITOR_CANARY_URLS") {
         Ok(v) if v.trim() == "off" => vec![],
-        Ok(v) if !v.trim().is_empty() => v
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
+        Ok(v) if !v.trim().is_empty() => v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
         _ => DEFAULT_CANARIES.iter().map(|s| s.to_string()).collect(),
     }
 }
@@ -324,13 +248,8 @@ pub async fn network_up() -> bool {
         return true;
     }
     let client = &CLIENTS.1;
-    let checks = urls
-        .iter()
-        .map(|u| client.head(u).timeout(Duration::from_secs(5)).send());
-    let up = futures::future::join_all(checks)
-        .await
-        .into_iter()
-        .any(|r| r.is_ok());
+    let checks = urls.iter().map(|u| client.head(u).timeout(Duration::from_secs(5)).send());
+    let up = futures::future::join_all(checks).await.into_iter().any(|r| r.is_ok());
     *NETWORK.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), up));
     if !up {
         tracing::warn!("monitor canaries unreachable; connection failures are not counted until the network is back");
@@ -385,32 +304,14 @@ pub fn cert_not_after(cert: &[u8]) -> Option<i64> {
     let full = match tag {
         0x17 if s.len() >= 13 => {
             let yy: i32 = s[..2].parse().ok()?;
-            format!(
-                "{}{}",
-                if yy >= 50 { 1900 + yy } else { 2000 + yy },
-                &s[2..]
-            )
+            format!("{}{}", if yy >= 50 { 1900 + yy } else { 2000 + yy }, &s[2..])
         }
         0x18 if s.len() >= 15 => s.to_string(),
         _ => return None,
     };
     let n = |a: usize, b: usize| full.get(a..b)?.parse::<i16>().ok();
-    let dt = jiff::civil::DateTime::new(
-        n(0, 4)?,
-        n(4, 6)? as i8,
-        n(6, 8)? as i8,
-        n(8, 10)? as i8,
-        n(10, 12)? as i8,
-        n(12, 14)? as i8,
-        0,
-    )
-    .ok()?;
-    Some(
-        dt.to_zoned(jiff::tz::TimeZone::UTC)
-            .ok()?
-            .timestamp()
-            .as_millisecond(),
-    )
+    let dt = jiff::civil::DateTime::new(n(0, 4)?, n(4, 6)? as i8, n(6, 8)? as i8, n(8, 10)? as i8, n(10, 12)? as i8, n(12, 14)? as i8, 0).ok()?;
+    Some(dt.to_zoned(jiff::tz::TimeZone::UTC).ok()?.timestamp().as_millisecond())
 }
 
 #[cfg(test)]
@@ -421,18 +322,13 @@ mod tests {
     #[test]
     fn expect_status() {
         let d = parse_expect(None).unwrap();
-        assert!(
-            status_ok(&d, 200) && status_ok(&d, 301) && !status_ok(&d, 404) && !status_ok(&d, 500)
-        );
+        assert!(status_ok(&d, 200) && status_ok(&d, 301) && !status_ok(&d, 404) && !status_ok(&d, 500));
         let e = parse_expect(Some(&json!([200, "4xx"]))).unwrap();
         assert!(status_ok(&e, 200) && status_ok(&e, 404) && !status_ok(&e, 201));
         assert!(parse_expect(Some(&json!("9xx"))).is_err());
         assert!(parse_expect(Some(&json!(42))).is_err());
         assert!(parse_expect(Some(&json!([]))).is_err());
-        assert_eq!(
-            parse_expect(Some(&json!("204"))).unwrap(),
-            vec![(204, false)]
-        );
+        assert_eq!(parse_expect(Some(&json!("204"))).unwrap(), vec![(204, false)]);
     }
 
     #[test]

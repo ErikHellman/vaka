@@ -38,11 +38,7 @@ pub async fn by_ingest_key(state: &AppState, key: &str) -> anyhow::Result<Option
     .await?;
     let p = row.as_ref().map(from_row);
     if let Some(p) = &p {
-        state
-            .key_cache
-            .write()
-            .await
-            .insert(key.to_string(), (p.clone(), now));
+        state.key_cache.write().await.insert(key.to_string(), (p.clone(), now));
     }
     Ok(p)
 }
@@ -59,9 +55,11 @@ pub async fn find(state: &AppState, id_or_slug: &str) -> anyhow::Result<Option<P
 }
 
 pub async fn list(state: &AppState) -> anyhow::Result<Vec<ProjectInfo>> {
-    let rows = sqlx::query(&format!("SELECT {COLS} FROM projects ORDER BY name"))
-        .fetch_all(&state.db)
-        .await?;
+    let rows = sqlx::query(&format!(
+        "SELECT {COLS} FROM projects ORDER BY name"
+    ))
+    .fetch_all(&state.db)
+    .await?;
     Ok(rows.iter().map(from_row).collect())
 }
 
@@ -75,19 +73,10 @@ pub fn slugify(name: &str) -> String {
         s = s.replace("--", "-");
     }
     let s = s.trim_matches('-').to_string();
-    if s.is_empty() {
-        "project".into()
-    } else {
-        s
-    }
+    if s.is_empty() { "project".into() } else { s }
 }
 
-pub async fn create(
-    state: &AppState,
-    name: &str,
-    platform: &str,
-    slug: Option<&str>,
-) -> anyhow::Result<(ProjectInfo, String)> {
+pub async fn create(state: &AppState, name: &str, platform: &str, slug: Option<&str>) -> anyhow::Result<(ProjectInfo, String)> {
     let id = crate::util::new_id();
     let mut slug = slug.map(slugify).unwrap_or_else(|| slugify(name));
     // Make the slug unique.
