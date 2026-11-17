@@ -12,6 +12,7 @@ mod db;
 mod docs;
 mod feedback;
 mod fixctx;
+mod geoip;
 mod flags;
 mod github;
 mod grouping;
@@ -97,16 +98,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let geoip = config
-        .geoip_db
-        .as_ref()
-        .and_then(|p| match maxminddb::Reader::open_readfile(p) {
-            Ok(r) => Some(r),
-            Err(e) => {
-                tracing::warn!("could not open GeoIP database {p}: {e}");
-                None
-            }
-        });
+    let geoip = geoip::GeoIp::load(&config);
 
     let (work_tx, work_rx) = tokio::sync::mpsc::channel(100_000);
     let state: state::AppState = Arc::new(state::AppStateInner {
@@ -146,6 +138,7 @@ async fn main() -> anyhow::Result<()> {
     monitors::spawn_scheduler(state.clone());
     feedback::spawn_worker(state.clone());
     s3::spawn_startup_sync(state.clone());
+    geoip::spawn_updater(state.clone());
 
     let ingest_cors = CorsLayer::new()
         .allow_origin(Any)

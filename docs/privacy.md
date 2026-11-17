@@ -13,6 +13,8 @@ personal data as possible. Defaults are strict; identification is opt-in.
   every day and old salts are deleted, so the same person cannot be linked across days and the
   hash cannot be reversed.
 - IP addresses are used for the hash and the country lookup, then discarded. They are never stored.
+  The country lookup runs on your server against a bundled database: no address is sent anywhere
+  ([country lookup](self-hosting.md#country-lookup)).
 - Stored per pageview: URL path and hostname, referrer, UTM tags, browser, OS, device type,
   country, and any custom properties you send.
 

@@ -136,17 +136,7 @@ fn country(state: &AppState, headers: &HeaderMap, ip: Option<IpAddr>) -> String 
             }
         }
     }
-    if let (Some(reader), Some(ip)) = (&state.geoip, ip) {
-        if let Ok(Some(c)) = reader
-            .lookup(ip)
-            .and_then(|r| r.decode::<maxminddb::geoip2::Country>())
-        {
-            if let Some(code) = c.country.iso_code {
-                return code.to_string();
-            }
-        }
-    }
-    String::new()
+    ip.and_then(|ip| state.geoip.country(ip)).unwrap_or_default()
 }
 
 fn parse_body(body: &Bytes) -> Result<Value, IngestError> {

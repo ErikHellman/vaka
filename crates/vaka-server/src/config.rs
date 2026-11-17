@@ -13,6 +13,12 @@ pub struct Config {
     pub admin_password: Option<String>,
     pub data_dir: String,
     pub geoip_db: Option<String>,
+    /// Look up countries from client IPs (`VAKA_GEOIP`, default on).
+    pub geoip_enabled: bool,
+    /// Check weekly for a newer DB-IP country database (`VAKA_GEOIP_UPDATE`, default on).
+    pub geoip_update: bool,
+    /// Download URL for the update check; `{month}` becomes `YYYY-MM` (`VAKA_GEOIP_UPDATE_URL`).
+    pub geoip_update_url: String,
     pub resend_api_key: Option<String>,
     pub resend_api_url: String,
     /// SMS alert channel provider and credentials (`VAKA_SMS_*`).
@@ -116,6 +122,14 @@ pub fn flag(name: &str) -> bool {
     )
 }
 
+/// A boolean environment variable that is on unless set to 0, false, no or off.
+pub fn flag_default_on(name: &str) -> bool {
+    !matches!(
+        var(name).map(|v| v.trim().to_lowercase()).as_deref(),
+        Some("0" | "false" | "no" | "off")
+    )
+}
+
 fn var(name: &str) -> Option<String> {
     env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
@@ -136,6 +150,9 @@ impl Config {
             admin_email: var("VAKA_ADMIN_EMAIL"),
             admin_password: var("VAKA_ADMIN_PASSWORD"),
             geoip_db: var("VAKA_GEOIP_DB"),
+            geoip_enabled: flag_default_on("VAKA_GEOIP"),
+            geoip_update: flag_default_on("VAKA_GEOIP_UPDATE"),
+            geoip_update_url: var("VAKA_GEOIP_UPDATE_URL").unwrap_or_else(|| crate::geoip::DEFAULT_UPDATE_URL.into()),
             resend_api_key: var("VAKA_RESEND_API_KEY"),
             resend_api_url: var("VAKA_RESEND_API_URL").unwrap_or_else(|| "https://api.resend.com".into()).trim_end_matches('/').to_string(),
             sms: crate::sms::SmsConfig::from_env(),

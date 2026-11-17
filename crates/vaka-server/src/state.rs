@@ -20,7 +20,7 @@ pub struct AppStateInner {
     pub ch: ClickHouse,
     pub work_tx: mpsc::Sender<Work>,
     pub key_cache: RwLock<HashMap<String, (ProjectInfo, i64)>>,
-    pub geoip: Option<maxminddb::Reader<Vec<u8>>>,
+    pub geoip: crate::geoip::GeoIp,
     pub symbols: crate::symbolicate::SymbolCache,
     pub http: reqwest::Client,
     /// Client for user-chosen alert targets: no redirects, public addresses only.

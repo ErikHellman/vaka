@@ -1,0 +1,55 @@
+# Refreshes the bundled DB-IP "IP to Country Lite" database (geoip/dbip-country-lite.mmdb).
+# DB-IP publishes one release a month; running servers also check weekly on their own
+# (VAKA_GEOIP_UPDATE), so this only keeps new images and source checkouts current.
+name: GeoIP database
+
+on:
+  schedule:
+    - cron: "17 5 3 * *" # the 3rd of each month, after DB-IP's monthly release
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: geoip-${{ github.ref }}
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the latest release
+        run: |
+          set -euo pipefail
+          for m in "$(date -u +%Y-%m)" "$(date -u -d "$(date -u +%Y-%m-15) -1 month" +%Y-%m)"; do
+            if curl -fsSL -o /tmp/db.mmdb.gz "https://download.db-ip.com/free/dbip-country-lite-$m.mmdb.gz"; then
+              echo "MONTH=$m" >> "$GITHUB_ENV"
+              break
+            fi
+          done
+          [ -s /tmp/db.mmdb.gz ] || { echo "no DB-IP release found"; exit 1; }
+          gunzip -c /tmp/db.mmdb.gz > /tmp/db.mmdb
+      - name: Validate
+        run: |
+          set -euo pipefail
+          pip install --quiet 'maxminddb>=2.5,<3'
+          python3 - <<'PY'
+          import maxminddb
+          r = maxminddb.open_database("/tmp/db.mmdb")
+          assert "Country" in r.metadata().database_type, r.metadata().database_type
+          assert r.get("8.8.8.8")["country"]["iso_code"] == "US"
+          print("ok:", r.metadata().database_type, r.metadata().build_epoch)
+          PY
+      - name: Commit if changed
+        run: |
+          set -euo pipefail
+          cp /tmp/db.mmdb geoip/dbip-country-lite.mmdb
+          if git diff --quiet -- geoip/dbip-country-lite.mmdb && git ls-files --error-unmatch geoip/dbip-country-lite.mmdb >/dev/null 2>&1; then
+            echo "already up to date"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add geoip/dbip-country-lite.mmdb
+          git commit -m "Update DB-IP country database to $MONTH"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
