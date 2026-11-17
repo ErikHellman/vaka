@@ -157,9 +157,8 @@ fn parse_download(bytes: &[u8]) -> Result<Vec<u8>, String> {
     Ok(raw)
 }
 
-async fn fetch(state: &AppState, url: &str) -> Result<Option<Vec<u8>>, String> {
-    let resp = state
-        .http
+async fn fetch(http: &reqwest::Client, url: &str) -> Result<Option<Vec<u8>>, String> {
+    let resp = http
         .get(url)
         .timeout(Duration::from_secs(300))
         .send()
@@ -184,12 +183,18 @@ async fn fetch(state: &AppState, url: &str) -> Result<Option<Vec<u8>>, String> {
     Ok(Some(body.to_vec()))
 }
 
-/// Fetch the newest monthly release and swap it in when it is newer than the loaded one.
-async fn check(state: &AppState) -> Result<(), String> {
-    let template = &state.config.geoip_update_url;
-    for month in months(time::OffsetDateTime::now_utc()) {
+/// Download the newest monthly release. When it is newer than `current_epoch`, save it at `path`
+/// and return it.
+async fn download_newer(
+    http: &reqwest::Client,
+    template: &str,
+    current_epoch: u64,
+    path: &Path,
+    now: time::OffsetDateTime,
+) -> Result<Option<Reader<Vec<u8>>>, String> {
+    for month in months(now) {
         let url = template.replace("{month}", &month);
-        let Some(bytes) = fetch(state, &url).await? else {
+        let Some(bytes) = fetch(http, &url).await? else {
             continue;
         };
         let raw = tokio::task::spawn_blocking(move || parse_download(&bytes))
@@ -199,11 +204,10 @@ async fn check(state: &AppState) -> Result<(), String> {
             .map_err(|e| e.to_string())?
             .metadata
             .build_epoch;
-        if epoch <= state.geoip.build_epoch() {
+        if epoch <= current_epoch {
             tracing::debug!("GeoIP: {url} is not newer than the loaded database");
-            return Ok(());
+            return Ok(None);
         }
-        let path = downloaded_path(&state.config);
         let tmp = path.with_extension("mmdb.tmp");
         tokio::fs::create_dir_all(path.parent().unwrap())
             .await
@@ -211,7 +215,7 @@ async fn check(state: &AppState) -> Result<(), String> {
         tokio::fs::write(&tmp, &raw)
             .await
             .map_err(|e| format!("writing {}: {e}", tmp.display()))?;
-        tokio::fs::rename(&tmp, &path)
+        tokio::fs::rename(&tmp, path)
             .await
             .map_err(|e| e.to_string())?;
         let db = Reader::from_source(raw).map_err(|e| e.to_string())?;
@@ -219,10 +223,26 @@ async fn check(state: &AppState) -> Result<(), String> {
             "GeoIP: updated country database to the {month} release (built {})",
             built(&db)
         );
-        state.geoip.replace(db);
-        return Ok(());
+        return Ok(Some(db));
     }
     Err(format!("no release found at {template}"))
+}
+
+async fn check(state: &AppState) -> Result<(), String> {
+    let path = downloaded_path(&state.config);
+    let now = time::OffsetDateTime::now_utc();
+    if let Some(db) = download_newer(
+        &state.http,
+        &state.config.geoip_update_url,
+        state.geoip.build_epoch(),
+        &path,
+        now,
+    )
+    .await?
+    {
+        state.geoip.replace(db);
+    }
+    Ok(())
 }
 
 /// Weekly update check, unless turned off or a custom database is configured.
@@ -290,5 +310,69 @@ mod tests {
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         std::io::Write::write_all(&mut gz, &bytes).unwrap();
         assert!(parse_download(&gz.finish().unwrap()).is_ok());
+    }
+
+    /// The update check against a local server: falls back to last month, saves, skips same build.
+    #[tokio::test]
+    async fn update_downloads_newer_release() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(REPO_PATH);
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut gz, &std::fs::read(&src).unwrap()).unwrap();
+        let body = Arc::new(gz.finish().unwrap());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            loop {
+                let (mut s, _) = listener.accept().await.unwrap();
+                let body = body.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0; 4096];
+                    let n = s.read(&mut buf).await.unwrap();
+                    let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let resp: Vec<u8> = if req.starts_with("GET /db-2026-10.mmdb.gz ") {
+                        let mut r = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                            body.len()
+                        )
+                        .into_bytes();
+                        r.extend_from_slice(&body);
+                        r
+                    } else {
+                        b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                            .to_vec()
+                    };
+                    s.write_all(&resp).await.unwrap();
+                });
+            }
+        });
+        let dir = std::env::temp_dir().join(format!("vaka-geoip-{}", std::process::id()));
+        let path = dir.join("geoip").join(FILE_NAME);
+        let http = reqwest::Client::new();
+        let template = format!("http://{addr}/db-{{month}}.mmdb.gz");
+        let now = time::macros::datetime!(2026-11-01 0:00 UTC);
+        let db = download_newer(&http, &template, 0, &path, now)
+            .await
+            .unwrap()
+            .expect("newer database");
+        let epoch = db.metadata.build_epoch;
+        assert!(open(&path).is_ok(), "saved to the data dir");
+        assert!(
+            download_newer(&http, &template, epoch, &path, now)
+                .await
+                .unwrap()
+                .is_none(),
+            "same build is skipped"
+        );
+        let old = time::macros::datetime!(2026-06-01 0:00 UTC);
+        assert!(
+            download_newer(&http, &template, 0, &path, old)
+                .await
+                .is_err(),
+            "no release"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -7,9 +7,6 @@ on:
   schedule:
     - cron: "17 5 3 * *" # the 3rd of each month, after DB-IP's monthly release
   workflow_dispatch:
-  push: # TEMPORARY: fetch the initial database on the PR branch; removed before merge
-    branches: [claude/project-thread-073v02]
-    paths: [.github/workflows/geoip.yml]
 
 permissions:
   contents: write
