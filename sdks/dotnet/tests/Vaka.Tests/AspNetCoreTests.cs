@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -104,12 +105,24 @@ public class AspNetCoreTests
     [Fact]
     public async Task OpenTelemetrySpansGoToVakaOtlpEndpoint()
     {
+        // The server ends the request's activity after the test client already has the response.
+        // Wait for that, or the tracer provider can be disposed before the span reaches the exporter.
+        var requestEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = s => s.Name == "Microsoft.AspNetCore",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.None,
+            ActivityStopped = a => { if (a.OperationName == "Microsoft.AspNetCore.Hosting.HttpRequestIn") requestEnded.TrySetResult(); },
+        };
+        ActivitySource.AddActivityListener(listener);
+
         var (app, fake) = await StartApp(useExceptionHandler: false, otel: true);
         await using (app)
         {
             await app.GetTestClient().GetAsync("/carts/1");
-            await app.StopAsync(); // disposes the tracer provider, which flushes the exporter
-        }
+            await requestEnded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await app.StopAsync();
+        } // disposing the app disposes the tracer provider, which flushes the exporter
         var otlp = fake.Requests.Where(r => r.Path.StartsWith("/ingest/otlp/")).ToList();
         Assert.Contains(otlp, r => r.Path == "/ingest/otlp/v1/traces");
         var req = otlp.First(r => r.Path == "/ingest/otlp/v1/traces").Request;
