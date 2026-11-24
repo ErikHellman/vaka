@@ -39,8 +39,8 @@ const nav = [
   ['SDK: .NET', 'sdk-dotnet'],
   ['SDK: HTTP', 'sdk-http'],
 ];
-const installs = ['javascript', 'android', 'ios', 'rust', 'go', 'jvm', 'node', 'python', 'dotnet', 'http'];
-const installLabel = { javascript: 'JavaScript', android: 'Android', ios: 'iOS', rust: 'Rust', go: 'Go', jvm: 'JVM', node: 'Node.js', python: 'Python', dotnet: '.NET', http: 'Other (HTTP)' };
+const installs = ['javascript', 'android', 'ios', 'macos', 'linux', 'windows', 'rust', 'go', 'jvm', 'node', 'python', 'dotnet', 'http'];
+const installLabel = { javascript: 'JavaScript', android: 'Android', ios: 'iOS', macos: 'macOS', linux: 'Linux', windows: 'Windows', rust: 'Rust', go: 'Go', jvm: 'JVM', node: 'Node.js', python: 'Python', dotnet: '.NET', http: 'Other (HTTP)' };
 
 const fill = (s) =>
   s.replaceAll('{{ENDPOINT}}', ENDPOINT).replaceAll('{{KEY}}', 'vk_your_ingest_key').replaceAll('{{PROJECT}}', 'your-project');

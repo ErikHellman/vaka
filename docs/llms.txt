@@ -11,16 +11,19 @@ Instance: {{ENDPOINT}}
 1. You need an API token (`vt_...`) from the person running Vaka. An all-projects write token
    can create projects.
 2. Create a project: MCP tool `create_project`, or
-   `POST {{ENDPOINT}}/api/v1/projects {"name": "...", "platform": "javascript|android|ios|rust|go|node|python|jvm|dotnet|other"}`.
+   `POST {{ENDPOINT}}/api/v1/projects {"name": "...", "platform": "javascript|android|ios|macos|linux|windows|rust|go|node|python|jvm|dotnet|other"}`.
    The response contains the ingest key (`vk_...`, safe to embed in apps).
 3. Get the install guide with the key filled in: MCP tool `get_install_instructions`, or
-   `GET {{ENDPOINT}}/api/v1/projects/{project}/install/{javascript|android|ios|rust|go|jvm|node|python|dotnet|http}`.
+   `GET {{ENDPOINT}}/api/v1/projects/{project}/install/{javascript|android|ios|macos|linux|windows|rust|go|jvm|node|python|dotnet|http}`.
    Follow it step by step, including the debug file upload step in the build.
 4. Verify: send a test event and confirm it with `list_issues`.
 
 - [Install: JavaScript (browser)]({{ENDPOINT}}/docs/install/javascript)
 - [Install: Android]({{ENDPOINT}}/docs/install/android)
 - [Install: iOS]({{ENDPOINT}}/docs/install/ios)
+- [Install: macOS desktop (Swift, Electron, Tauri, Rust, .NET, JVM, ...)]({{ENDPOINT}}/docs/install/macos)
+- [Install: Linux desktop]({{ENDPOINT}}/docs/install/linux)
+- [Install: Windows desktop (WPF, WinForms, WinUI, Electron, Tauri, ...)]({{ENDPOINT}}/docs/install/windows)
 - [Install: Rust]({{ENDPOINT}}/docs/install/rust)
 - [Install: Go]({{ENDPOINT}}/docs/install/go)
 - [Install: JVM (Java, Kotlin, Scala)]({{ENDPOINT}}/docs/install/jvm)

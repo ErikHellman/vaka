@@ -327,7 +327,7 @@ pub struct CreateProject {
     pub slug: Option<String>,
 }
 
-pub const PLATFORMS: &[&str] = &["javascript", "android", "ios", "rust", "node", "jvm", "go", "dotnet", "python", "other"];
+pub const PLATFORMS: &[&str] = &["javascript", "android", "ios", "macos", "linux", "windows", "rust", "node", "jvm", "go", "dotnet", "python", "other"];
 
 pub async fn create_project_inner(s: &AppState, p: &Principal, req: CreateProject) -> QResult<Value> {
     if !p.can_create_project() {

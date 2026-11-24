@@ -80,6 +80,11 @@ with `deploy/fly/fly.sh launch`.
 | Any OpenTelemetry backend | OTLP/HTTP | [OpenTelemetry](docs/opentelemetry.md) |
 | Anything else | [HTTP ingest API](docs/ingest.md) | [guide](docs/sdk-http.md) |
 
+Desktop apps on macOS, Linux and Windows (native, Electron, Tauri, .NET, JVM, ...) use the SDK for
+their language; projects can be created with platform `macos`, `linux` or `windows`, and the
+[macOS](docs/install/macos.md), [Linux](docs/install/linux.md) and [Windows](docs/install/windows.md)
+install guides pick the right SDK and cover desktop specifics.
+
 The [`vaka` CLI](docs/cli.md) uploads debug files, records release commits, manages code mappings
 and ownership rules, and queries issues and release health.
 

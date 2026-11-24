@@ -30,12 +30,12 @@ Errors are `{"error": "explanation"}` with a 4xx/5xx status. `401` means a missi
 | --- | --- |
 | `GET /me` | The current user or token and its access |
 | `GET /projects` | Projects you can access |
-| `POST /projects` | Create: `{"name", "platform", "slug"?}`. Platforms: javascript, android, ios, rust, node, jvm, go, dotnet, python, other. Returns `ingest_key` and `install_instructions_url` |
+| `POST /projects` | Create: `{"name", "platform", "slug"?}`. Platforms: javascript, android, ios, macos, linux, windows, rust, node, jvm, go, dotnet, python, other. Returns `ingest_key` and `install_instructions_url` |
 | `GET /projects/{p}` | One project |
 | `PATCH /projects/{p}` | Admin: `{"name"?, "retention_days"?, "scrub_enabled"?, "scrub_fields"?}` (`scrub_fields`: comma-separated extra keys) |
 | `POST /projects/{p}/keys` | Create another ingest key |
 | `DELETE /projects/{p}/keys/{key}` | Revoke an ingest key |
-| `GET /projects/{p}/install/{platform}` | Install guide as Markdown with key and endpoint filled in (`javascript`, `android`, `ios`, `rust`, `http`) |
+| `GET /projects/{p}/install/{platform}` | Install guide as Markdown with key and endpoint filled in (`javascript`, `android`, `ios`, `macos`, `linux`, `windows`, `rust`, `go`, `jvm`, `node`, `python`, `dotnet`, `http`) |
 
 ## Issues and events
 

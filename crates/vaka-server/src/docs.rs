@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 
-pub const INSTALL_PLATFORMS: &[&str] = &["javascript", "android", "ios", "rust", "go", "jvm", "node", "python", "dotnet", "http"];
+pub const INSTALL_PLATFORMS: &[&str] = &["javascript", "android", "ios", "macos", "linux", "windows", "rust", "go", "jvm", "node", "python", "dotnet", "http"];
 
 macro_rules! doc {
     ($name:literal) => {
@@ -51,6 +51,9 @@ const INSTALL: &[(&str, &str)] = &[
     ("javascript", include_str!("../../../docs/install/javascript.md")),
     ("android", include_str!("../../../docs/install/android.md")),
     ("ios", include_str!("../../../docs/install/ios.md")),
+    ("macos", include_str!("../../../docs/install/macos.md")),
+    ("linux", include_str!("../../../docs/install/linux.md")),
+    ("windows", include_str!("../../../docs/install/windows.md")),
     ("rust", include_str!("../../../docs/install/rust.md")),
     ("go", include_str!("../../../docs/install/go.md")),
     ("jvm", include_str!("../../../docs/install/jvm.md")),
@@ -67,6 +70,9 @@ pub fn install_markdown(platform: &str, endpoint: &str, key: &str, project: &str
         "javascript" | "js" | "browser" | "web" => "javascript",
         "android" | "kotlin" => "android",
         "ios" | "swift" => "ios",
+        "macos" | "mac" | "osx" | "darwin" => "macos",
+        "linux" => "linux",
+        "windows" | "win" | "win32" | "win64" => "windows",
         "rust" => "rust",
         "go" | "golang" => "go",
         "jvm" | "java" | "scala" | "spring" => "jvm",
@@ -137,4 +143,28 @@ fn js(body: &'static str) -> Response {
         body,
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_install_platform_has_a_guide() {
+        for p in INSTALL_PLATFORMS {
+            assert!(INSTALL.iter().any(|(n, _)| n == p), "missing install guide for {p}");
+        }
+    }
+
+    #[test]
+    fn desktop_platforms_resolve_to_their_guides() {
+        for (alias, title) in [("macos", "macOS"), ("darwin", "macOS"), ("linux", "Linux"), ("windows", "Windows"), ("win32", "Windows")] {
+            let md = install_markdown(alias, "https://v.example", "vk_test", "desk").unwrap();
+            assert!(md.contains(&format!("in a {title} desktop app")), "{alias}");
+            assert!(md.contains("vk_test") && !md.contains("{{"), "{alias}: placeholders not filled");
+        }
+        for p in ["macos", "linux", "windows"] {
+            assert!(crate::api::PLATFORMS.contains(&p));
+        }
+    }
 }
