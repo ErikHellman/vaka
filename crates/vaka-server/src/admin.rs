@@ -611,6 +611,7 @@ async fn project_page(State(s): State<AppState>, headers: HeaderMap, Path(slug):
             h2 { "Settings" }
             div.card { form method="post" action=(format!("/ui/projects/{}", p.slug)) {
                 p { label { "Name " input name="name" value=(p.name); } }
+                p { label { "Platform " select name="platform" { @for pl in crate::api::PLATFORMS { option value=(pl) selected[*pl == p.platform] { (pl) } } } } }
                 p { label { "Retention (days) " input type="number" min="1" max="3650" name="retention_days" value=(p.retention_days); } }
                 p { label { input type="checkbox" name="scrub_enabled" value="1" checked[p.scrub_enabled]; " Scrub secrets and PII from error payloads" } }
                 p { label { "Extra fields to scrub (comma-separated) " input name="scrub_fields" value=(p.scrub_fields) style="width:300px"; } }
@@ -627,6 +628,7 @@ async fn project_page(State(s): State<AppState>, headers: HeaderMap, Path(slug):
 #[derive(Deserialize)]
 struct ProjectForm {
     name: String,
+    platform: String,
     retention_days: i64,
     scrub_enabled: Option<String>,
     scrub_fields: String,
@@ -641,8 +643,10 @@ async fn update_project(State(s): State<AppState>, headers: HeaderMap, Path(slug
     if !(1..=3650).contains(&f.retention_days) {
         return back(&format!("/ui/projects/{slug}"), "error:Retention must be between 1 and 3650 days");
     }
-    let _ = sqlx::query("UPDATE projects SET name = $1, retention_days = $2, scrub_enabled = $3, scrub_fields = $4 WHERE id = $5")
+    let Ok(platform) = crate::api::check_platform(&f.platform) else { return back(&format!("/ui/projects/{slug}"), "error:Unknown platform") };
+    let _ = sqlx::query("UPDATE projects SET name = $1, platform = $2, retention_days = $3, scrub_enabled = $4, scrub_fields = $5 WHERE id = $6")
         .bind(f.name.trim())
+        .bind(&platform)
         .bind(f.retention_days)
         .bind(f.scrub_enabled.is_some() as i64)
         .bind(f.scrub_fields.trim())

@@ -308,6 +308,13 @@ async fn call_tool(state: &AppState, p: &Principal, name: &str, a: Value) -> Res
         "create_project" => {
             crate::api::create_project_inner(state, p, crate::api::CreateProject { name: req(&a, "name")?, platform: req(&a, "platform")?, slug: s(&a, "slug") }).await?
         }
+        "update_project" => {
+            let upd = crate::api::UpdateProject { name: s(&a, "name"), platform: s(&a, "platform"), ..Default::default() };
+            if upd.name.is_none() && upd.platform.is_none() {
+                return Err(ToolError::Failed("give name and/or platform to change".into()));
+            }
+            crate::api::update_project_inner(state, p, &req(&a, "project")?, upd).await?
+        }
         "get_install_instructions" => {
             let proj = query::project_for(state, p, &req(&a, "project")?).await?;
             let platform = s(&a, "platform").unwrap_or_else(|| proj.platform.clone());
@@ -719,6 +726,20 @@ pub fn tools() -> Vec<Value> {
             "Create a project and its ingest key. Requires a write token not scoped to one project. Follow up with get_install_instructions.",
             vec![("name", prop("string", "Human-readable name")), ("platform", prop("string", &format!("One of {}", crate::api::PLATFORMS.join(", ")))), ("slug", prop("string", "Optional URL slug"))],
             &["name", "platform"],
+            false,
+            false,
+        ),
+        tool(
+            "update_project",
+            "Update project",
+            "Rename a project or change its platform (for example from javascript to macos once you know the app is a desktop app). \
+             The platform picks the default install guide. Requires write access to the project.",
+            vec![
+                ("project", project()),
+                ("name", prop("string", "New human-readable name")),
+                ("platform", prop("string", &format!("New platform, one of {}", crate::api::PLATFORMS.join(", ")))),
+            ],
+            &["project"],
             false,
             false,
         ),

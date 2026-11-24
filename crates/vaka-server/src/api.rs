@@ -336,10 +336,7 @@ pub async fn create_project_inner(s: &AppState, p: &Principal, req: CreateProjec
     if req.name.trim().is_empty() {
         return Err(ApiError::bad("project name is required"));
     }
-    let platform = req.platform.to_lowercase();
-    if !PLATFORMS.contains(&platform.as_str()) {
-        return Err(ApiError::bad(format!("unknown platform `{platform}`; use one of {}", PLATFORMS.join(", "))));
-    }
+    let platform = check_platform(&req.platform)?;
     let (proj, key) = crate::projects::create(s, req.name.trim(), &platform, req.slug.as_deref()).await?;
     crate::auth::audit(s, &p.label(), "create_project", &proj.id, &proj.slug).await;
     let mut v = query::project_json(s, &proj, true).await?;
@@ -358,17 +355,30 @@ async fn get_project(State(s): State<AppState>, p: Principal, Path(id): Path<Str
     Ok(Json(query::project_json(&s, &proj, p.can_write(&proj.id)).await?))
 }
 
-#[derive(Deserialize)]
-struct UpdateProject {
-    name: Option<String>,
-    retention_days: Option<i64>,
-    scrub_enabled: Option<bool>,
-    scrub_fields: Option<String>,
+#[derive(Deserialize, Default)]
+pub struct UpdateProject {
+    pub name: Option<String>,
+    pub platform: Option<String>,
+    pub retention_days: Option<i64>,
+    pub scrub_enabled: Option<bool>,
+    pub scrub_fields: Option<String>,
 }
 
-async fn update_project(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Json(req): Json<UpdateProject>) -> J {
-    let proj = query::project_for(&s, &p, &id).await?;
-    if !p.is_admin() {
+/// Lower-cases and validates a project platform.
+pub fn check_platform(platform: &str) -> QResult<String> {
+    let platform = platform.trim().to_lowercase();
+    if !PLATFORMS.contains(&platform.as_str()) {
+        return Err(ApiError::bad(format!("unknown platform `{platform}`; use one of {}", PLATFORMS.join(", "))));
+    }
+    Ok(platform)
+}
+
+/// Name and platform can be changed by anyone with write access to the project (so a setup agent
+/// can fix a wrong platform); retention and scrubbing are instance settings and need an admin.
+pub async fn update_project_inner(s: &AppState, p: &Principal, project: &str, req: UpdateProject) -> QResult<Value> {
+    let proj = query::project_for(s, p, project).await?;
+    let admin_only = req.retention_days.is_some() || req.scrub_enabled.is_some() || req.scrub_fields.is_some();
+    if !p.can_write(&proj.id) || (admin_only && !p.is_admin()) {
         return Err(ApiError::forbidden());
     }
     if let Some(d) = req.retention_days {
@@ -376,21 +386,32 @@ async fn update_project(State(s): State<AppState>, p: Principal, Path(id): Path<
             return Err(ApiError::bad("retention_days must be between 1 and 3650"));
         }
     }
+    let name = match req.name.as_deref().map(str::trim) {
+        Some("") => return Err(ApiError::bad("project name cannot be empty")),
+        n => n.map(str::to_string),
+    };
+    let platform = req.platform.as_deref().map(check_platform).transpose()?;
     sqlx::query(
-        "UPDATE projects SET name = COALESCE($1, name), retention_days = COALESCE($2, retention_days), \
-         scrub_enabled = COALESCE($3, scrub_enabled), scrub_fields = COALESCE($4, scrub_fields) WHERE id = $5",
+        "UPDATE projects SET name = COALESCE($1, name), platform = COALESCE($2, platform), retention_days = COALESCE($3, retention_days), \
+         scrub_enabled = COALESCE($4, scrub_enabled), scrub_fields = COALESCE($5, scrub_fields) WHERE id = $6",
     )
-    .bind(req.name)
+    .bind(name)
+    .bind(&platform)
     .bind(req.retention_days)
     .bind(req.scrub_enabled.map(|b| b as i64))
     .bind(req.scrub_fields)
     .bind(&proj.id)
     .execute(&s.db)
     .await?;
-    crate::projects::invalidate_cache(&s).await;
-    crate::auth::audit(&s, &p.label(), "update_project", &proj.id, "").await;
-    let proj = query::project_for(&s, &p, &proj.id).await?;
-    Ok(Json(query::project_json(&s, &proj, true).await?))
+    crate::projects::invalidate_cache(s).await;
+    let detail = platform.map(|pl| format!("platform={pl}")).unwrap_or_default();
+    crate::auth::audit(s, &p.label(), "update_project", &proj.id, &detail).await;
+    let proj = query::project_for(s, p, &proj.id).await?;
+    query::project_json(s, &proj, true).await
+}
+
+async fn update_project(State(s): State<AppState>, p: Principal, Path(id): Path<String>, Json(req): Json<UpdateProject>) -> J {
+    Ok(Json(update_project_inner(&s, &p, &id, req).await?))
 }
 
 async fn create_key(State(s): State<AppState>, p: Principal, Path(id): Path<String>) -> J {

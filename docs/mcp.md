@@ -98,6 +98,7 @@ Write:
 | Tool | What it does |
 | --- | --- |
 | `create_project` | Create a project and its ingest key (all-project write token) |
+| `update_project` | Rename a project or change its platform (write token for the project) |
 | `create_flag` / `update_flag` / `delete_flag` | Create, roll out, kill or retarget a feature flag |
 | `create_experiment` | Save a flag + goal experiment |
 | `create_cohort` / `delete_cohort` | Save or remove a behavioral cohort (usable as `{"cohort": name}` in any analytics filter) |

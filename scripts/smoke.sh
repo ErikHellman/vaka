@@ -17,6 +17,10 @@ PROJ=$(curl -sf "${A[@]}" -X POST "$VAKA/api/v1/projects" -d "{\"name\":\"$SLUG\
 KEY=$(echo "$PROJ" | j 'd["ingest_key"]')
 SLUG=$(echo "$PROJ" | j 'd["slug"]')
 echo "project $SLUG key $KEY"
+# Platform can be changed after creation (REST and MCP); unknown platforms are rejected.
+curl -sf "${A[@]}" -X PATCH "$VAKA/api/v1/projects/$SLUG" -d '{"platform":"macos"}' | j 'd["platform"]' | grep -qx macos || fail project-platform-patch
+[ "$(curl -s -o /dev/null -w '%{http_code}' "${A[@]}" -X PATCH "$VAKA/api/v1/projects/$SLUG" -d '{"platform":"amiga"}')" = 400 ] || fail project-platform-invalid
+curl -sf "${A[@]}" -H 'accept: application/json, text/event-stream' -X POST "$VAKA/mcp" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"update_project\",\"arguments\":{\"project\":\"$SLUG\",\"platform\":\"javascript\"}}}" | j 'd["result"]["structuredContent"]["platform"]' | grep -qx javascript || fail mcp-update-project
 
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 send() { curl -sf -X POST "$VAKA/ingest/v1/batch" -H "x-vaka-key: $KEY" -H 'user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36' -H 'content-type: application/json' -d "$1"; local r=$?; echo; return $r; }
