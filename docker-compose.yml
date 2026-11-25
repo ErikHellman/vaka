@@ -82,7 +82,11 @@ services:
       - "443:443"
       - "443:443/udp"
     environment:
+      # See deploy/docker/Caddyfile for what each setting does.
       VAKA_DOMAIN: ${VAKA_DOMAIN:-localhost}
+      VAKA_UPSTREAM: ${VAKA_UPSTREAM:-vaka:8080}
+      CADDY_ACME_EMAIL_OPTION: ${VAKA_ACME_EMAIL:+email ${VAKA_ACME_EMAIL}}
+      CADDY_TRUSTED_PROXIES_OPTION: ${VAKA_CADDY_TRUSTED_PROXIES:+trusted_proxies static ${VAKA_CADDY_TRUSTED_PROXIES}}
     volumes:
       - ./deploy/docker/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
