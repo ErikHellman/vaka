@@ -21,6 +21,7 @@ Optional services are turned on with `COMPOSE_PROFILES` in `.env`:
 | Setting in `.env` | Effect |
 | --- | --- |
 | `COMPOSE_PROFILES=caddy` | Adds [Caddy](https://caddyserver.com) on ports 80 and 443 with an automatic Let's Encrypt certificate for `VAKA_DOMAIN` |
+| `VAKA_ACME_EMAIL`, `VAKA_CADDY_TRUSTED_PROXIES`, `VAKA_UPSTREAM` | Caddy settings: certificate contact email, CIDRs of a CDN in front of Caddy (space separated), and where Vaka listens (default `vaka:8080`). See `deploy/docker/Caddyfile` |
 | `COMPOSE_PROFILES=postgres` | Adds Postgres for metadata; also set `VAKA_DB_URL=postgres://vaka:<POSTGRES_PASSWORD>@postgres:5432/vaka` |
 | `VAKA_VERSION=0.5.0` | Pins the server image (default `latest`); `VAKA_IMAGE` changes the image itself |
 | `VAKA_PORT=127.0.0.1:8080` | Host port for plain HTTP; bind it to localhost when a proxy sits in front |
@@ -36,6 +37,7 @@ VAKA_ADMIN_PASSWORD=...
 CLICKHOUSE_PASSWORD=...            # openssl rand -hex 24
 COMPOSE_PROFILES=caddy,postgres
 VAKA_DOMAIN=vaka.example.com
+VAKA_ACME_EMAIL=you@example.com
 VAKA_PORT=127.0.0.1:8080
 VAKA_VERSION=0.5.0
 POSTGRES_PASSWORD=...
@@ -46,7 +48,8 @@ Point the domain's DNS at the host, open ports 80 and 443, and run `docker compo
 kept in the `vaka-data`, `clickhouse-data`, `postgres-data` and `caddy-data` volumes.
 
 To use your own reverse proxy (nginx, Traefik, Cloudflare Tunnel) instead of Caddy, leave the
-profile off and proxy to port 8080. `deploy/docker/Caddyfile` shows the minimal config.
+profile off and proxy to port 8080. `deploy/docker/Caddyfile` shows the minimal config; it also runs as is outside compose with
+the environment variables it lists.
 
 On a fresh 2 vCPU / 4 GB VM (Hetzner CX23 or similar, Ubuntu 24.04), `deploy/hetzner/setup.sh` does
 the host setup (user, key-only SSH, firewall, swap, Docker) and writes a `.env` with memory caps for

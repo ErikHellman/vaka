@@ -1,6 +1,25 @@
-# Used by the `caddy` profile in docker-compose.yml. Caddy gets a Let's Encrypt certificate
-# for VAKA_DOMAIN automatically; point the domain's DNS at this host and open ports 80 and 443.
-{$VAKA_DOMAIN} {
+# Caddy in front of Vaka, used by the `caddy` profile in docker-compose.yml. Everything
+# deployment-specific comes from environment variables (set in .env), so this file needs no edits:
+#
+#   VAKA_DOMAIN                 site address(es) Caddy gets certificates for, e.g. vaka.example.com
+#                               (several: "vaka.example.com, www.vaka.example.com")
+#   VAKA_ACME_EMAIL             optional: contact email for Let's Encrypt / ZeroSSL expiry notices
+#   VAKA_CADDY_TRUSTED_PROXIES  optional: CIDRs of a proxy/CDN in front of Caddy (e.g. Cloudflare's
+#                               ranges, space separated) whose X-Forwarded-For Caddy may pass on
+#   VAKA_UPSTREAM               where Vaka listens (default vaka:8080, the compose service)
+#
+# docker-compose.yml turns the two optional settings into the CADDY_*_OPTION lines below, which
+# are empty when unset. Running this file outside compose? Set those yourself, e.g.
+#   CADDY_ACME_EMAIL_OPTION="email you@example.com"
+# Point VAKA_DOMAIN's DNS at this host and open ports 80 and 443.
+{
+	{$CADDY_ACME_EMAIL_OPTION}
+	servers {
+		{$CADDY_TRUSTED_PROXIES_OPTION}
+	}
+}
+
+{$VAKA_DOMAIN:localhost} {
 	encode zstd gzip
-	reverse_proxy vaka:8080
+	reverse_proxy {$VAKA_UPSTREAM:vaka:8080}
 }

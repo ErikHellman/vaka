@@ -125,7 +125,8 @@ VAKA_PORT=127.0.0.1:8080
 VAKA_VERSION=$VAKA_VERSION
 
 VAKA_ADMIN_EMAIL=${VAKA_ADMIN_EMAIL:-admin@example.com}
-VAKA_ADMIN_PASSWORD=$admin_pw
+${VAKA_ADMIN_EMAIL:+VAKA_ACME_EMAIL=$VAKA_ADMIN_EMAIL
+}VAKA_ADMIN_PASSWORD=$admin_pw
 # Encrypts stored alert secrets. Moving an existing instance? Replace with that instance's key.
 VAKA_SECRET_KEY=$(openssl rand -hex 32)
 CLICKHOUSE_PASSWORD=$(openssl rand -hex 24)
